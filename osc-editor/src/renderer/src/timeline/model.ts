@@ -42,10 +42,15 @@ export function alignClip(c: ClipInst): ClipInst {
   return { ...c, offset: Math.max(0, c.trimIn + c.summary.tlOffset) }
 }
 
-export function serializeProject(tracks: TrackState[], ports: PortConfig): ProjectFile {
+export function serializeProject(
+  tracks: TrackState[],
+  ports: PortConfig,
+  duration: number
+): ProjectFile {
   return {
     version: 1,
     ports,
+    duration,
     tracks: tracks.map((track) => ({
       clips: track.clips.map(({ file, offset, trimIn, trimOut }) => ({
         file,

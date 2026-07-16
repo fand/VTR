@@ -7,7 +7,10 @@ const SESSION_FILE = 'session.jsonl'
 
 /** Write the merged project as a single session.jsonl (the app↔TD contract). */
 export function exportSession(workdir: string, project: ProjectFile): ExportResult {
-  const { events, duration } = mergeProject(workdir, project)
+  const merged = mergeProject(workdir, project)
+  const { events } = merged
+  // Session length = timeline length (never shorter than the content).
+  const duration = Math.max(merged.duration, project.duration ?? 0)
   const ports = project.ports ?? DEFAULT_PORTS
   const lines: string[] = [
     JSON.stringify({

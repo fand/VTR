@@ -1,9 +1,20 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import type { LoadedProject, ProjectFile } from '../shared/types'
+import type { LoadedProject, PortConfig, ProjectFile } from '../shared/types'
 import { clipSummary } from './clips'
 
 const PROJECT_FILE = 'project.json'
+
+/** Light read of just the ports, for starting osc-tap before the renderer is up. */
+export function readProjectPorts(workdir: string): PortConfig | undefined {
+  const path = join(workdir, PROJECT_FILE)
+  if (!existsSync(path)) return undefined
+  try {
+    return (JSON.parse(readFileSync(path, 'utf8')) as ProjectFile).ports
+  } catch {
+    return undefined
+  }
+}
 
 export function loadProject(workdir: string): LoadedProject | null {
   const path = join(workdir, PROJECT_FILE)
@@ -21,7 +32,7 @@ export function loadProject(workdir: string): LoadedProject | null {
       }
     })
   }))
-  return { ports: project.ports, tracks, missing }
+  return { ports: project.ports, duration: project.duration, tracks, missing }
 }
 
 export function saveProject(workdir: string, project: ProjectFile): void {

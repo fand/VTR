@@ -38,9 +38,14 @@ export interface PortConfig {
   listen: number
   /** TD port raw datagrams (and preview) are sent to. */
   forward: number
+  /** UDP port /clock beacons are received on. */
+  beacon: number
 }
 
-export const DEFAULT_PORTS: PortConfig = { listen: 10010, forward: 10011 }
+export const DEFAULT_PORTS: PortConfig = { listen: 10010, forward: 10011, beacon: 10012 }
+
+/** Default timeline length, seconds. */
+export const DEFAULT_DURATION = 60
 
 /** One clip placed on the timeline (stored in project.json). */
 export interface ProjectClip {
@@ -57,6 +62,8 @@ export interface ProjectClip {
 export interface ProjectFile {
   version: 1
   ports?: PortConfig
+  /** Timeline length, seconds. Export session_end is at least this. */
+  duration?: number
   tracks: { clips: ProjectClip[] }[]
 }
 
@@ -74,6 +81,7 @@ export interface ExportResult {
 
 export interface LoadedProject {
   ports?: PortConfig
+  duration?: number
   tracks: { clips: LoadedClip[] }[]
   /** Clip files referenced by project.json but unreadable. */
   missing: string[]

@@ -1,8 +1,13 @@
 import { _electron as electron, ElectronApplication, Page, expect, test } from '@playwright/test'
 import dgram from 'node:dgram'
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+
+// Suite-specific ports so a running dev instance never collides.
+const LISTEN_PORT = 14210
+const FORWARD_PORT = 14211
+const BEACON_PORT = 14212
 
 function pad4(b: Buffer): Buffer {
   return Buffer.concat([b, Buffer.alloc((4 - (b.length % 4)) % 4)])
@@ -22,6 +27,14 @@ function sleep(ms: number): Promise<void> {
 
 async function launchApp(): Promise<{ app: ElectronApplication; page: Page; workdir: string }> {
   const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  writeFileSync(
+    join(workdir, 'project.json'),
+    JSON.stringify({
+      version: 1,
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT, beacon: BEACON_PORT },
+      tracks: []
+    })
+  )
   const app = await electron.launch({
     args: [join(__dirname, '../out/main/index.js')],
     cwd: workdir,
@@ -46,7 +59,7 @@ test('seek: ruler click, lane click, scrub', async () => {
     // Need one clip so there is a track lane to click.
     await page.getByRole('button', { name: '● Rec' }).click()
     for (let i = 0; i < 5; i++) {
-      sock.send(oscMessage('/x', [i]), 10010, '127.0.0.1')
+      sock.send(oscMessage('/x', [i]), LISTEN_PORT, '127.0.0.1')
       await sleep(100)
     }
     await page.getByRole('button', { name: '■ Stop' }).click()
@@ -71,6 +84,55 @@ test('seek: ruler click, lane click, scrub', async () => {
     expect(await playheadLeft(page)).toBeCloseTo(246, 0)
   } finally {
     sock.close()
+    await app.close()
+  }
+})
+
+test('clock port editable; beacon received on new port', async () => {
+  const { app, page } = await launchApp()
+  const sock = dgram.createSocket('udp4')
+  try {
+    await page.getByLabel('clock port').fill('12012')
+    await page.getByLabel('clock port').press('Enter')
+    await sleep(2500) // tap restart
+    const beacon = setInterval(() => {
+      sock.send(oscMessage('/clock', [50, 1.0]), 12012, '127.0.0.1')
+    }, 100)
+    try {
+      await expect(page.locator('.chip', { hasText: 'clock tl=' })).toBeVisible({
+        timeout: 15_000
+      })
+    } finally {
+      clearInterval(beacon)
+    }
+  } finally {
+    sock.close()
+    await app.close()
+  }
+})
+
+test('timeline length and zoom slider', async () => {
+  const { app, page, workdir } = await launchApp()
+  try {
+    // Longer timeline persists and widens the ruler.
+    await page.getByLabel('timeline length').fill('120')
+    await page.getByLabel('timeline length').press('Enter')
+    await sleep(600)
+    const project = JSON.parse(readFileSync(join(workdir, 'project.json'), 'utf8'))
+    expect(project.duration).toBe(120)
+    // 120s at default 20px/s → ruler is 2400px wide.
+    const rulerW = await page
+      .locator('.ruler')
+      .evaluate((el) => parseFloat((el as HTMLElement).style.width))
+    expect(rulerW).toBeCloseTo(2400, 0)
+
+    // Zoom slider changes px/s: max slider → 400px/s.
+    await page.getByLabel('zoom').fill('100')
+    const rulerW2 = await page
+      .locator('.ruler')
+      .evaluate((el) => parseFloat((el as HTMLElement).style.width))
+    expect(rulerW2).toBeCloseTo(120 * 400, -1)
+  } finally {
     await app.close()
   }
 })
@@ -105,7 +167,7 @@ test('ports editable in header; tap restarts on new ports', async () => {
     // Persisted to project.json.
     await sleep(600)
     const project = JSON.parse(readFileSync(join(workdir, 'project.json'), 'utf8'))
-    expect(project.ports).toEqual({ listen: 11010, forward: 11011 })
+    expect(project.ports).toEqual({ listen: 11010, forward: 11011, beacon: BEACON_PORT })
   } finally {
     td.close()
     sock.close()

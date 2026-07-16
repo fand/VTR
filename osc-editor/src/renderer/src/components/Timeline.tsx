@@ -26,6 +26,8 @@ interface Drag {
 interface TimelineProps {
   tracks: TrackState[]
   pxPerSec: number
+  /** Timeline length, seconds (the view extends to at least this). */
+  duration: number
   selectedId: number | null
   recordingRow: { events: number } | null
   playhead: number
@@ -82,6 +84,7 @@ function formatRulerLabel(s: number): string {
 export function Timeline({
   tracks,
   pxPerSec,
+  duration,
   selectedId,
   recordingRow,
   playhead,
@@ -169,11 +172,11 @@ export function Timeline({
     setDragRow(null)
   }
 
-  const end = contentEnd(tracks)
-  const widthPx = Math.max((end + 30) * pxPerSec, 600)
+  const end = Math.max(duration, contentEnd(tracks))
+  const widthPx = Math.max(end * pxPerSec, 600)
   const step = rulerStep(pxPerSec)
   const marks: number[] = []
-  for (let s = 0; s <= end + 30; s += step) marks.push(Math.round(s * 1e6) / 1e6)
+  for (let s = 0; s <= end; s += step) marks.push(Math.round(s * 1e6) / 1e6)
 
   return (
     <div className="timeline-scroll" onPointerDown={() => onSelect(null)}>

@@ -1,11 +1,13 @@
 import { _electron as electron, ElectronApplication, Page, expect, test } from '@playwright/test'
 import dgram from 'node:dgram'
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-const LISTEN_PORT = 10010
-const TD_PORT = 10011
+// Suite-specific ports so a running dev instance never collides.
+const LISTEN_PORT = 14110
+const TD_PORT = 14111
+const BEACON_PORT = 14112
 
 function pad4(b: Buffer): Buffer {
   return Buffer.concat([b, Buffer.alloc((4 - (b.length % 4)) % 4)])
@@ -25,6 +27,14 @@ function sleep(ms: number): Promise<void> {
 
 async function launchApp(): Promise<{ app: ElectronApplication; page: Page; workdir: string }> {
   const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  writeFileSync(
+    join(workdir, 'project.json'),
+    JSON.stringify({
+      version: 1,
+      ports: { listen: LISTEN_PORT, forward: TD_PORT, beacon: BEACON_PORT },
+      tracks: []
+    })
+  )
   const app = await electron.launch({
     args: [join(__dirname, '../out/main/index.js')],
     cwd: workdir,
@@ -88,9 +98,12 @@ test('preview replays events to TD port with original spacing', async () => {
   await new Promise<void>((r) => td.bind(TD_PORT, '127.0.0.1', r))
   try {
     await recordClip(page, sock, 10) // ~0.9s span
+    // Playback runs to the timeline end; keep it short so auto-stop happens fast.
+    await page.getByLabel('timeline length').fill('2')
+    await page.getByLabel('timeline length').press('Enter')
     collecting = true
     await page.getByRole('button', { name: '▶ Play' }).click()
-    await sleep(2500) // playback (~0.9s) + margin
+    await sleep(2800) // playback (2s timeline) + margin
     expect(received.length).toBe(10)
     const span = received[received.length - 1].at - received[0].at
     expect(span).toBeGreaterThan(700)

@@ -6,7 +6,7 @@ import icon from '../../resources/icon.png?asset'
 import { clipSummary } from './clips'
 import { mergeProject } from './merge'
 import { Preview } from './preview'
-import { loadProject, saveProject } from './project'
+import { loadProject, readProjectPorts, saveProject } from './project'
 import { exportSession } from './session'
 import { SpawnMode, TapManager } from './tap'
 import { DEFAULT_PORTS, type PortConfig, type ProjectFile } from '../shared/types'
@@ -79,7 +79,9 @@ app.whenReady().then(() => {
     const mode: SpawnMode =
       (process.env.OSC_TAP_SPAWN as SpawnMode) ??
       (app.isPackaged && process.platform === 'darwin' ? 'launchd' : 'child')
-    tap = new TapManager(findTapBinary(), workdir, mode)
+    // Start on the project's ports right away — no restart dance at boot.
+    const ports = { ...DEFAULT_PORTS, ...readProjectPorts(workdir) }
+    tap = new TapManager(findTapBinary(), workdir, mode, ports)
     tap.spawnTap()
   } catch (e) {
     tapError = (e as Error).message
@@ -100,9 +102,9 @@ app.whenReady().then(() => {
 
   const preview = new Preview()
   ipcMain.handle('preview:play', (_e, project: ProjectFile, fromSec: number) => {
-    const { events, duration } = mergeProject(workdir, project)
-    preview.play(events, fromSec, tap?.ports.forward ?? DEFAULT_PORTS.forward)
-    return { duration }
+    const merged = mergeProject(workdir, project)
+    preview.play(merged.events, fromSec, tap?.ports.forward ?? DEFAULT_PORTS.forward)
+    return { duration: Math.max(merged.duration, project.duration ?? 0) }
   })
   ipcMain.handle('preview:stop', () => ({ position: preview.stop() }))
 

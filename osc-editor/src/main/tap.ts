@@ -61,12 +61,16 @@ export class TapManager {
 
   /** Change ports and restart osc-tap with the new config. */
   setPorts(ports: PortConfig): void {
-    if (ports.listen === this._ports.listen && ports.forward === this._ports.forward) return
+    const p = this._ports
+    if (ports.listen === p.listen && ports.forward === p.forward && ports.beacon === p.beacon) {
+      return
+    }
     this._ports = ports
     this.restart()
   }
 
   private restart(): void {
+    this.respawnDelay = RESPAWN_DELAY_MS
     this.dropConnection(new Error('osc-tap restarting'))
     if (this.mode === 'launchd') {
       this.bootstrapLaunchd()
@@ -84,7 +88,7 @@ export class TapManager {
     return [
       '--listen', String(this._ports.listen),
       '--forward', `127.0.0.1:${this._ports.forward}`,
-      '--beacon', '10012',
+      '--beacon', String(this._ports.beacon),
       '--outdir', this.workdir,
       '--control', this.sockPath
     ]

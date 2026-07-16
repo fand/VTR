@@ -1,5 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { DEFAULT_PORTS, type PortConfig, type TapStatus } from '../../shared/types'
+import {
+  DEFAULT_DURATION,
+  DEFAULT_PORTS,
+  type PortConfig,
+  type TapStatus
+} from '../../shared/types'
 import { PlayingState, Timeline } from './components/Timeline'
 import {
   TrackState,
@@ -55,22 +60,27 @@ function Timecode({
   return <div className={recStartedAt != null ? 'timecode rec' : 'timecode'}>{formatTimecode(Math.max(0, secs))}</div>
 }
 
-function PortField({
+function NumField({
   label,
+  ariaLabel,
   value,
   disabled,
+  parse,
   onCommit
 }: {
   label: string
+  ariaLabel: string
   value: number
-  disabled: boolean
-  onCommit: (port: number) => void
+  disabled?: boolean
+  /** Returns the validated number, or null to reject. */
+  parse: (draft: string) => number | null
+  onCommit: (n: number) => void
 }): React.JSX.Element {
   const [draft, setDraft] = useState(String(value))
   useEffect(() => setDraft(String(value)), [value])
   const commit = (): void => {
-    const n = parseInt(draft, 10)
-    if (Number.isInteger(n) && n >= 1 && n <= 65535 && n !== value) onCommit(n)
+    const n = parse(draft)
+    if (n != null && n !== value) onCommit(n)
     else setDraft(String(value))
   }
   return (
@@ -78,9 +88,9 @@ function PortField({
       {label}
       <input
         value={draft}
-        disabled={disabled}
+        disabled={disabled ?? false}
         inputMode="numeric"
-        aria-label={`${label} port`}
+        aria-label={ariaLabel}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commit}
         onKeyDown={(e) => {
@@ -89,6 +99,27 @@ function PortField({
       />
     </label>
   )
+}
+
+function parsePort(draft: string): number | null {
+  const n = parseInt(draft, 10)
+  return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : null
+}
+
+function parseDuration(draft: string): number | null {
+  const n = parseFloat(draft)
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
+const MIN_PX = MIN_PX_PER_SEC
+const MAX_PX = MAX_PX_PER_SEC
+
+function zoomToSlider(px: number): number {
+  return (100 * Math.log(px / MIN_PX)) / Math.log(MAX_PX / MIN_PX)
+}
+
+function sliderToZoom(v: number): number {
+  return MIN_PX * Math.pow(MAX_PX / MIN_PX, v / 100)
 }
 
 function App(): React.JSX.Element {
@@ -104,6 +135,7 @@ function App(): React.JSX.Element {
   const [playhead, setPlayhead] = useState(0)
   const [playing, setPlaying] = useState<PlayingState | null>(null)
   const [ports, setPorts] = useState<PortConfig>(DEFAULT_PORTS)
+  const [duration, setDuration] = useState(DEFAULT_DURATION)
   const nextId = useRef(1)
   const loaded = useRef(false)
   const newId = useCallback((): number => nextId.current++, [])
@@ -115,9 +147,12 @@ function App(): React.JSX.Element {
       .then((project) => {
         if (project) {
           setTracks(tracksFromProject(project, newId))
+          if (project.duration != null) setDuration(project.duration)
           if (project.ports) {
-            setPorts(project.ports)
-            window.api.tap.setPorts(project.ports).catch((e: Error) => setError(e.message))
+            // Older project.json may lack the beacon port.
+            const loaded = { ...DEFAULT_PORTS, ...project.ports }
+            setPorts(loaded)
+            window.api.tap.setPorts(loaded).catch((e: Error) => setError(e.message))
           }
           if (project.missing.length > 0) {
             setError(`missing clip files: ${project.missing.join(', ')}`)
@@ -135,11 +170,11 @@ function App(): React.JSX.Element {
     if (!loaded.current) return
     const timer = setTimeout(() => {
       window.api.project
-        .save(serializeProject(tracks, ports))
+        .save(serializeProject(tracks, ports, duration))
         .catch((e: Error) => setError(e.message))
     }, 400)
     return () => clearTimeout(timer)
-  }, [tracks, ports])
+  }, [tracks, ports, duration])
 
   const changePorts = useCallback(
     (next: PortConfig) => {
@@ -221,13 +256,16 @@ function App(): React.JSX.Element {
     }
     if (tracks.length === 0) return
     try {
-      const { duration } = await window.api.preview.play(serializeProject(tracks, ports), playhead)
-      setPlaying({ startPos: playhead, startedAt: performance.now(), duration })
+      const res = await window.api.preview.play(
+        serializeProject(tracks, ports, duration),
+        playhead
+      )
+      setPlaying({ startPos: playhead, startedAt: performance.now(), duration: res.duration })
       setError(null)
     } catch (e) {
       setError((e as Error).message)
     }
-  }, [playing, tracks, ports, playhead, stopPreview])
+  }, [playing, tracks, ports, duration, playhead, stopPreview])
 
   // Auto-stop when the playhead reaches the end.
   useEffect(() => {
@@ -248,13 +286,13 @@ function App(): React.JSX.Element {
 
   const doExport = useCallback(async () => {
     try {
-      const result = await window.api.session.export(serializeProject(tracks, ports))
+      const result = await window.api.session.export(serializeProject(tracks, ports, duration))
       setInfo(`exported ${result.path} (${result.events} events, ${result.duration.toFixed(1)}s)`)
       setError(null)
     } catch (e) {
       setError((e as Error).message)
     }
-  }, [tracks, ports])
+  }, [tracks, ports, duration])
 
   // Info banner auto-hide.
   useEffect(() => {
@@ -332,25 +370,37 @@ function App(): React.JSX.Element {
           Align
         </button>
         <div className="spacer" />
-        <PortField
-          label="in"
-          value={ports.listen}
-          disabled={!!recording || !!playing}
-          onCommit={(listen) => changePorts({ ...ports, listen })}
-        />
-        <span className="port-arrow">→</span>
-        <PortField
-          label="out"
-          value={ports.forward}
-          disabled={!!recording || !!playing}
-          onCommit={(forward) => changePorts({ ...ports, forward })}
-        />
-        <button className="btn" onClick={() => zoom(1 / 1.5)} title="zoom out">
-          −
-        </button>
-        <button className="btn" onClick={() => zoom(1.5)} title="zoom in">
-          +
-        </button>
+        <div className="ports-group">
+          <div className="ports-row">
+            <NumField
+              label="in"
+              ariaLabel="in port"
+              value={ports.listen}
+              disabled={!!recording || !!playing}
+              parse={parsePort}
+              onCommit={(listen) => changePorts({ ...ports, listen })}
+            />
+            <span className="port-arrow">→</span>
+            <NumField
+              label="out"
+              ariaLabel="out port"
+              value={ports.forward}
+              disabled={!!recording || !!playing}
+              parse={parsePort}
+              onCommit={(forward) => changePorts({ ...ports, forward })}
+            />
+          </div>
+          <div className="ports-row">
+            <NumField
+              label="clock"
+              ariaLabel="clock port"
+              value={ports.beacon}
+              disabled={!!recording || !!playing}
+              parse={parsePort}
+              onCommit={(beacon) => changePorts({ ...ports, beacon })}
+            />
+          </div>
+        </div>
         <button className="btn" onClick={doExport} disabled={tracks.length === 0 || !!recording}>
           Export
         </button>
@@ -362,6 +412,7 @@ function App(): React.JSX.Element {
       <Timeline
         tracks={tracks}
         pxPerSec={pxPerSec}
+        duration={duration}
         selectedId={selectedId}
         recordingRow={recording ? { events: status?.events ?? 0 } : null}
         playhead={playhead}
@@ -370,6 +421,34 @@ function App(): React.JSX.Element {
         onSelect={setSelectedId}
         onTracksChange={onTracksChange}
       />
+
+      <div className="tl-toolbar">
+        <NumField
+          label="len"
+          ariaLabel="timeline length"
+          value={duration}
+          parse={parseDuration}
+          onCommit={setDuration}
+        />
+        <span className="toolbar-unit">s</span>
+        <div className="spacer" />
+        <button className="btn small" onClick={() => zoom(1 / 1.5)} title="zoom out">
+          −
+        </button>
+        <input
+          className="zoom-slider"
+          type="range"
+          min={0}
+          max={100}
+          step={1}
+          value={zoomToSlider(pxPerSec)}
+          aria-label="zoom"
+          onChange={(e) => setPxPerSec(sliderToZoom(Number(e.target.value)))}
+        />
+        <button className="btn small" onClick={() => zoom(1.5)} title="zoom in">
+          +
+        </button>
+      </div>
 
       <footer className="statusbar">
         <span className={statusError ? 'chip bad' : status ? 'chip ok' : 'chip'}>

@@ -1,11 +1,13 @@
 import { _electron as electron, ElectronApplication, Page, expect, test } from '@playwright/test'
 import dgram from 'node:dgram'
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-const LISTEN_PORT = 10010
-const BEACON_PORT = 10012
+// Suite-specific ports so a running dev instance (default 10010-10012) never collides.
+const LISTEN_PORT = 14010
+const FORWARD_PORT = 14011
+const BEACON_PORT = 14012
 
 function pad4(b: Buffer): Buffer {
   return Buffer.concat([b, Buffer.alloc((4 - (b.length % 4)) % 4)])
@@ -32,6 +34,14 @@ interface Launched {
 
 async function launchApp(): Promise<Launched> {
   const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  writeFileSync(
+    join(workdir, 'project.json'),
+    JSON.stringify({
+      version: 1,
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT, beacon: BEACON_PORT },
+      tracks: []
+    })
+  )
   const app = await electron.launch({
     args: [join(__dirname, '../out/main/index.js')],
     cwd: workdir,
