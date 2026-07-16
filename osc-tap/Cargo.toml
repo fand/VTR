@@ -1,0 +1,15 @@
+[package]
+name = "osc-tap"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.103"
+chrono = "0.4.45"
+clap = { version = "4.6.2", features = ["derive"] }
+rosc = "0.11.4"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.150", features = ["preserve_order"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
