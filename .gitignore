@@ -3,3 +3,4 @@ node_modules/
 *.sock
 clip-*.jsonl
 session.jsonl
+project.json

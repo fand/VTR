@@ -1,12 +1,16 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
-import type { ClipSummary, TapStatus } from '../shared/types'
+import type { ClipSummary, LoadedProject, ProjectFile, TapStatus } from '../shared/types'
 
 const api = {
   tap: {
     start: (): Promise<string> => ipcRenderer.invoke('tap:start'),
     stop: (clipPath: string): Promise<ClipSummary> => ipcRenderer.invoke('tap:stop', clipPath),
     status: (): Promise<TapStatus> => ipcRenderer.invoke('tap:status')
+  },
+  project: {
+    load: (): Promise<LoadedProject | null> => ipcRenderer.invoke('project:load'),
+    save: (project: ProjectFile): Promise<void> => ipcRenderer.invoke('project:save', project)
   },
   workdir: (): Promise<string> => ipcRenderer.invoke('app:workdir')
 }

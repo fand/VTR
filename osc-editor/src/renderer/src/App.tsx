@@ -1,12 +1,15 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import type { ClipSummary, TapStatus } from '../../shared/types'
+import type { TapStatus } from '../../shared/types'
+import { Timeline } from './components/Timeline'
+import {
+  TrackState,
+  alignClip,
+  serializeProject,
+  tracksFromProject
+} from './timeline/model'
 
-const PX_PER_SEC = 20
-
-interface Track {
-  id: number
-  clip: ClipSummary
-}
+const MIN_PX_PER_SEC = 2
+const MAX_PX_PER_SEC = 400
 
 function pad(n: number, w: number): string {
   return String(n).padStart(w, '0')
@@ -41,12 +44,43 @@ function Timecode({ startedAt }: { startedAt: number | null }): React.JSX.Elemen
 
 function App(): React.JSX.Element {
   const [recording, setRecording] = useState<{ path: string; startedAt: number } | null>(null)
-  const [tracks, setTracks] = useState<Track[]>([])
+  const [tracks, setTracks] = useState<TrackState[]>([])
+  const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [pxPerSec, setPxPerSec] = useState(20)
   const [status, setStatus] = useState<TapStatus | null>(null)
   const [statusError, setStatusError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const nextId = useRef(1)
+  const loaded = useRef(false)
+  const newId = useCallback((): number => nextId.current++, [])
+
+  // Load project.json once at boot.
+  useEffect(() => {
+    window.api.project
+      .load()
+      .then((project) => {
+        if (project) {
+          setTracks(tracksFromProject(project, newId))
+          if (project.missing.length > 0) {
+            setError(`missing clip files: ${project.missing.join(', ')}`)
+          }
+        }
+      })
+      .catch((e: Error) => setError(e.message))
+      .finally(() => {
+        loaded.current = true
+      })
+  }, [newId])
+
+  // Autosave (debounced), but never before the initial load finished.
+  useEffect(() => {
+    if (!loaded.current) return
+    const timer = setTimeout(() => {
+      window.api.project.save(serializeProject(tracks)).catch((e: Error) => setError(e.message))
+    }, 400)
+    return () => clearTimeout(timer)
+  }, [tracks])
 
   useEffect(() => {
     const poll = (): void => {
@@ -68,8 +102,24 @@ function App(): React.JSX.Element {
     setBusy(true)
     try {
       if (recording) {
-        const clip = await window.api.tap.stop(recording.path)
-        setTracks((ts) => [...ts, { id: nextId.current++, clip }])
+        const summary = await window.api.tap.stop(recording.path)
+        setTracks((ts) => [
+          ...ts,
+          {
+            id: newId(),
+            clips: [
+              alignClip({
+                id: newId(),
+                file: summary.name,
+                path: summary.path,
+                offset: 0,
+                trimIn: 0,
+                trimOut: Math.max(summary.duration, 0.1),
+                summary
+              })
+            ]
+          }
+        ])
         setRecording(null)
       } else {
         const path = await window.api.tap.start()
@@ -81,7 +131,37 @@ function App(): React.JSX.Element {
     } finally {
       setBusy(false)
     }
-  }, [recording, busy])
+  }, [recording, busy, newId])
+
+  const onTracksChange = useCallback((next: TrackState[], commit: boolean) => {
+    setTracks(commit ? next.filter((t) => t.clips.length > 0) : next)
+  }, [])
+
+  const alignAll = useCallback(() => {
+    setTracks((ts) => ts.map((t) => ({ ...t, clips: t.clips.map(alignClip) })))
+  }, [])
+
+  // Delete selected clip.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return
+      if (selectedId == null) return
+      setTracks((ts) =>
+        ts
+          .map((t) => ({ ...t, clips: t.clips.filter((c) => c.id !== selectedId) }))
+          .filter((t) => t.clips.length > 0)
+      )
+      setSelectedId(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selectedId])
+
+  const zoom = useCallback((factor: number) => {
+    setPxPerSec((z) => Math.min(Math.max(z * factor, MIN_PX_PER_SEC), MAX_PX_PER_SEC))
+  }, [])
+
+  const hasTl = tracks.some((t) => t.clips.some((c) => c.summary.tlOffset != null))
 
   return (
     <div className="app">
@@ -95,7 +175,21 @@ function App(): React.JSX.Element {
         >
           {recording ? '■ Stop' : '● Rec'}
         </button>
+        <button
+          className="btn"
+          onClick={alignAll}
+          disabled={!hasTl}
+          title="place clips at their TD timeline position (tl)"
+        >
+          Align
+        </button>
         <div className="spacer" />
+        <button className="btn" onClick={() => zoom(1 / 1.5)} title="zoom out">
+          −
+        </button>
+        <button className="btn" onClick={() => zoom(1.5)} title="zoom in">
+          +
+        </button>
         <button className="btn" disabled title="not implemented yet">
           Export
         </button>
@@ -103,36 +197,14 @@ function App(): React.JSX.Element {
 
       {error && <div className="error-banner">{error}</div>}
 
-      <div className="tracks">
-        {tracks.map((t, i) => (
-          <div className="track" key={t.id}>
-            <div className="track-label">Track {i + 1}</div>
-            <div className="track-lane">
-              <div className="clip" style={{ width: Math.max(t.clip.duration * PX_PER_SEC, 60) }}>
-                <span className="clip-name">{t.clip.name}</span>
-                <span className="clip-meta">
-                  {t.clip.duration.toFixed(1)}s · {t.clip.events} ev
-                  {t.clip.tlOffset != null && ` · tl+${t.clip.tlOffset.toFixed(2)}`}
-                </span>
-              </div>
-            </div>
-          </div>
-        ))}
-        {recording && (
-          <div className="track">
-            <div className="track-label">Track {tracks.length + 1}</div>
-            <div className="track-lane">
-              <div className="clip recording">
-                <span className="clip-name">recording…</span>
-                <span className="clip-meta">{status?.events ?? 0} ev</span>
-              </div>
-            </div>
-          </div>
-        )}
-        {tracks.length === 0 && !recording && (
-          <div className="empty">No clips. Hit ● Rec to record incoming OSC.</div>
-        )}
-      </div>
+      <Timeline
+        tracks={tracks}
+        pxPerSec={pxPerSec}
+        selectedId={selectedId}
+        recordingRow={recording ? { events: status?.events ?? 0 } : null}
+        onSelect={setSelectedId}
+        onTracksChange={onTracksChange}
+      />
 
       <footer className="statusbar">
         <span className={statusError ? 'chip bad' : 'chip ok'}>

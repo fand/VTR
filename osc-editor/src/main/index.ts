@@ -4,7 +4,9 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { clipSummary } from './clips'
+import { loadProject, saveProject } from './project'
 import { TapManager } from './tap'
+import type { ProjectFile } from '../shared/types'
 
 // Working directory: cwd when launched from the CLI (per spec).
 const workdir = process.cwd()
@@ -80,6 +82,8 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('tap:status', () => requireTap().status())
   ipcMain.handle('app:workdir', () => workdir)
+  ipcMain.handle('project:load', () => loadProject(workdir))
+  ipcMain.handle('project:save', (_e, project: ProjectFile) => saveProject(workdir, project))
 
   createWindow()
 

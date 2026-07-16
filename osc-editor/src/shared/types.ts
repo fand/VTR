@@ -29,3 +29,32 @@ export interface ClipSummary {
   /** median(tl - t) over events that carry tl; null if no beacon. */
   tlOffset: number | null
 }
+
+/** One clip placed on the timeline (stored in project.json). */
+export interface ProjectClip {
+  /** Clip file name, relative to the working directory. */
+  file: string
+  /** Timeline seconds where the trimmed clip head sits. */
+  offset: number
+  /** Clip-local start, seconds. */
+  trimIn: number
+  /** Clip-local end, seconds. */
+  trimOut: number
+}
+
+export interface ProjectFile {
+  version: 1
+  tracks: { clips: ProjectClip[] }[]
+}
+
+/** ProjectClip enriched with parsed clip metadata (load result). */
+export interface LoadedClip extends ProjectClip {
+  path: string
+  summary: ClipSummary
+}
+
+export interface LoadedProject {
+  tracks: { clips: LoadedClip[] }[]
+  /** Clip files referenced by project.json but unreadable. */
+  missing: string[]
+}

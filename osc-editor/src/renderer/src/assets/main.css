@@ -108,15 +108,51 @@ body {
   font-size: 12px;
 }
 
-.tracks {
+.timeline-scroll {
   flex: 1;
   overflow: auto;
+  position: relative;
+}
+
+.tl-content {
+  min-width: 100%;
+}
+
+.ruler-row {
+  display: flex;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  height: 22px;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+}
+
+.ruler-corner {
+  height: 100%;
+}
+
+.ruler {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.ruler-mark {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  padding-left: 4px;
+  border-left: 1px solid var(--border);
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 22px;
+  white-space: nowrap;
 }
 
 .track {
   display: flex;
   border-bottom: 1px solid var(--border);
-  min-height: 64px;
 }
 
 .track-label {
@@ -126,10 +162,13 @@ body {
   border-right: 1px solid var(--border);
   color: var(--text-dim);
   font-size: 12px;
+  position: sticky;
+  left: 0;
+  z-index: 15;
 }
 
 .track-lane {
-  flex: 1;
+  flex: 0 0 auto;
   position: relative;
   background: var(--bg-lane);
   background-image: repeating-linear-gradient(
@@ -156,6 +195,31 @@ body {
   border-radius: 4px;
   overflow: hidden;
   white-space: nowrap;
+}
+
+.clip {
+  cursor: grab;
+}
+
+.clip.selected {
+  border-color: #8fc4ff;
+  box-shadow: 0 0 0 1px #8fc4ff;
+}
+
+.trim-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: ew-resize;
+}
+
+.trim-in {
+  left: 0;
+}
+
+.trim-out {
+  right: 0;
 }
 
 .clip.recording {
