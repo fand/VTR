@@ -207,8 +207,8 @@ function App(): React.JSX.Element {
       />
 
       <footer className="statusbar">
-        <span className={statusError ? 'chip bad' : 'chip ok'}>
-          tap {statusError ? 'down' : 'up'}
+        <span className={statusError ? 'chip bad' : status ? 'chip ok' : 'chip'}>
+          tap {statusError ? 'down' : status ? 'up' : '…'}
         </span>
         <span className={status?.beacon_tl != null ? 'chip ok' : 'chip'}>
           {status?.beacon_tl != null

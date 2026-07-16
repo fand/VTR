@@ -1,0 +1,129 @@
+import { _electron as electron, ElectronApplication, Page, expect, test } from '@playwright/test'
+import dgram from 'node:dgram'
+import { mkdtempSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+const LISTEN_PORT = 10010
+const BEACON_PORT = 10012
+
+function pad4(b: Buffer): Buffer {
+  return Buffer.concat([b, Buffer.alloc((4 - (b.length % 4)) % 4)])
+}
+
+/** Minimal OSC message encoder (float args only). */
+function oscMessage(addr: string, floats: number[]): Buffer {
+  const addrB = pad4(Buffer.from(addr + '\0'))
+  const tagsB = pad4(Buffer.from(',' + 'f'.repeat(floats.length) + '\0'))
+  const argsB = Buffer.alloc(4 * floats.length)
+  floats.forEach((f, i) => argsB.writeFloatBE(f, i * 4))
+  return Buffer.concat([addrB, tagsB, argsB])
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms))
+}
+
+interface Launched {
+  app: ElectronApplication
+  page: Page
+  workdir: string
+}
+
+async function launchApp(): Promise<Launched> {
+  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const app = await electron.launch({
+    args: [join(__dirname, '../out/main/index.js')],
+    cwd: workdir,
+    env: {
+      ...process.env,
+      OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap')
+    }
+  })
+  app.process().stdout?.on('data', (d) => console.log(`[main] ${d.toString().trimEnd()}`))
+  app.process().stderr?.on('data', (d) => console.log(`[main!] ${d.toString().trimEnd()}`))
+  const page = await app.firstWindow()
+  page.on('console', (msg) => console.log(`[renderer] ${msg.text()}`))
+  await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+  return { app, page, workdir }
+}
+
+function readProject(workdir: string): { tracks: { clips: Record<string, number>[] }[] } {
+  return JSON.parse(readFileSync(join(workdir, 'project.json'), 'utf8'))
+}
+
+test('record → clip on track → drag → delete → persisted', async () => {
+  const { app, page, workdir } = await launchApp()
+  const sock = dgram.createSocket('udp4')
+  try {
+    await page.getByRole('button', { name: '● Rec' }).click()
+    for (let i = 0; i < 15; i++) {
+      sock.send(oscMessage('/fader', [i / 15]), LISTEN_PORT, '127.0.0.1')
+      await sleep(150)
+    }
+    await page.getByRole('button', { name: '■ Stop' }).click()
+
+    const clip = page.locator('.clip')
+    await expect(clip).toHaveCount(1)
+    await expect(page.locator('.clip-meta')).toContainText('15 ev')
+
+    await sleep(600) // autosave debounce
+    const saved = readProject(workdir)
+    expect(saved.tracks).toHaveLength(1)
+    expect(saved.tracks[0].clips[0].offset).toBe(0)
+
+    // Drag right by 100px = +5s at 20px/s.
+    const box = (await clip.boundingBox())!
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width / 2 + 100, box.y + box.height / 2, { steps: 5 })
+    await page.mouse.up()
+    await sleep(600)
+    const dragged = readProject(workdir)
+    expect(dragged.tracks[0].clips[0].offset).toBeGreaterThan(4)
+    expect(dragged.tracks[0].clips[0].offset).toBeLessThan(6)
+
+    // Delete the selected clip.
+    await clip.click()
+    await page.keyboard.press('Delete')
+    await expect(page.locator('.clip')).toHaveCount(0)
+    await sleep(600)
+    expect(readProject(workdir).tracks).toHaveLength(0)
+  } finally {
+    sock.close()
+    await app.close()
+  }
+})
+
+test('beacon → tl recorded → clip auto-aligned at record stop', async () => {
+  const { app, page } = await launchApp()
+  const sock = dgram.createSocket('udp4')
+  // TD-style beacon at 10Hz, timeline running from 100s.
+  const beaconStart = Date.now()
+  const beacon = setInterval(() => {
+    const tl = 100 + (Date.now() - beaconStart) / 1000
+    sock.send(oscMessage('/tap/timeline', [tl]), BEACON_PORT, '127.0.0.1')
+  }, 100)
+  try {
+    await expect(page.locator('.chip', { hasText: 'beacon tl=' })).toBeVisible({
+      timeout: 5000
+    })
+    await page.getByRole('button', { name: '● Rec' }).click()
+    for (let i = 0; i < 5; i++) {
+      sock.send(oscMessage('/x', [i]), LISTEN_PORT, '127.0.0.1')
+      await sleep(100)
+    }
+    await page.getByRole('button', { name: '■ Stop' }).click()
+
+    const clip = page.locator('.clip')
+    await expect(clip).toHaveCount(1)
+    // offset = median(tl - t) ≈ 100s → placed at ~100s * 20px/s ≈ 2000px.
+    const left = await clip.evaluate((el) => parseFloat((el as HTMLElement).style.left))
+    expect(left).toBeGreaterThan(1900)
+    expect(left).toBeLessThan(2300)
+  } finally {
+    clearInterval(beacon)
+    sock.close()
+    await app.close()
+  }
+})
