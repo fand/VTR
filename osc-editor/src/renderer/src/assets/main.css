@@ -443,19 +443,37 @@ body {
   color: var(--text-dim);
 }
 
-/* Drag to resize the curve panel below. Wide hit area, thin visual line. */
+/* Drag to resize the curve panel below: a raised bar with a double border
+   and a centered grip. */
 .panel-splitter {
-  flex: 0 0 5px;
-  margin: -2px 0;
+  flex: 0 0 9px;
   cursor: ns-resize;
   touch-action: none;
   z-index: 25;
-  background: linear-gradient(to bottom, transparent 2px, var(--border) 2px 3px, transparent 3px);
+  background: #262a32;
+  border-top: 1px solid #3d4450;
+  border-bottom: 1px solid #3d4450;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.panel-splitter::after {
+  content: '';
+  width: 48px;
+  height: 3px;
+  border-radius: 2px;
+  background: #4d5666;
 }
 
 .panel-splitter:hover,
 .panel-splitter:active {
-  background: linear-gradient(to bottom, transparent 1px, var(--accent) 1px 4px, transparent 4px);
+  border-color: var(--accent);
+}
+
+.panel-splitter:hover::after,
+.panel-splitter:active::after {
+  background: var(--accent);
 }
 
 .curve-panel {
