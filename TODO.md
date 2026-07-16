@@ -8,5 +8,5 @@
   - [x] ドラッグで移動可能
   - [x] 現在画面右下にあるzoom controlもtimeline headerの右端に移動しよう
 - [x] clipのcopy/paste
-- clipのduplicateはCmd+Dでできるようにする
+- [x] clipのduplicateはCmd+Dでできるようにする
 - clip複数選択
