@@ -127,10 +127,9 @@ body {
   opacity: 0.4;
 }
 
-.drag-label {
+/* Unfocused: drag handle. Focused: normal text input. */
+.port-field input.draggable:not(:focus) {
   cursor: ew-resize;
-  user-select: none;
-  white-space: nowrap;
   touch-action: none;
 }
 

@@ -152,18 +152,27 @@ test('timeline duration: arithmetic input and label drag', async () => {
     await field.press('Enter')
     await expect(field).toHaveValue('120')
 
-    // Dragging the label right by 40px adds 40s.
-    const label = page.locator('.tl-toolbar .drag-label')
-    const box = (await label.boundingBox())!
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    // Dragging the unfocused input right by 40px adds 40s (and doesn't focus it).
+    const box = (await field.boundingBox())!
+    const cx = box.x + box.width / 2
+    const cy = box.y + box.height / 2
+    await page.mouse.move(cx, cy)
     await page.mouse.down()
-    await page.mouse.move(box.x + box.width / 2 + 40, box.y + box.height / 2, { steps: 5 })
+    await page.mouse.move(cx + 40, cy, { steps: 5 })
     await page.mouse.up()
     await expect(field).toHaveValue('160')
+    await expect(field).not.toBeFocused()
 
     await expect
       .poll(() => JSON.parse(readFileSync(join(workdir, 'project.json'), 'utf8')).duration)
       .toBe(160)
+
+    // A plain click focuses it and it edits like a normal input.
+    await page.mouse.click(cx, cy)
+    await expect(field).toBeFocused()
+    await page.keyboard.type('99')
+    await page.keyboard.press('Enter')
+    await expect(field).toHaveValue('99')
   } finally {
     await app.close()
   }

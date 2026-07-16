@@ -87,30 +87,40 @@ function NumField({
     if (n != null && n !== value) onCommit(n)
     else setDraft(String(value))
   }
-  const drag = useRef<{ x: number; start: number } | null>(null)
+  // Unfocused input acts as a drag handle; a plain click focuses it for typing.
+  const drag = useRef<{ x: number; start: number; moved: boolean } | null>(null)
   const dragProps =
     dragStep && !disabled
       ? {
-          className: 'drag-label',
-          onPointerDown: (e: React.PointerEvent<HTMLSpanElement>) => {
-            drag.current = { x: e.clientX, start: value }
+          className: 'draggable',
+          onPointerDown: (e: React.PointerEvent<HTMLInputElement>) => {
+            if (document.activeElement === e.currentTarget) return // normal editing
+            e.preventDefault() // don't focus yet; wait to see if it's a drag
+            drag.current = { x: e.clientX, start: value, moved: false }
             e.currentTarget.setPointerCapture(e.pointerId)
-            e.preventDefault()
           },
-          onPointerMove: (e: React.PointerEvent<HTMLSpanElement>) => {
-            if (!drag.current) return
-            const raw = drag.current.start + (e.clientX - drag.current.x) * dragStep
-            const n = parse(String(Math.round(raw / dragStep) * dragStep))
+          onPointerMove: (e: React.PointerEvent<HTMLInputElement>) => {
+            const d = drag.current
+            if (!d) return
+            const dx = e.clientX - d.x
+            if (!d.moved && Math.abs(dx) < 3) return
+            d.moved = true
+            const n = parse(String(Math.round((d.start + dx * dragStep) / dragStep) * dragStep))
             if (n != null && n !== value) onCommit(n)
           },
-          onPointerUp: () => {
+          onPointerUp: (e: React.PointerEvent<HTMLInputElement>) => {
+            const d = drag.current
             drag.current = null
+            if (d && !d.moved) {
+              e.currentTarget.focus()
+              e.currentTarget.select()
+            }
           }
         }
       : {}
   return (
     <label className="port-field">
-      <span {...dragProps}>{label}</span>
+      {label}
       <input
         value={draft}
         disabled={disabled ?? false}
@@ -121,6 +131,7 @@ function NumField({
         onKeyDown={(e) => {
           if (e.key === 'Enter') e.currentTarget.blur()
         }}
+        {...dragProps}
       />
     </label>
   )
