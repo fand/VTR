@@ -39,6 +39,9 @@ function requireTap(): TapManager {
   return tap
 }
 
+// e2e: never show a window or steal focus.
+const hidden = process.env.OSC_EDITOR_HIDDEN === '1'
+
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
     width: 1200,
@@ -48,12 +51,15 @@ function createWindow(): void {
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false
+      sandbox: false,
+      // Keep rAF/timers running when the window is hidden or occluded
+      // (timecode/playhead must not freeze; e2e runs fully hidden).
+      backgroundThrottling: false
     }
   })
 
   mainWindow.on('ready-to-show', () => {
-    mainWindow.show()
+    if (!hidden) mainWindow.show()
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -67,6 +73,9 @@ function createWindow(): void {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
 }
+
+// No dock icon, no app activation — the running test never grabs focus.
+if (hidden && process.platform === 'darwin') app.setActivationPolicy('accessory')
 
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.osc-mtr.editor')

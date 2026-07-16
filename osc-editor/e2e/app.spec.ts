@@ -47,7 +47,8 @@ async function launchApp(): Promise<Launched> {
     cwd: workdir,
     env: {
       ...process.env,
-      OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap')
+      OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
+      OSC_EDITOR_HIDDEN: '1'
     }
   })
   app.process().stdout?.on('data', (d) => console.log(`[main] ${d.toString().trimEnd()}`))

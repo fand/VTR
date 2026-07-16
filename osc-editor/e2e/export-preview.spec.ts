@@ -40,7 +40,8 @@ async function launchApp(): Promise<{ app: ElectronApplication; page: Page; work
     cwd: workdir,
     env: {
       ...process.env,
-      OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap')
+      OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
+      OSC_EDITOR_HIDDEN: '1'
     }
   })
   const page = await app.firstWindow()
