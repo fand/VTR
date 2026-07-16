@@ -12,6 +12,7 @@ import { Doc, useHistory } from './history'
 import {
   ClipInst,
   MIN_CLIP_LEN,
+  MarkerState,
   TrackState,
   alignClip,
   clipLen,
@@ -371,6 +372,31 @@ function App(): React.JSX.Element {
         if (!m) return
         if (label) m.label = label
         else delete m.label
+      })
+    },
+    [commit]
+  )
+
+  // Marker drags stream transient docs and commit once on release.
+  const onMarkersChange = useCallback(
+    (next: MarkerState[], isCommit: boolean) => {
+      if (isCommit) {
+        commit('move marker', (d) => {
+          d.markers = next
+        })
+      } else {
+        transient((d) => {
+          d.markers = next
+        })
+      }
+    },
+    [commit, transient]
+  )
+
+  const deleteMarker = useCallback(
+    (markerId: number) => {
+      commit('delete marker', (d) => {
+        d.markers = d.markers.filter((m) => m.id !== markerId)
       })
     },
     [commit]
@@ -754,6 +780,8 @@ function App(): React.JSX.Element {
         onRenameTrack={renameTrack}
         onRenameClip={renameClip}
         onRenameMarker={renameMarker}
+        onMarkersChange={onMarkersChange}
+        onDeleteMarker={deleteMarker}
         onClipAction={onClipAction}
         canPaste={canPaste}
         onZoom={zoom}

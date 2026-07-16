@@ -82,6 +82,22 @@ test('timeline markers: add at playhead, persist in project.json', async () => {
     await page.getByLabel('rename marker 1').press('Enter')
     await expect(page.locator('.marker-flag').first()).toHaveText('drop')
     await expect.poll(() => readMarkers()[0]?.label).toBe('drop')
+
+    // Drag the first marker +40px (2s at 20 px/s): 8s → 10s.
+    const flag = page.locator('.marker-flag').first()
+    const box = (await flag.boundingBox())!
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width / 2 + 40, box.y + box.height / 2, { steps: 4 })
+    await page.mouse.up()
+    await expect.poll(() => readMarkers()[0]?.time).toBeGreaterThan(9.9)
+    expect(readMarkers()[0].time).toBeLessThan(10.1)
+
+    // Right-click → Delete marker.
+    await flag.click({ button: 'right' })
+    await page.getByRole('menuitem', { name: 'Delete marker' }).click()
+    await expect(page.locator('.marker-flag')).toHaveCount(1)
+    await expect.poll(() => readMarkers().length).toBe(1)
   } finally {
     await app.close()
   }

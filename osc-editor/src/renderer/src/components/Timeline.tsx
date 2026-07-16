@@ -54,6 +54,8 @@ interface TimelineProps {
   onRenameTrack: (trackId: number, name: string) => void
   onRenameClip: (clipId: number, name: string) => void
   onRenameMarker: (markerId: number, label: string) => void
+  onMarkersChange: (markers: MarkerState[], commit: boolean) => void
+  onDeleteMarker: (markerId: number) => void
   /** Context-menu action on a clip; paste lands on that clip's track. */
   onClipAction: (action: ClipAction, clipId: number) => void
   /** False disables Paste (nothing copied yet). */
@@ -182,6 +184,8 @@ export function Timeline({
   onRenameTrack,
   onRenameClip,
   onRenameMarker,
+  onMarkersChange,
+  onDeleteMarker,
   onClipAction,
   canPaste,
   onZoom
@@ -196,6 +200,13 @@ export function Timeline({
   } | null>(null)
   // Right-click menu; the snapshot of the clip drives item labels/enabling.
   const [menu, setMenu] = useState<{ x: number; y: number; clip: ClipInst } | null>(null)
+  const [markerMenu, setMarkerMenu] = useState<{ x: number; y: number; id: number } | null>(null)
+  const markerDrag = useRef<{
+    id: number
+    startX: number
+    origTime: number
+    moved: boolean
+  } | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   // Time + viewport x under the cursor at pinch start; scroll is restored
   // after the zoomed width renders so that point stays put.
@@ -307,14 +318,26 @@ export function Timeline({
     setDragRow(null)
   }
 
+  const applyMarkerDrag = (e: React.PointerEvent, commit: boolean): void => {
+    const d = markerDrag.current
+    if (!d) return
+    const time = Math.max(0, d.origTime + (e.clientX - d.startX) / pxPerSec)
+    onMarkersChange(
+      markers.map((m) => (m.id === d.id ? { ...m, time } : m)),
+      commit
+    )
+  }
+
   useEffect(() => {
-    if (!menu) return
+    if (!menu && !markerMenu) return
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') setMenu(null)
+      if (e.key !== 'Escape') return
+      setMenu(null)
+      setMarkerMenu(null)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [menu])
+  }, [menu, markerMenu])
 
   const menuAction = (action: ClipAction): void => {
     if (menu) onClipAction(action, menu.clip.id)
@@ -365,10 +388,38 @@ export function Timeline({
                   key={m.id}
                   className="marker-flag"
                   style={{ left: m.time * pxPerSec }}
-                  onPointerDown={(e) => e.stopPropagation()}
+                  onPointerDown={(e) => {
+                    e.stopPropagation()
+                    if (e.button !== 0) return
+                    markerDrag.current = {
+                      id: m.id,
+                      startX: e.clientX,
+                      origTime: m.time,
+                      moved: false
+                    }
+                    e.currentTarget.setPointerCapture(e.pointerId)
+                  }}
+                  onPointerMove={(e) => {
+                    const d = markerDrag.current
+                    if (!d) return
+                    if (!d.moved && Math.abs(e.clientX - d.startX) < 3) return
+                    d.moved = true
+                    applyMarkerDrag(e, false)
+                  }}
+                  onPointerUp={(e) => {
+                    const d = markerDrag.current
+                    if (!d) return
+                    if (d.moved) applyMarkerDrag(e, true)
+                    markerDrag.current = null
+                  }}
                   // Pointer capture (drag) retargets the dblclick from the
                   // label span to this div, so the rename trigger lives here.
                   onDoubleClick={() => setRenaming({ kind: 'marker', id: m.id })}
+                  onContextMenu={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    setMarkerMenu({ x: e.clientX, y: e.clientY, id: m.id })
+                  }}
                 >
                   <EditableLabel
                     value={m.label}
@@ -541,6 +592,37 @@ export function Timeline({
                 onClick={() => menuAction('split')}
               >
                 Split at playhead
+              </button>
+            </div>
+          </div>
+        )}
+
+        {markerMenu && (
+          <div
+            className="ctx-overlay"
+            onPointerDown={(e) => {
+              e.stopPropagation()
+              setMarkerMenu(null)
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault()
+              setMarkerMenu(null)
+            }}
+          >
+            <div
+              className="ctx-menu"
+              role="menu"
+              style={{ left: markerMenu.x, top: markerMenu.y }}
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <button
+                role="menuitem"
+                onClick={() => {
+                  onDeleteMarker(markerMenu.id)
+                  setMarkerMenu(null)
+                }}
+              >
+                Delete marker
               </button>
             </div>
           </div>
