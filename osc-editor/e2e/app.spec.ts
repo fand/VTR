@@ -102,10 +102,10 @@ test('beacon → tl recorded → clip auto-aligned at record stop', async () => 
   const beaconStart = Date.now()
   const beacon = setInterval(() => {
     const tl = 100 + (Date.now() - beaconStart) / 1000
-    sock.send(oscMessage('/tap/timeline', [tl]), BEACON_PORT, '127.0.0.1')
+    sock.send(oscMessage('/clock', [tl, 1.0]), BEACON_PORT, '127.0.0.1')
   }, 100)
   try {
-    await expect(page.locator('.chip', { hasText: 'beacon tl=' })).toBeVisible({
+    await expect(page.locator('.chip', { hasText: 'clock tl=' })).toBeVisible({
       timeout: 5000
     })
     await page.getByRole('button', { name: '● Rec' }).click()

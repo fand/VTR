@@ -149,7 +149,7 @@ fn stamps_tl_from_beacon() {
     let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
 
     tx.send_to(
-        &encode_msg("/tap/timeline", vec![OscType::Float(42.0)]),
+        &encode_msg("/clock", vec![OscType::Float(42.0)]),
         tap.beacon_addr,
     )
     .unwrap();
@@ -169,8 +169,41 @@ fn stamps_tl_from_beacon() {
 
     let lines = read_lines(&clip);
     let tl = lines[1]["tl"].as_f64().unwrap();
-    // tl = 42.0 + elapsed since beacon (>=50ms, well under 2s).
+    // tl = 42.0 + elapsed since beacon (>=50ms, well under 2s), rate defaults to 1.
     assert!(tl > 42.0 && tl < 44.0, "tl = {tl}");
+}
+
+#[test]
+fn clock_rate_zero_freezes_tl() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (tap, _td) = start_tap(tmp.path());
+    let handle = tap.handle();
+    let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
+
+    // Paused timeline at t=42.
+    tx.send_to(
+        &encode_msg("/clock", vec![OscType::Float(42.0), OscType::Float(0.0)]),
+        tap.beacon_addr,
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while handle.status().unwrap().beacon_tl.is_none() {
+        assert!(Instant::now() < deadline, "beacon not received");
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(handle.status().unwrap().beacon_rate, Some(0.0));
+
+    let clip = handle.start_clip().unwrap();
+    thread::sleep(Duration::from_millis(300));
+    tx.send_to(&encode_msg("/x", vec![OscType::Int(1)]), tap.listen_addr)
+        .unwrap();
+    wait_events(&handle, 1);
+    handle.stop_clip().unwrap();
+
+    let lines = read_lines(&clip);
+    let tl = lines[1]["tl"].as_f64().unwrap();
+    // rate=0: tl must not advance past the beacon value.
+    assert!((tl - 42.0).abs() < 1e-6, "tl = {tl}");
 }
 
 #[test]

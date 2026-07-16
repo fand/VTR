@@ -5,6 +5,8 @@ export interface TapStatus {
   events: number
   beacon_tl: number | null
   beacon_age: number | null
+  /** Timeline speed from the last /clock beacon (1 = playing, 0 = paused). */
+  beacon_rate: number | null
   dropped: number
 }
 

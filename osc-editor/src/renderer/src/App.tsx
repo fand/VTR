@@ -377,8 +377,14 @@ function App(): React.JSX.Element {
         </span>
         <span className={status?.beacon_tl != null ? 'chip ok' : 'chip'}>
           {status?.beacon_tl != null
-            ? `beacon tl=${status.beacon_tl.toFixed(2)}s (${status.beacon_age?.toFixed(1)}s ago)`
-            : 'no beacon'}
+            ? `clock tl=${status.beacon_tl.toFixed(2)}s` +
+              (status.beacon_rate === 0
+                ? ' (paused)'
+                : status.beacon_rate != null && status.beacon_rate !== 1
+                  ? ` ×${status.beacon_rate}`
+                  : '') +
+              ` (${status.beacon_age?.toFixed(1)}s ago)`
+            : 'no clock'}
         </span>
         {status != null && status.dropped > 0 && (
           <span className="chip bad">dropped {status.dropped}</span>

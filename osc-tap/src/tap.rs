@@ -21,8 +21,24 @@ const RECV_BUF_BYTES: usize = 4 * 1024 * 1024;
 /// Max packets queued to the writer before we drop (and count) instead of blocking.
 const CHANNEL_CAP: usize = 65_536;
 
-/// Latest beacon: (TD timeline seconds, arrival time).
-type BeaconState = Arc<Mutex<Option<(f64, Instant)>>>;
+/// Latest `/clock` beacon.
+#[derive(Debug, Clone, Copy)]
+pub struct Beacon {
+    /// Master timeline seconds.
+    pub t: f64,
+    /// Timeline speed: 1.0 = playing, 0.0 = paused, negative = reverse.
+    pub rate: f64,
+    pub at: Instant,
+}
+
+impl Beacon {
+    /// Extrapolate the timeline position to `now`.
+    fn tl_at(&self, now: Instant) -> f64 {
+        self.t + self.rate * signed_secs_since(now, self.at)
+    }
+}
+
+type BeaconState = Arc<Mutex<Option<Beacon>>>;
 
 pub struct Tap {
     pub listen_addr: SocketAddr,
@@ -39,7 +55,7 @@ enum Msg {
     Packet {
         buf: Vec<u8>,
         t: Instant,
-        beacon: Option<(f64, Instant)>,
+        beacon: Option<Beacon>,
     },
     Start {
         reply: Sender<Result<PathBuf, String>>,
@@ -57,10 +73,12 @@ pub struct Status {
     pub recording: bool,
     pub clip: Option<PathBuf>,
     pub events: u64,
-    /// Extrapolated TD timeline seconds as of now.
+    /// Extrapolated master timeline seconds as of now.
     pub beacon_tl: Option<f64>,
     /// Seconds since the last beacon arrived.
     pub beacon_age: Option<f64>,
+    /// Timeline speed from the last beacon.
+    pub beacon_rate: Option<f64>,
     /// Packets dropped because the writer backlog was full.
     pub dropped: u64,
 }
@@ -168,17 +186,14 @@ impl Tap {
                     let mut msgs = Vec::new();
                     flatten(packet, &mut msgs);
                     for m in msgs {
-                        if m.addr != "/tap/timeline" {
+                        if m.addr != "/clock" {
                             continue;
                         }
-                        let tl = match m.args.first() {
-                            Some(OscType::Float(f)) => Some(*f as f64),
-                            Some(OscType::Double(d)) => Some(*d),
-                            _ => None,
+                        let Some(t) = arg_as_f64(m.args.first()) else {
+                            continue;
                         };
-                        if let Some(tl) = tl {
-                            *beacon.lock().unwrap() = Some((tl, now));
-                        }
+                        let rate = arg_as_f64(m.args.get(1)).unwrap_or(1.0);
+                        *beacon.lock().unwrap() = Some(Beacon { t, rate, at: now });
                     }
                 }
             })?;
@@ -239,7 +254,7 @@ fn writer_loop(
                     continue;
                 };
                 let ts = round6(dt.as_secs_f64());
-                let tl = beacon.map(|(v, at)| round6(v + signed_secs_since(t, at)));
+                let tl = beacon.map(|b| round6(b.tl_at(t)));
                 let mut msgs = Vec::new();
                 flatten(packet, &mut msgs);
                 for m in msgs {
@@ -284,12 +299,13 @@ fn writer_loop(
             },
             Msg::Status { reply } => {
                 let now = Instant::now();
-                let (beacon_tl, beacon_age) = match *beacon.lock().unwrap() {
-                    Some((v, at)) => {
-                        let age = signed_secs_since(now, at);
-                        (Some(round6(v + age)), Some(round6(age)))
-                    }
-                    None => (None, None),
+                let (beacon_tl, beacon_age, beacon_rate) = match *beacon.lock().unwrap() {
+                    Some(b) => (
+                        Some(round6(b.tl_at(now))),
+                        Some(round6(signed_secs_since(now, b.at))),
+                        Some(b.rate),
+                    ),
+                    None => (None, None, None),
                 };
                 let _ = reply.send(Status {
                     recording: rec.is_some(),
@@ -297,6 +313,7 @@ fn writer_loop(
                     events: rec.as_ref().map(|r| r.events).unwrap_or(0),
                     beacon_tl,
                     beacon_age,
+                    beacon_rate,
                     dropped: dropped.load(Ordering::Relaxed),
                 });
             }
@@ -399,6 +416,14 @@ fn bind_udp(addr: SocketAddr, recv_buf: Option<usize>) -> Result<UdpSocket> {
     }
     socket.bind(&addr.into())?;
     Ok(socket.into())
+}
+
+fn arg_as_f64(arg: Option<&OscType>) -> Option<f64> {
+    match arg {
+        Some(OscType::Float(f)) => Some(*f as f64),
+        Some(OscType::Double(d)) => Some(*d),
+        _ => None,
+    }
 }
 
 fn round6(x: f64) -> f64 {
