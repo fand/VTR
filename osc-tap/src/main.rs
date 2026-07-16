@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use osc_tap::config::Config;
+use osc_tap::{control, tap::Tap};
 
 /// OSC recording proxy: forwards datagrams unchanged, logs parsed copies as JSONL.
 #[derive(Parser, Debug)]
@@ -37,6 +38,10 @@ fn main() -> anyhow::Result<()> {
         beacon: SocketAddr::from(([0, 0, 0, 0], cli.beacon)),
         outdir: cli.outdir,
     };
-    eprintln!("osc-tap: {config:?} control={:?}", cli.control);
-    Ok(())
+    let tap = Tap::start(config.clone())?;
+    eprintln!(
+        "osc-tap: listen {} -> {}, beacon {}, outdir {:?}, control {:?}",
+        tap.listen_addr, config.forward, tap.beacon_addr, config.outdir, cli.control
+    );
+    control::serve(&cli.control, tap.handle())
 }
