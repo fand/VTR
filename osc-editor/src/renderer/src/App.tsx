@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import type { TapStatus } from '../../shared/types'
+import { DEFAULT_PORTS, type PortConfig, type TapStatus } from '../../shared/types'
 import { PlayingState, Timeline } from './components/Timeline'
 import {
   TrackState,
@@ -55,6 +55,42 @@ function Timecode({
   return <div className={recStartedAt != null ? 'timecode rec' : 'timecode'}>{formatTimecode(Math.max(0, secs))}</div>
 }
 
+function PortField({
+  label,
+  value,
+  disabled,
+  onCommit
+}: {
+  label: string
+  value: number
+  disabled: boolean
+  onCommit: (port: number) => void
+}): React.JSX.Element {
+  const [draft, setDraft] = useState(String(value))
+  useEffect(() => setDraft(String(value)), [value])
+  const commit = (): void => {
+    const n = parseInt(draft, 10)
+    if (Number.isInteger(n) && n >= 1 && n <= 65535 && n !== value) onCommit(n)
+    else setDraft(String(value))
+  }
+  return (
+    <label className="port-field">
+      {label}
+      <input
+        value={draft}
+        disabled={disabled}
+        inputMode="numeric"
+        aria-label={`${label} port`}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur()
+        }}
+      />
+    </label>
+  )
+}
+
 function App(): React.JSX.Element {
   const [recording, setRecording] = useState<{ path: string; startedAt: number } | null>(null)
   const [tracks, setTracks] = useState<TrackState[]>([])
@@ -67,6 +103,7 @@ function App(): React.JSX.Element {
   const [busy, setBusy] = useState(false)
   const [playhead, setPlayhead] = useState(0)
   const [playing, setPlaying] = useState<PlayingState | null>(null)
+  const [ports, setPorts] = useState<PortConfig>(DEFAULT_PORTS)
   const nextId = useRef(1)
   const loaded = useRef(false)
   const newId = useCallback((): number => nextId.current++, [])
@@ -78,6 +115,10 @@ function App(): React.JSX.Element {
       .then((project) => {
         if (project) {
           setTracks(tracksFromProject(project, newId))
+          if (project.ports) {
+            setPorts(project.ports)
+            window.api.tap.setPorts(project.ports).catch((e: Error) => setError(e.message))
+          }
           if (project.missing.length > 0) {
             setError(`missing clip files: ${project.missing.join(', ')}`)
           }
@@ -93,10 +134,20 @@ function App(): React.JSX.Element {
   useEffect(() => {
     if (!loaded.current) return
     const timer = setTimeout(() => {
-      window.api.project.save(serializeProject(tracks)).catch((e: Error) => setError(e.message))
+      window.api.project
+        .save(serializeProject(tracks, ports))
+        .catch((e: Error) => setError(e.message))
     }, 400)
     return () => clearTimeout(timer)
-  }, [tracks])
+  }, [tracks, ports])
+
+  const changePorts = useCallback(
+    (next: PortConfig) => {
+      setPorts(next)
+      window.api.tap.setPorts(next).catch((e: Error) => setError(e.message))
+    },
+    []
+  )
 
   useEffect(() => {
     const poll = (): void => {
@@ -170,13 +221,13 @@ function App(): React.JSX.Element {
     }
     if (tracks.length === 0) return
     try {
-      const { duration } = await window.api.preview.play(serializeProject(tracks), playhead)
+      const { duration } = await window.api.preview.play(serializeProject(tracks, ports), playhead)
       setPlaying({ startPos: playhead, startedAt: performance.now(), duration })
       setError(null)
     } catch (e) {
       setError((e as Error).message)
     }
-  }, [playing, tracks, playhead, stopPreview])
+  }, [playing, tracks, ports, playhead, stopPreview])
 
   // Auto-stop when the playhead reaches the end.
   useEffect(() => {
@@ -197,13 +248,13 @@ function App(): React.JSX.Element {
 
   const doExport = useCallback(async () => {
     try {
-      const result = await window.api.session.export(serializeProject(tracks))
+      const result = await window.api.session.export(serializeProject(tracks, ports))
       setInfo(`exported ${result.path} (${result.events} events, ${result.duration.toFixed(1)}s)`)
       setError(null)
     } catch (e) {
       setError((e as Error).message)
     }
-  }, [tracks])
+  }, [tracks, ports])
 
   // Info banner auto-hide.
   useEffect(() => {
@@ -281,6 +332,19 @@ function App(): React.JSX.Element {
           Align
         </button>
         <div className="spacer" />
+        <PortField
+          label="in"
+          value={ports.listen}
+          disabled={!!recording || !!playing}
+          onCommit={(listen) => changePorts({ ...ports, listen })}
+        />
+        <span className="port-arrow">→</span>
+        <PortField
+          label="out"
+          value={ports.forward}
+          disabled={!!recording || !!playing}
+          onCommit={(forward) => changePorts({ ...ports, forward })}
+        />
         <button className="btn" onClick={() => zoom(1 / 1.5)} title="zoom out">
           −
         </button>

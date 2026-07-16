@@ -21,7 +21,7 @@ export function loadProject(workdir: string): LoadedProject | null {
       }
     })
   }))
-  return { tracks, missing }
+  return { ports: project.ports, tracks, missing }
 }
 
 export function saveProject(workdir: string, project: ProjectFile): void {

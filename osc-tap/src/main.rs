@@ -28,6 +28,10 @@ struct Cli {
     /// Control socket path (unix domain socket)
     #[arg(long, default_value = "./osc-tap.sock")]
     control: PathBuf,
+
+    /// Exit when stdin reaches EOF (parent process died). For child-process supervision.
+    #[arg(long)]
+    exit_on_stdin_close: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -38,6 +42,22 @@ fn main() -> anyhow::Result<()> {
         beacon: SocketAddr::from(([0, 0, 0, 0], cli.beacon)),
         outdir: cli.outdir,
     };
+    if cli.exit_on_stdin_close {
+        std::thread::spawn(|| {
+            use std::io::Read;
+            let mut buf = [0u8; 64];
+            loop {
+                match std::io::stdin().read(&mut buf) {
+                    Ok(0) | Err(_) => {
+                        eprintln!("osc-tap: stdin closed, exiting");
+                        std::process::exit(0);
+                    }
+                    Ok(_) => {}
+                }
+            }
+        });
+    }
+
     let tap = Tap::start(config.clone())?;
     eprintln!(
         "osc-tap: listen {} -> {}, beacon {}, outdir {:?}, control {:?}",

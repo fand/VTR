@@ -3,7 +3,6 @@ import type { OscEvent } from '../shared/types'
 import { encodeOscMessage } from './osc'
 
 const TARGET_HOST = '127.0.0.1'
-const TARGET_PORT = 10011
 /** Events due within this window are sent immediately. */
 const LOOKAHEAD_S = 0.002
 
@@ -18,6 +17,7 @@ export class Preview {
   private idx = 0
   private startPos = 0
   private startedAt = 0
+  private targetPort = 10011
 
   get playing(): boolean {
     return this.timer !== null
@@ -28,8 +28,9 @@ export class Preview {
     return this.startPos + (performance.now() - this.startedAt) / 1000
   }
 
-  play(events: OscEvent[], fromSec: number): void {
+  play(events: OscEvent[], fromSec: number, targetPort: number): void {
     this.stop()
+    this.targetPort = targetPort
     this.events = events
     const idx = events.findIndex((e) => e.t >= fromSec)
     this.idx = idx < 0 ? events.length : idx
@@ -54,7 +55,7 @@ export class Preview {
     while (this.idx < this.events.length && this.events[this.idx].t <= pos + LOOKAHEAD_S) {
       const e = this.events[this.idx++]
       try {
-        this.sock.send(encodeOscMessage(e.a, e.args), TARGET_PORT, TARGET_HOST)
+        this.sock.send(encodeOscMessage(e.a, e.args), this.targetPort, TARGET_HOST)
       } catch (err) {
         console.error(`preview send error: ${(err as Error).message}`)
       }

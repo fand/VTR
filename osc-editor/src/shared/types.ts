@@ -30,6 +30,16 @@ export interface ClipSummary {
   tlOffset: number | null
 }
 
+/** osc-tap port configuration. */
+export interface PortConfig {
+  /** UDP port osc-tap receives OSC on. */
+  listen: number
+  /** TD port raw datagrams (and preview) are sent to. */
+  forward: number
+}
+
+export const DEFAULT_PORTS: PortConfig = { listen: 10010, forward: 10011 }
+
 /** One clip placed on the timeline (stored in project.json). */
 export interface ProjectClip {
   /** Clip file name, relative to the working directory. */
@@ -44,6 +54,7 @@ export interface ProjectClip {
 
 export interface ProjectFile {
   version: 1
+  ports?: PortConfig
   tracks: { clips: ProjectClip[] }[]
 }
 
@@ -60,6 +71,7 @@ export interface ExportResult {
 }
 
 export interface LoadedProject {
+  ports?: PortConfig
   tracks: { clips: LoadedClip[] }[]
   /** Clip files referenced by project.json but unreadable. */
   missing: string[]

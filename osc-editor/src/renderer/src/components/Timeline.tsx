@@ -185,6 +185,12 @@ export function Timeline({
             style={{ width: widthPx }}
             onPointerDown={(e) => {
               e.stopPropagation()
+              e.currentTarget.setPointerCapture(e.pointerId)
+              const rect = e.currentTarget.getBoundingClientRect()
+              onSeek(Math.max(0, (e.clientX - rect.left) / pxPerSec))
+            }}
+            onPointerMove={(e) => {
+              if ((e.buttons & 1) === 0) return
               const rect = e.currentTarget.getBoundingClientRect()
               onSeek(Math.max(0, (e.clientX - rect.left) / pxPerSec))
             }}
@@ -202,7 +208,15 @@ export function Timeline({
         {tracks.map((track, trackIdx) => (
           <div className="track" key={track.id} style={{ height: TRACK_HEIGHT }}>
             <div className="track-label">Track {trackIdx + 1}</div>
-            <div className="track-lane" style={{ width: widthPx }}>
+            <div
+              className="track-lane"
+              style={{ width: widthPx }}
+              onPointerDown={(e) => {
+                // Clip drags call stopPropagation, so this is an empty-lane click.
+                const rect = e.currentTarget.getBoundingClientRect()
+                onSeek(Math.max(0, (e.clientX - rect.left) / pxPerSec))
+              }}
+            >
               {track.clips.map((clip) => (
                 <div
                   key={clip.id}

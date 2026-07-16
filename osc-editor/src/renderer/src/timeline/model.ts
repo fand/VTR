@@ -1,4 +1,4 @@
-import type { ClipSummary, LoadedProject, ProjectFile } from '../../../shared/types'
+import type { ClipSummary, LoadedProject, PortConfig, ProjectFile } from '../../../shared/types'
 
 /** Shortest allowed clip length after trimming, seconds. */
 export const MIN_CLIP_LEN = 0.05
@@ -42,9 +42,10 @@ export function alignClip(c: ClipInst): ClipInst {
   return { ...c, offset: Math.max(0, c.trimIn + c.summary.tlOffset) }
 }
 
-export function serializeProject(tracks: TrackState[]): ProjectFile {
+export function serializeProject(tracks: TrackState[], ports: PortConfig): ProjectFile {
   return {
     version: 1,
+    ports,
     tracks: tracks.map((track) => ({
       clips: track.clips.map(({ file, offset, trimIn, trimOut }) => ({
         file,

@@ -103,6 +103,35 @@ body {
   flex: 1;
 }
 
+.port-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.port-field input {
+  width: 56px;
+  font: inherit;
+  color: var(--text);
+  text-align: right;
+  background: #0c0d10;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+}
+
+.port-field input:disabled {
+  opacity: 0.4;
+}
+
+.port-arrow {
+  color: var(--text-dim);
+  font-family: var(--mono);
+}
+
 .btn.play.active {
   background: var(--accent);
   border-color: var(--accent);
@@ -166,6 +195,8 @@ body {
 .ruler {
   position: relative;
   flex: 0 0 auto;
+  height: 100%;
+  cursor: text;
 }
 
 .ruler-mark {
@@ -179,6 +210,7 @@ body {
   font-size: 10px;
   line-height: 22px;
   white-space: nowrap;
+  pointer-events: none;
 }
 
 .track {

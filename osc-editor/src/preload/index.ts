@@ -4,6 +4,7 @@ import type {
   ClipSummary,
   ExportResult,
   LoadedProject,
+  PortConfig,
   ProjectFile,
   TapStatus
 } from '../shared/types'
@@ -12,7 +13,8 @@ const api = {
   tap: {
     start: (): Promise<string> => ipcRenderer.invoke('tap:start'),
     stop: (clipPath: string): Promise<ClipSummary> => ipcRenderer.invoke('tap:stop', clipPath),
-    status: (): Promise<TapStatus> => ipcRenderer.invoke('tap:status')
+    status: (): Promise<TapStatus> => ipcRenderer.invoke('tap:status'),
+    setPorts: (ports: PortConfig): Promise<void> => ipcRenderer.invoke('tap:setPorts', ports)
   },
   project: {
     load: (): Promise<LoadedProject | null> => ipcRenderer.invoke('project:load'),

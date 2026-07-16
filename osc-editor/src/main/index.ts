@@ -9,7 +9,7 @@ import { Preview } from './preview'
 import { loadProject, saveProject } from './project'
 import { exportSession } from './session'
 import { SpawnMode, TapManager } from './tap'
-import type { ProjectFile } from '../shared/types'
+import { DEFAULT_PORTS, type PortConfig, type ProjectFile } from '../shared/types'
 
 // Working directory: cwd when launched from the CLI (per spec).
 const workdir = process.cwd()
@@ -87,6 +87,7 @@ app.whenReady().then(() => {
     return clipSummary(clipPath)
   })
   ipcMain.handle('tap:status', () => requireTap().status())
+  ipcMain.handle('tap:setPorts', (_e, ports: PortConfig) => requireTap().setPorts(ports))
   ipcMain.handle('app:workdir', () => workdir)
   ipcMain.handle('project:load', () => loadProject(workdir))
   ipcMain.handle('project:save', (_e, project: ProjectFile) => saveProject(workdir, project))
@@ -95,7 +96,7 @@ app.whenReady().then(() => {
   const preview = new Preview()
   ipcMain.handle('preview:play', (_e, project: ProjectFile, fromSec: number) => {
     const { events, duration } = mergeProject(workdir, project)
-    preview.play(events, fromSec)
+    preview.play(events, fromSec, tap?.ports.forward ?? DEFAULT_PORTS.forward)
     return { duration }
   })
   ipcMain.handle('preview:stop', () => ({ position: preview.stop() }))

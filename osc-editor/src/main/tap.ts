@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from 'fs'
 import net from 'net'
 import { homedir } from 'os'
 import { dirname, join } from 'path'
-import type { TapStatus } from '../shared/types'
+import { DEFAULT_PORTS, type PortConfig, type TapStatus } from '../shared/types'
 
 const REQUEST_TIMEOUT_MS = 3000
 const CONNECT_DEADLINE_MS = 5000
@@ -40,18 +40,47 @@ export class TapManager {
   private buf = ''
   private stopping = false
 
+  private _ports: PortConfig
+
   constructor(
     private bin: string,
     readonly workdir: string,
-    private mode: SpawnMode = 'child'
+    private mode: SpawnMode = 'child',
+    ports: PortConfig = DEFAULT_PORTS
   ) {
     this.sockPath = join(workdir, 'osc-tap.sock')
+    this._ports = ports
+  }
+
+  get ports(): PortConfig {
+    return this._ports
+  }
+
+  /** Change ports and restart osc-tap with the new config. */
+  setPorts(ports: PortConfig): void {
+    if (ports.listen === this._ports.listen && ports.forward === this._ports.forward) return
+    this._ports = ports
+    this.restart()
+  }
+
+  private restart(): void {
+    this.dropConnection(new Error('osc-tap restarting'))
+    if (this.mode === 'launchd') {
+      this.bootstrapLaunchd()
+      return
+    }
+    if (this.proc) {
+      // The exit handler respawns with the updated args.
+      this.proc.kill()
+    } else {
+      this.spawnTap()
+    }
   }
 
   private tapArgs(): string[] {
     return [
-      '--listen', '10010',
-      '--forward', '127.0.0.1:10011',
+      '--listen', String(this._ports.listen),
+      '--forward', `127.0.0.1:${this._ports.forward}`,
       '--beacon', '10012',
       '--outdir', this.workdir,
       '--control', this.sockPath
@@ -64,7 +93,10 @@ export class TapManager {
       return
     }
     if (this.stopping || this.proc) return
-    const proc = spawn(this.bin, this.tapArgs(), { stdio: ['ignore', 'ignore', 'pipe'] })
+    // Piped stdin + --exit-on-stdin-close: the tap exits if the editor dies hard.
+    const proc = spawn(this.bin, [...this.tapArgs(), '--exit-on-stdin-close'], {
+      stdio: ['pipe', 'ignore', 'pipe']
+    })
     proc.stderr?.on('data', (d: Buffer) => console.log(`[osc-tap] ${d.toString().trimEnd()}`))
     proc.on('exit', (code, signal) => {
       this.proc = null
