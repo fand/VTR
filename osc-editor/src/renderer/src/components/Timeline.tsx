@@ -53,6 +53,7 @@ interface TimelineProps {
   onDeleteTrack: (trackId: number) => void
   onRenameTrack: (trackId: number, name: string) => void
   onRenameClip: (clipId: number, name: string) => void
+  onRenameMarker: (markerId: number, label: string) => void
   /** Context-menu action on a clip; paste lands on that clip's track. */
   onClipAction: (action: ClipAction, clipId: number) => void
   /** False disables Paste (nothing copied yet). */
@@ -180,6 +181,7 @@ export function Timeline({
   onDeleteTrack,
   onRenameTrack,
   onRenameClip,
+  onRenameMarker,
   onClipAction,
   canPaste,
   onZoom
@@ -188,7 +190,10 @@ export function Timeline({
   // Vertical move preview: the clip stays in its DOM parent during the drag
   // (re-parenting would kill pointer capture) and is shifted with translateY.
   const [dragRow, setDragRow] = useState<{ clipId: number; delta: number } | null>(null)
-  const [renaming, setRenaming] = useState<{ kind: 'track' | 'clip'; id: number } | null>(null)
+  const [renaming, setRenaming] = useState<{
+    kind: 'track' | 'clip' | 'marker'
+    id: number
+  } | null>(null)
   // Right-click menu; the snapshot of the clip drives item labels/enabling.
   const [menu, setMenu] = useState<{ x: number; y: number; clip: ClipInst } | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
@@ -361,8 +366,19 @@ export function Timeline({
                   className="marker-flag"
                   style={{ left: m.time * pxPerSec }}
                   onPointerDown={(e) => e.stopPropagation()}
+                  // Pointer capture (drag) retargets the dblclick from the
+                  // label span to this div, so the rename trigger lives here.
+                  onDoubleClick={() => setRenaming({ kind: 'marker', id: m.id })}
                 >
-                  {m.label ?? `M${i + 1}`}
+                  <EditableLabel
+                    value={m.label}
+                    placeholder={`M${i + 1}`}
+                    ariaLabel={`rename marker ${i + 1}`}
+                    editing={renaming?.kind === 'marker' && renaming.id === m.id}
+                    onEditStart={() => setRenaming({ kind: 'marker', id: m.id })}
+                    onEditEnd={() => setRenaming(null)}
+                    onRename={(label) => onRenameMarker(m.id, label)}
+                  />
                 </div>
               ))}
             </div>

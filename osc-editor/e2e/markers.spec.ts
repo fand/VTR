@@ -75,6 +75,13 @@ test('timeline markers: add at playhead, persist in project.json', async () => {
     // Autosave persists both.
     await expect.poll(() => readMarkers().length).toBe(2)
     expect(Math.abs(readMarkers()[0].time - 8)).toBeLessThan(0.1)
+
+    // Double-click renames; the label persists.
+    await page.locator('.marker-flag').first().dblclick()
+    await page.getByLabel('rename marker 1').fill('drop')
+    await page.getByLabel('rename marker 1').press('Enter')
+    await expect(page.locator('.marker-flag').first()).toHaveText('drop')
+    await expect.poll(() => readMarkers()[0]?.label).toBe('drop')
   } finally {
     await app.close()
   }

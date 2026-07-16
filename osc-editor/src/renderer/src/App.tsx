@@ -364,6 +364,18 @@ function App(): React.JSX.Element {
     })
   }, [commit, newId, playhead])
 
+  const renameMarker = useCallback(
+    (markerId: number, label: string) => {
+      commit('rename marker', (d) => {
+        const m = d.markers.find((m) => m.id === markerId)
+        if (!m) return
+        if (label) m.label = label
+        else delete m.label
+      })
+    },
+    [commit]
+  )
+
   const deleteTrack = useCallback(
     (trackId: number) => {
       commit('delete track', (d) => {
@@ -741,6 +753,7 @@ function App(): React.JSX.Element {
         onDeleteTrack={deleteTrack}
         onRenameTrack={renameTrack}
         onRenameClip={renameClip}
+        onRenameMarker={renameMarker}
         onClipAction={onClipAction}
         canPaste={canPaste}
         onZoom={zoom}

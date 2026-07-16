@@ -222,6 +222,11 @@ body {
   touch-action: none;
 }
 
+/* The flag is sized by its content; give the editor a workable width. */
+.marker-flag .rename-input {
+  width: 72px;
+}
+
 .info-banner {
   padding: 6px 12px;
   background: #1d3a26;
