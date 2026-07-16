@@ -437,6 +437,16 @@ body {
   touch-action: none;
 }
 
+.curve-grid-line {
+  stroke: #232833;
+}
+
+.curve-grid-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  pointer-events: none;
+}
+
 .curve-empty,
 .curve-note {
   padding: 16px;

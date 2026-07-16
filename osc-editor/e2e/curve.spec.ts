@@ -64,6 +64,10 @@ test('curve panel: properties per address/arg, visibility toggle', async () => {
     // Circles: 3 fader points + 2×2 xy points.
     await expect(page.locator('circle')).toHaveCount(7)
 
+    // Grid: time + value lines, value labels on /fader's scale (0.1…0.9 → 0.1 step).
+    expect(await page.locator('.curve-grid-line').count()).toBeGreaterThan(5)
+    await expect(page.locator('.curve-grid-label').filter({ hasText: /^0\.5$/ })).toHaveCount(1)
+
     // Toggle /fader off → its polyline disappears.
     await page.getByLabel('toggle /fader').uncheck()
     await expect(page.locator('polyline')).toHaveCount(2)
