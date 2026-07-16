@@ -588,6 +588,17 @@ function App(): React.JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [togglePlay, recording])
 
+  // M adds a marker at the playhead.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key.toLowerCase() !== 'm' || e.metaKey || e.ctrlKey || e.altKey) return
+      if (isTextInput(e.target)) return
+      addMarker()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [addMarker])
+
   const alignAll = useCallback(() => {
     commit('align clips', (d) => {
       for (const t of d.tracks) {

@@ -67,9 +67,9 @@ test('timeline markers: add at playhead, persist in project.json', async () => {
     )
     expect(Math.abs(left - 160)).toBeLessThan(2)
 
-    // A second one at 0s.
+    // A second one at 0s, via the M key.
     await page.locator('.ruler').click({ position: { x: 0, y: 10 } })
-    await page.getByRole('button', { name: '+ Marker' }).click()
+    await page.keyboard.press('m')
     await expect(page.locator('.marker-flag')).toHaveCount(2)
 
     // Autosave persists both.
