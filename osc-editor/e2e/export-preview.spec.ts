@@ -99,8 +99,8 @@ test('preview replays events to TD port with original spacing', async () => {
   try {
     await recordClip(page, sock, 10) // ~0.9s span
     // Playback runs to the timeline end; keep it short so auto-stop happens fast.
-    await page.getByLabel('timeline length').fill('2')
-    await page.getByLabel('timeline length').press('Enter')
+    await page.getByLabel('timeline duration').fill('2')
+    await page.getByLabel('timeline duration').press('Enter')
     collecting = true
     await page.getByRole('button', { name: '▶ Play' }).click()
     await sleep(2800) // playback (2s timeline) + margin

@@ -6,6 +6,7 @@ import {
   type TapStatus
 } from '../../shared/types'
 import { PlayingState, Timeline } from './components/Timeline'
+import { evalExpr } from './expr'
 import {
   TrackState,
   alignClip,
@@ -66,7 +67,8 @@ function NumField({
   value,
   disabled,
   parse,
-  onCommit
+  onCommit,
+  dragStep
 }: {
   label: string
   ariaLabel: string
@@ -75,6 +77,8 @@ function NumField({
   /** Returns the validated number, or null to reject. */
   parse: (draft: string) => number | null
   onCommit: (n: number) => void
+  /** Units per px of horizontal drag on the label. Omit to disable dragging. */
+  dragStep?: number
 }): React.JSX.Element {
   const [draft, setDraft] = useState(String(value))
   useEffect(() => setDraft(String(value)), [value])
@@ -83,9 +87,30 @@ function NumField({
     if (n != null && n !== value) onCommit(n)
     else setDraft(String(value))
   }
+  const drag = useRef<{ x: number; start: number } | null>(null)
+  const dragProps =
+    dragStep && !disabled
+      ? {
+          className: 'drag-label',
+          onPointerDown: (e: React.PointerEvent<HTMLSpanElement>) => {
+            drag.current = { x: e.clientX, start: value }
+            e.currentTarget.setPointerCapture(e.pointerId)
+            e.preventDefault()
+          },
+          onPointerMove: (e: React.PointerEvent<HTMLSpanElement>) => {
+            if (!drag.current) return
+            const raw = drag.current.start + (e.clientX - drag.current.x) * dragStep
+            const n = parse(String(Math.round(raw / dragStep) * dragStep))
+            if (n != null && n !== value) onCommit(n)
+          },
+          onPointerUp: () => {
+            drag.current = null
+          }
+        }
+      : {}
   return (
     <label className="port-field">
-      {label}
+      <span {...dragProps}>{label}</span>
       <input
         value={draft}
         disabled={disabled ?? false}
@@ -106,9 +131,10 @@ function parsePort(draft: string): number | null {
   return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : null
 }
 
+/** Accepts arithmetic ("60*2" → 120); must come out positive. */
 function parseDuration(draft: string): number | null {
-  const n = parseFloat(draft)
-  return Number.isFinite(n) && n > 0 ? n : null
+  const n = evalExpr(draft)
+  return n != null && n > 0 ? n : null
 }
 
 const MIN_PX = MIN_PX_PER_SEC
@@ -137,7 +163,7 @@ function App(): React.JSX.Element {
   const [ports, setPorts] = useState<PortConfig>(DEFAULT_PORTS)
   const [duration, setDuration] = useState(DEFAULT_DURATION)
   const nextId = useRef(1)
-  const loaded = useRef(false)
+  const [loaded, setLoaded] = useState(false)
   const newId = useCallback((): number => nextId.current++, [])
 
   // Load project.json once at boot.
@@ -161,20 +187,22 @@ function App(): React.JSX.Element {
       })
       .catch((e: Error) => setError(e.message))
       .finally(() => {
-        loaded.current = true
+        setLoaded(true)
       })
   }, [newId])
 
   // Autosave (debounced), but never before the initial load finished.
+  // `loaded` is state (not a ref) so an edit made during the load still
+  // gets saved once the load completes.
   useEffect(() => {
-    if (!loaded.current) return
+    if (!loaded) return
     const timer = setTimeout(() => {
       window.api.project
         .save(serializeProject(tracks, ports, duration))
         .catch((e: Error) => setError(e.message))
     }, 400)
     return () => clearTimeout(timer)
-  }, [tracks, ports, duration])
+  }, [loaded, tracks, ports, duration])
 
   const changePorts = useCallback(
     (next: PortConfig) => {
@@ -424,11 +452,12 @@ function App(): React.JSX.Element {
 
       <div className="tl-toolbar">
         <NumField
-          label="len"
-          ariaLabel="timeline length"
+          label="Timeline Duration"
+          ariaLabel="timeline duration"
           value={duration}
           parse={parseDuration}
           onCommit={setDuration}
+          dragStep={1}
         />
         <span className="toolbar-unit">s</span>
         <div className="spacer" />

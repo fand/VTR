@@ -111,15 +111,16 @@ test('clock port editable; beacon received on new port', async () => {
   }
 })
 
-test('timeline length and zoom slider', async () => {
+test('timeline duration and zoom slider', async () => {
   const { app, page, workdir } = await launchApp()
   try {
     // Longer timeline persists and widens the ruler.
-    await page.getByLabel('timeline length').fill('120')
-    await page.getByLabel('timeline length').press('Enter')
-    await sleep(600)
-    const project = JSON.parse(readFileSync(join(workdir, 'project.json'), 'utf8'))
-    expect(project.duration).toBe(120)
+    await page.getByLabel('timeline duration').fill('120')
+    await page.getByLabel('timeline duration').press('Enter')
+    // Autosave is debounced; poll instead of a fixed sleep.
+    await expect
+      .poll(() => JSON.parse(readFileSync(join(workdir, 'project.json'), 'utf8')).duration)
+      .toBe(120)
     // 120s at default 20px/s → ruler is 2400px wide.
     const rulerW = await page
       .locator('.ruler')
@@ -132,6 +133,37 @@ test('timeline length and zoom slider', async () => {
       .locator('.ruler')
       .evaluate((el) => parseFloat((el as HTMLElement).style.width))
     expect(rulerW2).toBeCloseTo(120 * 400, -1)
+  } finally {
+    await app.close()
+  }
+})
+
+test('timeline duration: arithmetic input and label drag', async () => {
+  const { app, page, workdir } = await launchApp()
+  try {
+    // Arithmetic: 60*2 → 120.
+    const field = page.getByLabel('timeline duration')
+    await field.fill('60*2')
+    await field.press('Enter')
+    await expect(field).toHaveValue('120')
+
+    // Bad expression reverts.
+    await field.fill('60*')
+    await field.press('Enter')
+    await expect(field).toHaveValue('120')
+
+    // Dragging the label right by 40px adds 40s.
+    const label = page.locator('.tl-toolbar .drag-label')
+    const box = (await label.boundingBox())!
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width / 2 + 40, box.y + box.height / 2, { steps: 5 })
+    await page.mouse.up()
+    await expect(field).toHaveValue('160')
+
+    await expect
+      .poll(() => JSON.parse(readFileSync(join(workdir, 'project.json'), 'utf8')).duration)
+      .toBe(160)
   } finally {
     await app.close()
   }

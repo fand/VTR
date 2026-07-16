@@ -127,6 +127,13 @@ body {
   opacity: 0.4;
 }
 
+.drag-label {
+  cursor: ew-resize;
+  user-select: none;
+  white-space: nowrap;
+  touch-action: none;
+}
+
 .port-arrow {
   color: var(--text-dim);
   font-family: var(--mono);
