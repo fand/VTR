@@ -3,7 +3,7 @@ import { existsSync, statSync } from 'fs'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import { clipSummary } from './clips'
+import { clipSummary, readClip } from './clips'
 import { mergeProject } from './merge'
 import { Preview } from './preview'
 import { loadProject, readProjectPorts, saveProject } from './project'
@@ -105,6 +105,8 @@ app.whenReady().then(() => {
   ipcMain.handle('tap:status', () => requireTap().status())
   ipcMain.handle('tap:setPorts', (_e, ports: PortConfig) => requireTap().setPorts(ports))
   ipcMain.handle('app:workdir', () => workdir)
+  // Raw events; the renderer applies its own (possibly newer) edit overlay.
+  ipcMain.handle('clip:events', (_e, path: string) => readClip(path).events)
   ipcMain.handle('project:load', () => loadProject(workdir))
   ipcMain.handle('project:save', (_e, project: ProjectFile) => saveProject(workdir, project))
   ipcMain.handle('session:export', (_e, project: ProjectFile) => exportSession(workdir, project))

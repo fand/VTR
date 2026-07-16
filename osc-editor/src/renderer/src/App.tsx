@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
   DEFAULT_DURATION,
   DEFAULT_PORTS,
+  type ClipEdits,
   type PortConfig,
   type TapStatus
 } from '../../shared/types'
@@ -178,6 +179,7 @@ function App(): React.JSX.Element {
   const [playing, setPlaying] = useState<PlayingState | null>(null)
   const [ports, setPorts] = useState<PortConfig>(DEFAULT_PORTS)
   const [duration, setDuration] = useState(DEFAULT_DURATION)
+  const [edits, setEdits] = useState<Record<string, ClipEdits>>({})
   const nextId = useRef(1)
   const [loaded, setLoaded] = useState(false)
   const newId = useCallback((): number => nextId.current++, [])
@@ -189,6 +191,7 @@ function App(): React.JSX.Element {
       .then((project) => {
         if (project) {
           setTracks(tracksFromProject(project, newId))
+          setEdits(project.edits)
           if (project.duration != null) setDuration(project.duration)
           if (project.ports) {
             // Older project.json may lack the beacon port.
@@ -214,11 +217,11 @@ function App(): React.JSX.Element {
     if (!loaded) return
     const timer = setTimeout(() => {
       window.api.project
-        .save(serializeProject(tracks, ports, duration))
+        .save(serializeProject(tracks, ports, duration, edits))
         .catch((e: Error) => setError(e.message))
     }, 400)
     return () => clearTimeout(timer)
-  }, [loaded, tracks, ports, duration])
+  }, [loaded, tracks, ports, duration, edits])
 
   const changePorts = useCallback((next: PortConfig) => {
     setPorts(next)
@@ -307,13 +310,16 @@ function App(): React.JSX.Element {
     }
     if (tracks.length === 0) return
     try {
-      const res = await window.api.preview.play(serializeProject(tracks, ports, duration), playhead)
+      const res = await window.api.preview.play(
+        serializeProject(tracks, ports, duration, edits),
+        playhead
+      )
       setPlaying({ startPos: playhead, startedAt: performance.now(), duration: res.duration })
       setError(null)
     } catch (e) {
       setError((e as Error).message)
     }
-  }, [playing, tracks, ports, duration, playhead, stopPreview])
+  }, [playing, tracks, ports, duration, edits, playhead, stopPreview])
 
   // Auto-stop when the playhead reaches the end.
   useEffect(() => {
@@ -334,13 +340,15 @@ function App(): React.JSX.Element {
 
   const doExport = useCallback(async () => {
     try {
-      const result = await window.api.session.export(serializeProject(tracks, ports, duration))
+      const result = await window.api.session.export(
+        serializeProject(tracks, ports, duration, edits)
+      )
       setInfo(`exported ${result.path} (${result.events} events, ${result.duration.toFixed(1)}s)`)
       setError(null)
     } catch (e) {
       setError((e as Error).message)
     }
-  }, [tracks, ports, duration])
+  }, [tracks, ports, duration, edits])
 
   // Info banner auto-hide.
   useEffect(() => {

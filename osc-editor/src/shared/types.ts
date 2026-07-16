@@ -47,6 +47,18 @@ export const DEFAULT_PORTS: PortConfig = { listen: 10010, forward: 10011, beacon
 /** Default timeline length, seconds. */
 export const DEFAULT_DURATION = 60
 
+/**
+ * Non-destructive edit overlay on a clip file's events. Keys are the event's
+ * index in the original JSONL (deletes don't shift keys). The recording itself
+ * is never rewritten.
+ */
+export interface ClipEdits {
+  /** eventIndex → partial patch; args maps argIndex → new numeric value. */
+  set?: Record<number, { t?: number; args?: Record<number, number> }>
+  /** eventIndex → deleted. Wins over set. */
+  del?: Record<number, true>
+}
+
 /** One clip placed on the timeline (stored in project.json). */
 export interface ProjectClip {
   /** Clip file name, relative to the working directory. */
@@ -65,6 +77,12 @@ export interface ProjectFile {
   /** Timeline length, seconds. Export session_end is at least this. */
   duration?: number
   tracks: { clips: ProjectClip[] }[]
+  /**
+   * Edit overlays keyed by clip file name. Carried inline over IPC (autosave is
+   * debounced, so main must never read sidecars for preview/export), but
+   * persisted as <file>.edits.json sidecars to keep project.json small.
+   */
+  edits?: Record<string, ClipEdits>
 }
 
 /** ProjectClip enriched with parsed clip metadata (load result). */
@@ -83,6 +101,8 @@ export interface LoadedProject {
   ports?: PortConfig
   duration?: number
   tracks: { clips: LoadedClip[] }[]
+  /** Edit overlays read back from sidecar files. */
+  edits: Record<string, ClipEdits>
   /** Clip files referenced by project.json but unreadable. */
   missing: string[]
 }

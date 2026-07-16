@@ -4,6 +4,7 @@ import type {
   ClipSummary,
   ExportResult,
   LoadedProject,
+  OscEvent,
   PortConfig,
   ProjectFile,
   TapStatus
@@ -15,6 +16,9 @@ const api = {
     stop: (clipPath: string): Promise<ClipSummary> => ipcRenderer.invoke('tap:stop', clipPath),
     status: (): Promise<TapStatus> => ipcRenderer.invoke('tap:status'),
     setPorts: (ports: PortConfig): Promise<void> => ipcRenderer.invoke('tap:setPorts', ports)
+  },
+  clip: {
+    events: (path: string): Promise<OscEvent[]> => ipcRenderer.invoke('clip:events', path)
   },
   project: {
     load: (): Promise<LoadedProject | null> => ipcRenderer.invoke('project:load'),

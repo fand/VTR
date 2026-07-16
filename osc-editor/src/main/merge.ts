@@ -1,4 +1,5 @@
 import { join } from 'path'
+import { applyEdits } from '../shared/edits'
 import type { OscEvent, ProjectFile } from '../shared/types'
 import { readClip } from './clips'
 
@@ -19,7 +20,9 @@ export function mergeProject(
   for (const track of project.tracks) {
     for (const clip of track.clips) {
       const data = readClip(join(workdir, clip.file))
-      for (const e of data.events) {
+      // Edits first: a t edit decides whether the event falls inside the trim.
+      const clipEvents = applyEdits(data.events, project.edits?.[clip.file])
+      for (const e of clipEvents) {
         if (e.t < clip.trimIn || e.t > clip.trimOut) continue
         events.push({
           t: round6(clip.offset + (e.t - clip.trimIn)),
