@@ -101,6 +101,11 @@ test('preview replays events to TD port with original spacing', async () => {
     // Playback runs to the timeline end; keep it short so auto-stop happens fast.
     await page.getByLabel('timeline duration').fill('2')
     await page.getByLabel('timeline duration').press('Enter')
+    // Space in a focused field must not toggle playback.
+    await page.getByLabel('timeline duration').click()
+    await page.keyboard.press('Space')
+    await expect(page.getByRole('button', { name: '▶ Play' })).toBeVisible()
+    await page.keyboard.press('Enter') // blur; the space-only draft reverts to 2
     collecting = true
     await page.getByRole('button', { name: '▶ Play' }).click()
     await sleep(2800) // playback (2s timeline) + margin

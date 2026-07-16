@@ -137,6 +137,12 @@ function NumField({
   )
 }
 
+/** True when a keyboard event comes from a text field; global shortcuts must ignore it. */
+function isTextInput(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null
+  return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
+}
+
 function parsePort(draft: string): number | null {
   const n = parseInt(draft, 10)
   return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : null
@@ -340,10 +346,10 @@ function App(): React.JSX.Element {
     return () => clearTimeout(timer)
   }, [info])
 
-  // Space toggles preview unless recording.
+  // Space toggles preview unless recording or typing in a field.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.code !== 'Space' || recording) return
+      if (e.code !== 'Space' || recording || isTextInput(e.target)) return
       e.preventDefault()
       togglePlay()
     }
@@ -355,11 +361,11 @@ function App(): React.JSX.Element {
     setTracks((ts) => ts.map((t) => ({ ...t, clips: t.clips.map(alignClip) })))
   }, [])
 
-  // Delete selected clip.
+  // Delete selected clip (not while typing in a field).
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key !== 'Delete' && e.key !== 'Backspace') return
-      if (selectedId == null) return
+      if (selectedId == null || isTextInput(e.target)) return
       setTracks((ts) =>
         ts
           .map((t) => ({ ...t, clips: t.clips.filter((c) => c.id !== selectedId) }))
