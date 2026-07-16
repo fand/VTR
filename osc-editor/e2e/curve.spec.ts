@@ -81,6 +81,28 @@ test('curve panel: properties per address/arg, visibility toggle', async () => {
     await page.getByLabel('toggle /fader').check()
     await expect(page.locator('polyline')).toHaveCount(3)
 
+    // Click a property name → selects it (not a visibility toggle); thick curve.
+    const strokeW = (prop: string): Promise<string | null> =>
+      page.locator(`polyline[data-prop="${prop}"]`).getAttribute('stroke-width')
+    await page.locator('.curve-prop-name', { hasText: '/fader' }).click()
+    await expect(page.locator('.curve-prop.selected')).toHaveCount(1)
+    await expect(page.getByLabel('toggle /fader')).toBeChecked()
+    expect(await strokeW('/fader')).toBe('3')
+    expect(await strokeW('/xy[0]')).toBe('1.5')
+    // Shift+click adds to the selection.
+    await page.locator('.curve-prop-name', { hasText: '/xy[0]' }).click({ modifiers: ['Shift'] })
+    await expect(page.locator('.curve-prop.selected')).toHaveCount(2)
+    expect(await strokeW('/xy[0]')).toBe('3')
+    // Checkbox still toggles visibility only; selection is untouched.
+    await page.getByLabel('toggle /xy[1]').uncheck()
+    await expect(page.locator('.curve-prop.selected')).toHaveCount(2)
+    await page.getByLabel('toggle /xy[1]').check()
+    // Click on the sole remaining selection deselects.
+    await page.locator('.curve-prop-name', { hasText: '/xy[0]' }).click({ modifiers: ['Shift'] })
+    await page.locator('.curve-prop-name', { hasText: '/fader' }).click()
+    await expect(page.locator('.curve-prop.selected')).toHaveCount(0)
+    expect(await strokeW('/fader')).toBe('1.5')
+
     // Deselect (click empty lane area far from the clip; the ruler swallows
     // pointerdown for seeking, lanes bubble up to the deselect handler).
     await page.locator('.track-lane').click({ position: { x: 500, y: 55 } })

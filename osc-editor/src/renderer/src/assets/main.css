@@ -488,6 +488,7 @@ body {
   padding: 4px 0;
   background: var(--bg-raised);
   border-right: 1px solid var(--border);
+  user-select: none;
 }
 
 .curve-prop {
@@ -502,6 +503,10 @@ body {
 
 .curve-prop:hover {
   background: #262a32;
+}
+
+.curve-prop.selected {
+  background: #2d3644;
 }
 
 .curve-swatch {
