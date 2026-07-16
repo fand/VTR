@@ -6,7 +6,13 @@ import {
   type TapStatus
 } from '../../shared/types'
 import { CurvePanel, PointPatch, PointSel } from './components/CurvePanel'
-import { ClipAction, PlayingState, Timeline } from './components/Timeline'
+import {
+  ClipAction,
+  MAX_PX_PER_SEC,
+  MIN_PX_PER_SEC,
+  PlayingState,
+  Timeline
+} from './components/Timeline'
 import { evalExpr } from './expr'
 import { Doc, useHistory } from './history'
 import {
@@ -20,9 +26,6 @@ import {
   serializeProject,
   tracksFromProject
 } from './timeline/model'
-
-const MIN_PX_PER_SEC = 2
-const MAX_PX_PER_SEC = 400
 
 function pad(n: number, w: number): string {
   return String(n).padStart(w, '0')
@@ -173,17 +176,6 @@ function parsePort(draft: string): number | null {
 function parseDuration(draft: string): number | null {
   const n = evalExpr(draft)
   return n != null && n > 0 ? n : null
-}
-
-const MIN_PX = MIN_PX_PER_SEC
-const MAX_PX = MAX_PX_PER_SEC
-
-function zoomToSlider(px: number): number {
-  return (100 * Math.log(px / MIN_PX)) / Math.log(MAX_PX / MIN_PX)
-}
-
-function sliderToZoom(v: number): number {
-  return MIN_PX * Math.pow(MAX_PX / MIN_PX, v / 100)
 }
 
 function App(): React.JSX.Element {
@@ -694,6 +686,10 @@ function App(): React.JSX.Element {
     setPxPerSec((z) => Math.min(Math.max(z * factor, MIN_PX_PER_SEC), MAX_PX_PER_SEC))
   }, [])
 
+  const setZoom = useCallback((px: number) => {
+    setPxPerSec(Math.min(Math.max(px, MIN_PX_PER_SEC), MAX_PX_PER_SEC))
+  }, [])
+
   const hasTl = tracks.some((t) => t.clips.some((c) => c.summary.tlOffset != null))
 
   return (
@@ -785,6 +781,7 @@ function App(): React.JSX.Element {
         onClipAction={onClipAction}
         canPaste={canPaste}
         onZoom={zoom}
+        onPxPerSecChange={setZoom}
       />
 
       <div
@@ -834,23 +831,6 @@ function App(): React.JSX.Element {
           dragStep={1}
         />
         <span className="toolbar-unit">s</span>
-        <div className="spacer" />
-        <button className="btn small" onClick={() => zoom(1 / 1.5)} title="zoom out">
-          −
-        </button>
-        <input
-          className="zoom-slider"
-          type="range"
-          min={0}
-          max={100}
-          step={1}
-          value={zoomToSlider(pxPerSec)}
-          aria-label="zoom"
-          onChange={(e) => setPxPerSec(sliderToZoom(Number(e.target.value)))}
-        />
-        <button className="btn small" onClick={() => zoom(1.5)} title="zoom in">
-          +
-        </button>
       </div>
 
       <footer className="statusbar">

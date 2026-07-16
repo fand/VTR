@@ -16,8 +16,18 @@ export interface PlayingState {
 }
 
 export const TRACK_HEIGHT = 64
+export const MIN_PX_PER_SEC = 2
+export const MAX_PX_PER_SEC = 400
 const TRIM_HANDLE_PX = 8
 const RULER_STEPS = [0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300]
+
+function zoomToSlider(px: number): number {
+  return (100 * Math.log(px / MIN_PX_PER_SEC)) / Math.log(MAX_PX_PER_SEC / MIN_PX_PER_SEC)
+}
+
+function sliderToZoom(v: number): number {
+  return MIN_PX_PER_SEC * Math.pow(MAX_PX_PER_SEC / MIN_PX_PER_SEC, v / 100)
+}
 
 type DragMode = 'move' | 'trim-in' | 'trim-out'
 
@@ -62,6 +72,8 @@ interface TimelineProps {
   canPaste: boolean
   /** Pinch/ctrl-wheel zoom; factor > 1 zooms in. The caller clamps. */
   onZoom: (factor: number) => void
+  /** Absolute zoom from the header slider. The caller clamps. */
+  onPxPerSecChange: (px: number) => void
 }
 
 const LABEL_W = 96
@@ -188,7 +200,8 @@ export function Timeline({
   onDeleteMarker,
   onClipAction,
   canPaste,
-  onZoom
+  onZoom,
+  onPxPerSecChange
 }: TimelineProps): React.JSX.Element {
   const drag = useRef<Drag | null>(null)
   // Vertical move preview: the clip stays in its DOM parent during the drag
@@ -357,6 +370,22 @@ export function Timeline({
           + Marker
         </button>
         <div className="spacer" />
+        <button className="btn small" onClick={() => onZoom(1 / 1.5)} title="zoom out">
+          −
+        </button>
+        <input
+          className="zoom-slider"
+          type="range"
+          min={0}
+          max={100}
+          step={1}
+          value={zoomToSlider(pxPerSec)}
+          aria-label="zoom"
+          onChange={(e) => onPxPerSecChange(sliderToZoom(Number(e.target.value)))}
+        />
+        <button className="btn small" onClick={() => onZoom(1.5)} title="zoom in">
+          +
+        </button>
       </div>
       <div className="timeline-scroll" ref={scrollRef} onPointerDown={() => onSelect(null)}>
         <div className="tl-content" style={{ width: widthPx + 96 }}>
