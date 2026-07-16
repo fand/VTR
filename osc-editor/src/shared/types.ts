@@ -74,6 +74,14 @@ export interface UndoEntry {
   inversePatches: UndoPatch[]
 }
 
+/** One timeline marker (stored in project.json). */
+export interface ProjectMarker {
+  /** Timeline seconds. */
+  time: number
+  /** User label; the UI falls back to a number. */
+  label?: string
+}
+
 /** One clip placed on the timeline (stored in project.json). */
 export interface ProjectClip {
   /** Clip file name, relative to the working directory. */
@@ -96,6 +104,7 @@ export interface ProjectFile {
   /** Timeline length, seconds. Export session_end is at least this. */
   duration?: number
   tracks: { name?: string; clips: ProjectClip[] }[]
+  markers?: ProjectMarker[]
   /**
    * Edit overlays keyed by clip file name. Carried inline over IPC (autosave is
    * debounced, so main must never read sidecars for preview/export), but
@@ -125,6 +134,7 @@ export interface LoadedProject {
   ports?: PortConfig
   duration?: number
   tracks: { name?: string; clips: LoadedClip[] }[]
+  markers?: ProjectMarker[]
   /** Edit overlays read back from sidecar files. */
   edits: Record<string, ClipEdits>
   undoSeq?: number

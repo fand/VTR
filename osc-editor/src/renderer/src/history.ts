@@ -1,13 +1,14 @@
 import { applyPatches, enablePatches, produce, produceWithPatches } from 'immer'
 import { useCallback, useRef, useState } from 'react'
 import type { ClipEdits, UndoEntry } from '../../shared/types'
-import type { TrackState } from './timeline/model'
+import type { MarkerState, TrackState } from './timeline/model'
 
 enablePatches()
 
 /** Everything undoable. Ports (device config) and view state stay outside. */
 export interface Doc {
   tracks: TrackState[]
+  markers: MarkerState[]
   duration: number
   edits: Record<string, ClipEdits>
 }

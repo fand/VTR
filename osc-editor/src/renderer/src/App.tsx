@@ -15,6 +15,7 @@ import {
   TrackState,
   alignClip,
   clipLen,
+  markersFromProject,
   serializeProject,
   tracksFromProject
 } from './timeline/model'
@@ -211,6 +212,7 @@ function App(): React.JSX.Element {
       max = Math.max(max, t.id)
       for (const c of t.clips) max = Math.max(max, c.id)
     }
+    for (const m of doc.markers) max = Math.max(max, m.id)
     nextId.current = Math.max(nextId.current, max + 1)
     setSelectedId((id) =>
       id != null && doc.tracks.some((t) => t.clips.some((c) => c.id === id)) ? id : null
@@ -218,18 +220,22 @@ function App(): React.JSX.Element {
     setSelectedPoints([])
   }, [])
 
-  const history = useHistory({ tracks: [], duration: DEFAULT_DURATION, edits: {} }, onRestore)
+  const history = useHistory(
+    { tracks: [], markers: [], duration: DEFAULT_DURATION, edits: {} },
+    onRestore
+  )
   const { reset, transient, commit, undo, redo } = history
-  const { tracks, duration, edits } = history.doc
+  const { tracks, markers, duration, edits } = history.doc
 
   // Load project.json and the undo log once at boot.
   useEffect(() => {
     Promise.all([window.api.project.load(), window.api.undo.load()])
       .then(([project, log]) => {
-        let doc: Doc = { tracks: [], duration: DEFAULT_DURATION, edits: {} }
+        let doc: Doc = { tracks: [], markers: [], duration: DEFAULT_DURATION, edits: {} }
         if (project) {
           doc = {
             tracks: tracksFromProject(project, newId),
+            markers: markersFromProject(project, newId),
             duration: project.duration ?? DEFAULT_DURATION,
             edits: project.edits
           }
@@ -265,11 +271,11 @@ function App(): React.JSX.Element {
     if (!loaded) return
     const timer = setTimeout(() => {
       window.api.project
-        .save(serializeProject(tracks, ports, duration, edits, history.seq))
+        .save(serializeProject(tracks, markers, ports, duration, edits, history.seq))
         .catch((e: Error) => setError(e.message))
     }, 400)
     return () => clearTimeout(timer)
-  }, [loaded, tracks, ports, duration, edits, history.seq])
+  }, [loaded, tracks, markers, ports, duration, edits, history.seq])
 
   const changePorts = useCallback((next: PortConfig) => {
     setPorts(next)
@@ -350,6 +356,13 @@ function App(): React.JSX.Element {
       d.tracks.push({ id, clips: [] })
     })
   }, [commit, newId])
+
+  const addMarker = useCallback(() => {
+    const id = newId()
+    commit('add marker', (d) => {
+      d.markers.push({ id, time: playhead })
+    })
+  }, [commit, newId, playhead])
 
   const deleteTrack = useCallback(
     (trackId: number) => {
@@ -517,7 +530,7 @@ function App(): React.JSX.Element {
     if (tracks.length === 0) return
     try {
       const res = await window.api.preview.play(
-        serializeProject(tracks, ports, duration, edits, history.seq),
+        serializeProject(tracks, markers, ports, duration, edits, history.seq),
         playhead
       )
       setPlaying({ startPos: playhead, startedAt: performance.now(), duration: res.duration })
@@ -525,7 +538,7 @@ function App(): React.JSX.Element {
     } catch (e) {
       setError((e as Error).message)
     }
-  }, [playing, tracks, ports, duration, edits, playhead, stopPreview])
+  }, [playing, tracks, markers, ports, duration, edits, playhead, stopPreview])
 
   // Auto-stop when the playhead reaches the end.
   useEffect(() => {
@@ -547,7 +560,7 @@ function App(): React.JSX.Element {
   const doExport = useCallback(async () => {
     try {
       const result = await window.api.session.export(
-        serializeProject(tracks, ports, duration, edits, history.seq)
+        serializeProject(tracks, markers, ports, duration, edits, history.seq)
       )
       if (!result) return // save dialog cancelled
       setInfo(`exported ${result.path} (${result.events} events, ${result.duration.toFixed(1)}s)`)
@@ -555,7 +568,7 @@ function App(): React.JSX.Element {
     } catch (e) {
       setError((e as Error).message)
     }
-  }, [tracks, ports, duration, edits])
+  }, [tracks, markers, ports, duration, edits])
 
   // Info banner auto-hide.
   useEffect(() => {
@@ -702,6 +715,7 @@ function App(): React.JSX.Element {
 
       <Timeline
         tracks={tracks}
+        markers={markers}
         pxPerSec={pxPerSec}
         duration={duration}
         selectedId={selectedId}
@@ -712,6 +726,7 @@ function App(): React.JSX.Element {
         onSelect={selectClip}
         onTracksChange={onTracksChange}
         onAddTrack={addTrack}
+        onAddMarker={addMarker}
         onDeleteTrack={deleteTrack}
         onRenameTrack={renameTrack}
         onRenameClip={renameClip}

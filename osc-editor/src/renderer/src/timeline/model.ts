@@ -33,6 +33,14 @@ export interface TrackState {
   clips: ClipInst[]
 }
 
+export interface MarkerState {
+  id: number
+  /** Timeline seconds. */
+  time: number
+  /** User label; the UI falls back to the marker number. */
+  label?: string
+}
+
 export function clipLen(c: ClipInst): number {
   return c.trimOut - c.trimIn
 }
@@ -56,6 +64,7 @@ export function alignClip(c: ClipInst): ClipInst {
 
 export function serializeProject(
   tracks: TrackState[],
+  markers: MarkerState[],
   ports: PortConfig,
   duration: number,
   edits: Record<string, ClipEdits>,
@@ -77,8 +86,13 @@ export function serializeProject(
         trimOut,
         muted
       }))
-    }))
+    })),
+    markers: markers.map(({ time, label }) => ({ time, label }))
   }
+}
+
+export function markersFromProject(project: LoadedProject, nextId: () => number): MarkerState[] {
+  return (project.markers ?? []).map((m) => ({ id: nextId(), time: m.time, label: m.label }))
 }
 
 export function tracksFromProject(project: LoadedProject, nextId: () => number): TrackState[] {

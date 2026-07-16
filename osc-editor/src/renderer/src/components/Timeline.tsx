@@ -1,5 +1,12 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { ClipInst, MIN_CLIP_LEN, TrackState, clipLen, contentEnd } from '../timeline/model'
+import {
+  ClipInst,
+  MIN_CLIP_LEN,
+  MarkerState,
+  TrackState,
+  clipLen,
+  contentEnd
+} from '../timeline/model'
 
 export interface PlayingState {
   startPos: number
@@ -29,6 +36,7 @@ interface Drag {
 
 interface TimelineProps {
   tracks: TrackState[]
+  markers: MarkerState[]
   pxPerSec: number
   /** Timeline length, seconds (the view extends to at least this). */
   duration: number
@@ -40,6 +48,8 @@ interface TimelineProps {
   onSelect: (id: number | null) => void
   onTracksChange: (tracks: TrackState[], commit: boolean) => void
   onAddTrack: () => void
+  /** Add a marker at the playhead. */
+  onAddMarker: () => void
   onDeleteTrack: (trackId: number) => void
   onRenameTrack: (trackId: number, name: string) => void
   onRenameClip: (clipId: number, name: string) => void
@@ -155,6 +165,7 @@ function formatRulerLabel(s: number): string {
 
 export function Timeline({
   tracks,
+  markers,
   pxPerSec,
   duration,
   selectedId,
@@ -165,6 +176,7 @@ export function Timeline({
   onSelect,
   onTracksChange,
   onAddTrack,
+  onAddMarker,
   onDeleteTrack,
   onRenameTrack,
   onRenameClip,
@@ -311,191 +323,213 @@ export function Timeline({
   for (let s = 0; s <= end; s += step) marks.push(Math.round(s * 1e6) / 1e6)
 
   return (
-    <div className="timeline-scroll" ref={scrollRef} onPointerDown={() => onSelect(null)}>
-      <div className="tl-content" style={{ width: widthPx + 96 }}>
-        <div className="ruler-row">
-          <div className="track-label ruler-corner" />
-          <div
-            className="ruler"
-            style={{ width: widthPx }}
-            onPointerDown={(e) => {
-              e.stopPropagation()
-              if (e.button !== 0) return
-              e.currentTarget.setPointerCapture(e.pointerId)
-              const rect = e.currentTarget.getBoundingClientRect()
-              onSeek(Math.max(0, (e.clientX - rect.left) / pxPerSec))
-            }}
-            onPointerMove={(e) => {
-              if ((e.buttons & 1) === 0) return
-              const rect = e.currentTarget.getBoundingClientRect()
-              onSeek(Math.max(0, (e.clientX - rect.left) / pxPerSec))
-            }}
-          >
-            {marks.map((s) => (
-              <div key={s} className="ruler-mark" style={{ left: s * pxPerSec }}>
-                {formatRulerLabel(s)}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <PlayheadLine playhead={playhead} playing={playing} pxPerSec={pxPerSec} />
-
-        {tracks.map((track, trackIdx) => (
-          <div className="track" key={track.id} style={{ height: TRACK_HEIGHT }}>
-            <div className="track-label">
-              <EditableLabel
-                value={track.name}
-                placeholder={`Track ${trackIdx + 1}`}
-                ariaLabel={`rename track ${trackIdx + 1}`}
-                editing={renaming?.kind === 'track' && renaming.id === track.id}
-                onEditStart={() => setRenaming({ kind: 'track', id: track.id })}
-                onEditEnd={() => setRenaming(null)}
-                onRename={(name) => onRenameTrack(track.id, name)}
-              />
-              <button
-                className="track-del"
-                title="delete track"
-                aria-label={`delete track ${trackIdx + 1}`}
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={() => onDeleteTrack(track.id)}
-              >
-                ×
-              </button>
-            </div>
+    <div className="timeline-panel">
+      <div className="tl-header">
+        <button className="btn small" title="add marker at playhead" onClick={onAddMarker}>
+          + Marker
+        </button>
+        <div className="spacer" />
+      </div>
+      <div className="timeline-scroll" ref={scrollRef} onPointerDown={() => onSelect(null)}>
+        <div className="tl-content" style={{ width: widthPx + 96 }}>
+          <div className="ruler-row">
+            <div className="track-label ruler-corner" />
             <div
-              className="track-lane"
+              className="ruler"
               style={{ width: widthPx }}
               onPointerDown={(e) => {
-                // Clip drags call stopPropagation, so this is an empty-lane
-                // click — or a right-click on a clip bubbling up; seek on
-                // the primary button only.
+                e.stopPropagation()
                 if (e.button !== 0) return
+                e.currentTarget.setPointerCapture(e.pointerId)
+                const rect = e.currentTarget.getBoundingClientRect()
+                onSeek(Math.max(0, (e.clientX - rect.left) / pxPerSec))
+              }}
+              onPointerMove={(e) => {
+                if ((e.buttons & 1) === 0) return
                 const rect = e.currentTarget.getBoundingClientRect()
                 onSeek(Math.max(0, (e.clientX - rect.left) / pxPerSec))
               }}
             >
-              {track.clips.map((clip) => (
+              {marks.map((s) => (
+                <div key={s} className="ruler-mark" style={{ left: s * pxPerSec }}>
+                  {formatRulerLabel(s)}
+                </div>
+              ))}
+              {markers.map((m, i) => (
                 <div
-                  key={clip.id}
-                  className={
-                    'clip' +
-                    (clip.id === selectedId ? ' selected' : '') +
-                    (clip.muted ? ' muted' : '')
-                  }
-                  style={{
-                    left: clip.offset * pxPerSec,
-                    width: Math.max(clipLen(clip) * pxPerSec, 12),
-                    ...(dragRow?.clipId === clip.id && {
-                      transform: `translateY(${dragRow.delta * TRACK_HEIGHT}px)`,
-                      zIndex: 10
-                    })
-                  }}
-                  onPointerDown={(e) => onClipPointerDown(e, clip, trackIdx)}
-                  onPointerMove={onClipPointerMove}
-                  onPointerUp={onClipPointerUp}
-                  // Pointer capture retargets the dblclick from the label
-                  // span to this div, so the rename trigger lives here.
-                  onDoubleClick={() => setRenaming({ kind: 'clip', id: clip.id })}
-                  onContextMenu={(e) => {
-                    e.preventDefault()
-                    onSelect(clip.id)
-                    setMenu({ x: e.clientX, y: e.clientY, clip })
-                  }}
+                  key={m.id}
+                  className="marker-flag"
+                  style={{ left: m.time * pxPerSec }}
+                  onPointerDown={(e) => e.stopPropagation()}
                 >
-                  <span className="clip-name">
-                    <EditableLabel
-                      value={clip.name}
-                      placeholder={clip.file}
-                      ariaLabel={`rename clip ${clip.file}`}
-                      editing={renaming?.kind === 'clip' && renaming.id === clip.id}
-                      onEditStart={() => setRenaming({ kind: 'clip', id: clip.id })}
-                      onEditEnd={() => setRenaming(null)}
-                      onRename={(name) => onRenameClip(clip.id, name)}
-                    />
-                  </span>
-                  <span className="clip-meta">
-                    {clipLen(clip).toFixed(1)}s · {clip.summary.events} ev
-                    {clip.summary.tlOffset != null && ' · tl'}
-                  </span>
-                  <div className="trim-handle trim-in" />
-                  <div className="trim-handle trim-out" />
+                  {m.label ?? `M${i + 1}`}
                 </div>
               ))}
             </div>
           </div>
-        ))}
 
-        {recordingRow && (
-          <div className="track" style={{ height: TRACK_HEIGHT }}>
-            <div className="track-label">Track {tracks.length + 1}</div>
-            <div className="track-lane" style={{ width: widthPx }}>
-              <div className="clip recording" style={{ left: 0, width: 160 }}>
-                <span className="clip-name">recording…</span>
-                <span className="clip-meta">{recordingRow.events} ev</span>
+          {markers.map((m) => (
+            <div key={m.id} className="marker-line" style={{ left: LABEL_W + m.time * pxPerSec }} />
+          ))}
+
+          <PlayheadLine playhead={playhead} playing={playing} pxPerSec={pxPerSec} />
+
+          {tracks.map((track, trackIdx) => (
+            <div className="track" key={track.id} style={{ height: TRACK_HEIGHT }}>
+              <div className="track-label">
+                <EditableLabel
+                  value={track.name}
+                  placeholder={`Track ${trackIdx + 1}`}
+                  ariaLabel={`rename track ${trackIdx + 1}`}
+                  editing={renaming?.kind === 'track' && renaming.id === track.id}
+                  onEditStart={() => setRenaming({ kind: 'track', id: track.id })}
+                  onEditEnd={() => setRenaming(null)}
+                  onRename={(name) => onRenameTrack(track.id, name)}
+                />
+                <button
+                  className="track-del"
+                  title="delete track"
+                  aria-label={`delete track ${trackIdx + 1}`}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={() => onDeleteTrack(track.id)}
+                >
+                  ×
+                </button>
               </div>
+              <div
+                className="track-lane"
+                style={{ width: widthPx }}
+                onPointerDown={(e) => {
+                  // Clip drags call stopPropagation, so this is an empty-lane
+                  // click — or a right-click on a clip bubbling up; seek on
+                  // the primary button only.
+                  if (e.button !== 0) return
+                  const rect = e.currentTarget.getBoundingClientRect()
+                  onSeek(Math.max(0, (e.clientX - rect.left) / pxPerSec))
+                }}
+              >
+                {track.clips.map((clip) => (
+                  <div
+                    key={clip.id}
+                    className={
+                      'clip' +
+                      (clip.id === selectedId ? ' selected' : '') +
+                      (clip.muted ? ' muted' : '')
+                    }
+                    style={{
+                      left: clip.offset * pxPerSec,
+                      width: Math.max(clipLen(clip) * pxPerSec, 12),
+                      ...(dragRow?.clipId === clip.id && {
+                        transform: `translateY(${dragRow.delta * TRACK_HEIGHT}px)`,
+                        zIndex: 10
+                      })
+                    }}
+                    onPointerDown={(e) => onClipPointerDown(e, clip, trackIdx)}
+                    onPointerMove={onClipPointerMove}
+                    onPointerUp={onClipPointerUp}
+                    // Pointer capture retargets the dblclick from the label
+                    // span to this div, so the rename trigger lives here.
+                    onDoubleClick={() => setRenaming({ kind: 'clip', id: clip.id })}
+                    onContextMenu={(e) => {
+                      e.preventDefault()
+                      onSelect(clip.id)
+                      setMenu({ x: e.clientX, y: e.clientY, clip })
+                    }}
+                  >
+                    <span className="clip-name">
+                      <EditableLabel
+                        value={clip.name}
+                        placeholder={clip.file}
+                        ariaLabel={`rename clip ${clip.file}`}
+                        editing={renaming?.kind === 'clip' && renaming.id === clip.id}
+                        onEditStart={() => setRenaming({ kind: 'clip', id: clip.id })}
+                        onEditEnd={() => setRenaming(null)}
+                        onRename={(name) => onRenameClip(clip.id, name)}
+                      />
+                    </span>
+                    <span className="clip-meta">
+                      {clipLen(clip).toFixed(1)}s · {clip.summary.events} ev
+                      {clip.summary.tlOffset != null && ' · tl'}
+                    </span>
+                    <div className="trim-handle trim-in" />
+                    <div className="trim-handle trim-out" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+
+          {recordingRow && (
+            <div className="track" style={{ height: TRACK_HEIGHT }}>
+              <div className="track-label">Track {tracks.length + 1}</div>
+              <div className="track-lane" style={{ width: widthPx }}>
+                <div className="clip recording" style={{ left: 0, width: 160 }}>
+                  <span className="clip-name">recording…</span>
+                  <span className="clip-meta">{recordingRow.events} ev</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="add-track">
+            <button
+              className="btn small"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={onAddTrack}
+            >
+              + Track
+            </button>
+          </div>
+
+          {tracks.length === 0 && !recordingRow && (
+            <div className="empty">No clips. Hit ● Rec to record incoming OSC.</div>
+          )}
+        </div>
+
+        {menu && (
+          <div
+            className="ctx-overlay"
+            onPointerDown={(e) => {
+              e.stopPropagation()
+              setMenu(null)
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault()
+              setMenu(null)
+            }}
+          >
+            <div
+              className="ctx-menu"
+              role="menu"
+              style={{ left: menu.x, top: menu.y }}
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <button role="menuitem" onClick={() => menuAction('mute')}>
+                {menu.clip.muted ? 'Unmute' : 'Mute'}
+              </button>
+              <button role="menuitem" onClick={() => menuAction('copy')}>
+                Copy
+              </button>
+              <button role="menuitem" disabled={!canPaste} onClick={() => menuAction('paste')}>
+                Paste
+              </button>
+              <button role="menuitem" onClick={() => menuAction('duplicate')}>
+                Duplicate
+              </button>
+              <button
+                role="menuitem"
+                disabled={
+                  playhead < menu.clip.offset + MIN_CLIP_LEN ||
+                  playhead > menu.clip.offset + clipLen(menu.clip) - MIN_CLIP_LEN
+                }
+                onClick={() => menuAction('split')}
+              >
+                Split at playhead
+              </button>
             </div>
           </div>
         )}
-
-        <div className="add-track">
-          <button
-            className="btn small"
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={onAddTrack}
-          >
-            + Track
-          </button>
-        </div>
-
-        {tracks.length === 0 && !recordingRow && (
-          <div className="empty">No clips. Hit ● Rec to record incoming OSC.</div>
-        )}
       </div>
-
-      {menu && (
-        <div
-          className="ctx-overlay"
-          onPointerDown={(e) => {
-            e.stopPropagation()
-            setMenu(null)
-          }}
-          onContextMenu={(e) => {
-            e.preventDefault()
-            setMenu(null)
-          }}
-        >
-          <div
-            className="ctx-menu"
-            role="menu"
-            style={{ left: menu.x, top: menu.y }}
-            onPointerDown={(e) => e.stopPropagation()}
-          >
-            <button role="menuitem" onClick={() => menuAction('mute')}>
-              {menu.clip.muted ? 'Unmute' : 'Mute'}
-            </button>
-            <button role="menuitem" onClick={() => menuAction('copy')}>
-              Copy
-            </button>
-            <button role="menuitem" disabled={!canPaste} onClick={() => menuAction('paste')}>
-              Paste
-            </button>
-            <button role="menuitem" onClick={() => menuAction('duplicate')}>
-              Duplicate
-            </button>
-            <button
-              role="menuitem"
-              disabled={
-                playhead < menu.clip.offset + MIN_CLIP_LEN ||
-                playhead > menu.clip.offset + clipLen(menu.clip) - MIN_CLIP_LEN
-              }
-              onClick={() => menuAction('split')}
-            >
-              Split at playhead
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

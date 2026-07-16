@@ -55,6 +55,7 @@ export function loadProject(workdir: string): LoadedProject | null {
     ports: project.ports,
     duration: project.duration,
     tracks,
+    markers: project.markers,
     edits,
     undoSeq: project.undoSeq,
     missing
