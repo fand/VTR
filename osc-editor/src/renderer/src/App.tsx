@@ -179,7 +179,7 @@ function sliderToZoom(v: number): number {
 function App(): React.JSX.Element {
   const [recording, setRecording] = useState<{ path: string; startedAt: number } | null>(null)
   const [selectedId, setSelectedId] = useState<number | null>(null)
-  const [selectedPoint, setSelectedPoint] = useState<PointSel | null>(null)
+  const [selectedPoints, setSelectedPoints] = useState<PointSel[]>([])
   const [pxPerSec, setPxPerSec] = useState(20)
   const [curveHeight, setCurveHeight] = useState(220)
   const splitDrag = useRef<{ y: number; h: number } | null>(null)
@@ -207,7 +207,7 @@ function App(): React.JSX.Element {
     setSelectedId((id) =>
       id != null && doc.tracks.some((t) => t.clips.some((c) => c.id === id)) ? id : null
     )
-    setSelectedPoint(null)
+    setSelectedPoints([])
   }, [])
 
   const history = useHistory({ tracks: [], duration: DEFAULT_DURATION, edits: {} }, onRestore)
@@ -349,7 +349,7 @@ function App(): React.JSX.Element {
         d.tracks = d.tracks.filter((t) => t.id !== trackId)
       })
       setSelectedId(null)
-      setSelectedPoint(null)
+      setSelectedPoints([])
     },
     [commit]
   )
@@ -385,7 +385,7 @@ function App(): React.JSX.Element {
   // A curve point only makes sense within the clip it belongs to.
   const selectClip = useCallback((id: number | null) => {
     setSelectedId(id)
-    setSelectedPoint(null)
+    setSelectedPoints([])
   }, [])
 
   const selectedClip =
@@ -394,34 +394,36 @@ function App(): React.JSX.Element {
       : (tracks.flatMap((t) => t.clips).find((c) => c.id === selectedId) ?? null)
 
   const onPointEdit = useCallback(
-    (patch: PointPatch, isCommit: boolean) => {
+    (patches: PointPatch[], isCommit: boolean) => {
       const file = selectedClip?.file
-      if (!file) return
+      if (!file || patches.length === 0) return
       const apply = (d: Doc): void => {
         const clipEdits = (d.edits[file] ??= {})
         const set = (clipEdits.set ??= {})
-        const entry = (set[patch.eventIndex] ??= {})
-        if (patch.t != null) entry.t = patch.t
-        if (patch.argIndex != null && patch.value != null) {
-          ;(entry.args ??= {})[patch.argIndex] = patch.value
+        for (const patch of patches) {
+          const entry = (set[patch.eventIndex] ??= {})
+          if (patch.t != null) entry.t = patch.t
+          if (patch.argIndex != null && patch.value != null) {
+            ;(entry.args ??= {})[patch.argIndex] = patch.value
+          }
         }
       }
-      if (isCommit) commit('edit point', apply)
+      if (isCommit) commit('edit points', apply)
       else transient(apply)
     },
     [selectedClip?.file, commit, transient]
   )
 
-  const deleteSelectedPoint = useCallback(() => {
+  const deleteSelectedPoints = useCallback(() => {
     const file = selectedClip?.file
-    const pt = selectedPoint
-    if (!file || !pt) return
-    commit('delete point', (d) => {
+    if (!file || selectedPoints.length === 0) return
+    commit('delete points', (d) => {
       const clipEdits = (d.edits[file] ??= {})
-      ;(clipEdits.del ??= {})[pt.eventIndex] = true
+      const del = (clipEdits.del ??= {})
+      for (const pt of selectedPoints) del[pt.eventIndex] = true
     })
-    setSelectedPoint(null)
-  }, [selectedClip?.file, selectedPoint, commit])
+    setSelectedPoints([])
+  }, [selectedClip?.file, selectedPoints, commit])
 
   const stopPreview = useCallback(async () => {
     try {
@@ -512,8 +514,8 @@ function App(): React.JSX.Element {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key !== 'Delete' && e.key !== 'Backspace') return
       if (isTextInput(e.target)) return
-      if (selectedPoint != null) {
-        deleteSelectedPoint()
+      if (selectedPoints.length > 0) {
+        deleteSelectedPoints()
         return
       }
       if (selectedId == null) return
@@ -524,7 +526,7 @@ function App(): React.JSX.Element {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [selectedId, selectedPoint, deleteSelectedPoint, commit])
+  }, [selectedId, selectedPoints, deleteSelectedPoints, commit])
 
   // Undo/redo arrives two ways: the Edit menu (real usage — its accelerator
   // swallows the native Cmd+Z) and a keydown fallback (synthetic input, e.g.
@@ -665,8 +667,8 @@ function App(): React.JSX.Element {
         clip={selectedClip}
         height={curveHeight}
         edits={selectedClip ? edits[selectedClip.file] : undefined}
-        selectedPoint={selectedPoint}
-        onSelectPoint={setSelectedPoint}
+        selectedPoints={selectedPoints}
+        onSelectPoints={setSelectedPoints}
         onPointEdit={onPointEdit}
       />
 

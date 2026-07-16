@@ -165,3 +165,85 @@ test('curve panel: drag and delete points, edits persisted to sidecar', async ()
     await app.close()
   }
 })
+
+test('curve panel: marquee selects multiple points, group drag and delete', async () => {
+  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  writeFileSync(
+    join(workdir, CLIP),
+    jsonl([
+      { type: 'session_start', t: 0, wall: '2026-07-16T00:00:00Z' },
+      { t: 0.2, port: LISTEN_PORT, a: '/fader', args: [0.1] },
+      { t: 0.8, port: LISTEN_PORT, a: '/fader', args: [0.5] },
+      { t: 1.4, port: LISTEN_PORT, a: '/fader', args: [0.9] },
+      { type: 'session_end', t: 2 }
+    ])
+  )
+  writeFileSync(
+    join(workdir, 'project.json'),
+    JSON.stringify({
+      version: 1,
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT, beacon: BEACON_PORT },
+      duration: 10,
+      tracks: [{ clips: [{ file: CLIP, offset: 0, trimIn: 0, trimOut: 2 }] }]
+    })
+  )
+
+  const app = await electron.launch({
+    args: [join(__dirname, '../out/main/index.js')],
+    cwd: workdir,
+    env: {
+      ...process.env,
+      OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
+      OSC_EDITOR_HIDDEN: '1'
+    }
+  })
+  try {
+    const page = await app.firstWindow()
+    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await page.locator('.clip').click()
+    await expect(page.locator('circle')).toHaveCount(3)
+
+    // Rubber-band across the whole editor: all 3 points selected.
+    const box = (await page.locator('.curve-editor').boundingBox())!
+    await page.mouse.move(box.x + 4, box.y + 4)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width - 4, box.y + box.height - 4, { steps: 5 })
+    await expect(page.locator('.curve-marquee')).toHaveCount(1)
+    await page.mouse.up()
+    await expect(page.locator('circle.selected')).toHaveCount(3)
+
+    // Dragging one selected point moves the whole group.
+    const mid = page.locator('circle').nth(1)
+    const midBox = (await mid.boundingBox())!
+    await page.mouse.move(midBox.x + midBox.width / 2, midBox.y + midBox.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(midBox.x + midBox.width / 2 + 40, midBox.y + midBox.height / 2, {
+      steps: 5
+    })
+    await page.mouse.up()
+    const sidecar = join(workdir, `${CLIP}.edits.json`)
+    await expect
+      .poll(() => {
+        try {
+          return Object.keys(JSON.parse(readFileSync(sidecar, 'utf8')).set ?? {}).length
+        } catch {
+          return 0
+        }
+      })
+      .toBe(3)
+    const set = JSON.parse(readFileSync(sidecar, 'utf8')).set
+    expect(set['0'].t).toBeGreaterThan(0.2)
+    expect(set['2'].t).toBeGreaterThan(1.4)
+
+    // Group stays selected; Delete removes all of them.
+    await expect(page.locator('circle.selected')).toHaveCount(3)
+    await page.keyboard.press('Delete')
+    await expect(page.locator('circle')).toHaveCount(0)
+    await expect(page.locator('.clip')).toHaveCount(1)
+
+    // A plain click on empty space clears the marquee selection state (no crash).
+    await page.mouse.click(box.x + 10, box.y + 10)
+  } finally {
+    await app.close()
+  }
+})
