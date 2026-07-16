@@ -78,6 +78,8 @@ export interface UndoEntry {
 export interface ProjectClip {
   /** Clip file name, relative to the working directory. */
   file: string
+  /** User-given name; the UI falls back to the file name. */
+  name?: string
   /** Timeline seconds where the trimmed clip head sits. */
   offset: number
   /** Clip-local start, seconds. */

@@ -13,6 +13,8 @@ export interface ClipInst {
   id: number
   /** File name relative to workdir. */
   file: string
+  /** User-given name; the UI falls back to the file name. */
+  name?: string
   /** Absolute path. */
   path: string
   /** Timeline seconds where the trimmed clip head sits. */
@@ -65,8 +67,9 @@ export function serializeProject(
     undoSeq,
     tracks: tracks.map((track) => ({
       name: track.name,
-      clips: track.clips.map(({ file, offset, trimIn, trimOut }) => ({
+      clips: track.clips.map(({ file, name, offset, trimIn, trimOut }) => ({
         file,
+        name,
         offset,
         trimIn,
         trimOut
@@ -82,6 +85,7 @@ export function tracksFromProject(project: LoadedProject, nextId: () => number):
     clips: track.clips.map((c) => ({
       id: nextId(),
       file: c.file,
+      name: c.name,
       path: c.path,
       offset: c.offset,
       trimIn: c.trimIn,

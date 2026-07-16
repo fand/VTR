@@ -40,36 +40,37 @@ interface TimelineProps {
   onAddTrack: () => void
   onDeleteTrack: (trackId: number) => void
   onRenameTrack: (trackId: number, name: string) => void
+  onRenameClip: (clipId: number, name: string) => void
 }
 
 const LABEL_W = 96
 
-/** Double-click to edit. Enter/blur commits, Escape cancels, empty resets. */
+/**
+ * Double-click to edit. Enter/blur commits, Escape cancels, empty resets.
+ * Editing state lives in the parent: a clip's pointer capture retargets the
+ * dblclick to the clip div, so the clip must be able to start the edit too.
+ */
 export function EditableLabel({
   value,
   placeholder,
   ariaLabel,
+  editing,
+  onEditStart,
+  onEditEnd,
   onRename
 }: {
   value: string | undefined
   placeholder: string
   ariaLabel: string
+  editing: boolean
+  onEditStart: () => void
+  onEditEnd: () => void
   onRename: (name: string) => void
 }): React.JSX.Element {
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState('')
   const cancelled = useRef(false)
   if (!editing) {
     return (
-      <span
-        className="editable-label"
-        title="double-click to rename"
-        onDoubleClick={() => {
-          setDraft(value ?? '')
-          cancelled.current = false
-          setEditing(true)
-        }}
-      >
+      <span className="editable-label" title="double-click to rename" onDoubleClick={onEditStart}>
         {value ?? placeholder}
       </span>
     )
@@ -78,11 +79,11 @@ export function EditableLabel({
     <input
       className="rename-input"
       autoFocus
-      value={draft}
+      defaultValue={value ?? ''}
       aria-label={ariaLabel}
       onFocus={(e) => e.currentTarget.select()}
-      onChange={(e) => setDraft(e.target.value)}
       onPointerDown={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
       onKeyDown={(e) => {
         e.stopPropagation()
         if (e.key === 'Enter') e.currentTarget.blur()
@@ -91,10 +92,12 @@ export function EditableLabel({
           e.currentTarget.blur()
         }
       }}
-      onBlur={() => {
-        setEditing(false)
-        const name = draft.trim()
-        if (!cancelled.current && name !== (value ?? '')) onRename(name)
+      onBlur={(e) => {
+        const name = e.currentTarget.value.trim()
+        const wasCancelled = cancelled.current
+        cancelled.current = false
+        onEditEnd()
+        if (!wasCancelled && name !== (value ?? '')) onRename(name)
       }}
     />
   )
@@ -155,12 +158,14 @@ export function Timeline({
   onTracksChange,
   onAddTrack,
   onDeleteTrack,
-  onRenameTrack
+  onRenameTrack,
+  onRenameClip
 }: TimelineProps): React.JSX.Element {
   const drag = useRef<Drag | null>(null)
   // Vertical move preview: the clip stays in its DOM parent during the drag
   // (re-parenting would kill pointer capture) and is shifted with translateY.
   const [dragRow, setDragRow] = useState<{ clipId: number; delta: number } | null>(null)
+  const [renaming, setRenaming] = useState<{ kind: 'track' | 'clip'; id: number } | null>(null)
 
   const applyDrag = (e: React.PointerEvent, commit: boolean): void => {
     const d = drag.current
@@ -287,6 +292,9 @@ export function Timeline({
                 value={track.name}
                 placeholder={`Track ${trackIdx + 1}`}
                 ariaLabel={`rename track ${trackIdx + 1}`}
+                editing={renaming?.kind === 'track' && renaming.id === track.id}
+                onEditStart={() => setRenaming({ kind: 'track', id: track.id })}
+                onEditEnd={() => setRenaming(null)}
                 onRename={(name) => onRenameTrack(track.id, name)}
               />
               <button
@@ -323,8 +331,21 @@ export function Timeline({
                   onPointerDown={(e) => onClipPointerDown(e, clip, trackIdx)}
                   onPointerMove={onClipPointerMove}
                   onPointerUp={onClipPointerUp}
+                  // Pointer capture retargets the dblclick from the label
+                  // span to this div, so the rename trigger lives here.
+                  onDoubleClick={() => setRenaming({ kind: 'clip', id: clip.id })}
                 >
-                  <span className="clip-name">{clip.file}</span>
+                  <span className="clip-name">
+                    <EditableLabel
+                      value={clip.name}
+                      placeholder={clip.file}
+                      ariaLabel={`rename clip ${clip.file}`}
+                      editing={renaming?.kind === 'clip' && renaming.id === clip.id}
+                      onEditStart={() => setRenaming({ kind: 'clip', id: clip.id })}
+                      onEditEnd={() => setRenaming(null)}
+                      onRename={(name) => onRenameClip(clip.id, name)}
+                    />
+                  </span>
                   <span className="clip-meta">
                     {clipLen(clip).toFixed(1)}s · {clip.summary.events} ev
                     {clip.summary.tlOffset != null && ' · tl'}
