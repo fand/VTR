@@ -64,6 +64,12 @@ test('curve panel: properties per address/arg, visibility toggle', async () => {
     // Circles: 3 fader points + 2×2 xy points.
     await expect(page.locator('circle')).toHaveCount(7)
 
+    // Hover a point: tooltip with property, value and time; leaves on move-away.
+    await page.locator('circle').nth(1).hover()
+    await expect(page.locator('.curve-tooltip')).toHaveText('/fader: 0.5 @ 0.8s')
+    await page.mouse.move(1, 1)
+    await expect(page.locator('.curve-tooltip')).toHaveCount(0)
+
     // Grid: time + value lines, value labels on /fader's scale (0.1…0.9 → 0.1 step).
     expect(await page.locator('.curve-grid-line').count()).toBeGreaterThan(5)
     await expect(page.locator('.curve-grid-label').filter({ hasText: /^0\.5$/ })).toHaveCount(1)

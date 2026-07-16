@@ -538,6 +538,16 @@ body {
   touch-action: none;
 }
 
+.curve-tooltip {
+  font-family: var(--mono);
+  font-size: 10px;
+  fill: var(--text);
+  paint-order: stroke;
+  stroke: rgba(12, 13, 16, 0.85);
+  stroke-width: 3px;
+  pointer-events: none;
+}
+
 .curve-marquee {
   fill: rgba(77, 163, 255, 0.15);
   stroke: var(--accent);
