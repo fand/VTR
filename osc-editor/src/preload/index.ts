@@ -1,12 +1,18 @@
-import { contextBridge } from 'electron'
+import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
+import type { ClipSummary, TapStatus } from '../shared/types'
 
-// Custom APIs for renderer
-const api = {}
+const api = {
+  tap: {
+    start: (): Promise<string> => ipcRenderer.invoke('tap:start'),
+    stop: (clipPath: string): Promise<ClipSummary> => ipcRenderer.invoke('tap:stop', clipPath),
+    status: (): Promise<TapStatus> => ipcRenderer.invoke('tap:status')
+  },
+  workdir: (): Promise<string> => ipcRenderer.invoke('app:workdir')
+}
 
-// Use `contextBridge` APIs to expose Electron APIs to
-// renderer only if context isolation is enabled, otherwise
-// just add to the DOM global.
+export type Api = typeof api
+
 if (process.contextIsolated) {
   try {
     contextBridge.exposeInMainWorld('electron', electronAPI)

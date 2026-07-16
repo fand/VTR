@@ -1,13 +1,38 @@
 import { app, shell, BrowserWindow, ipcMain } from 'electron'
+import { existsSync } from 'fs'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
+import { clipSummary } from './clips'
+import { TapManager } from './tap'
+
+// Working directory: cwd when launched from the CLI (per spec).
+const workdir = process.cwd()
+
+let tap: TapManager | null = null
+let tapError: string | null = null
+
+function findTapBinary(): string {
+  const candidates = [
+    process.env.OSC_TAP_BIN,
+    join(app.getAppPath(), '../osc-tap/target/release/osc-tap'),
+    join(app.getAppPath(), '../osc-tap/target/debug/osc-tap')
+  ].filter((p): p is string => !!p)
+  for (const p of candidates) {
+    if (existsSync(p)) return p
+  }
+  throw new Error(`osc-tap binary not found (tried ${candidates.join(', ')}); set OSC_TAP_BIN`)
+}
+
+function requireTap(): TapManager {
+  if (!tap) throw new Error(tapError ?? 'osc-tap not running')
+  return tap
+}
 
 function createWindow(): void {
-  // Create the browser window.
   const mainWindow = new BrowserWindow({
-    width: 900,
-    height: 670,
+    width: 1200,
+    height: 700,
     show: false,
     autoHideMenuBar: true,
     ...(process.platform === 'linux' ? { icon } : {}),
@@ -26,8 +51,6 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
-  // HMR for renderer base on electron-vite cli.
-  // Load the remote URL for development or the local html file for production.
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
@@ -35,40 +58,40 @@ function createWindow(): void {
   }
 }
 
-// This method will be called when Electron has finished
-// initialization and is ready to create browser windows.
-// Some APIs can only be used after this event occurs.
 app.whenReady().then(() => {
-  // Set app user model id for windows
-  electronApp.setAppUserModelId('com.electron')
+  electronApp.setAppUserModelId('com.osc-mtr.editor')
 
-  // Default open or close DevTools by F12 in development
-  // and ignore CommandOrControl + R in production.
-  // see https://github.com/alex8088/electron-toolkit/tree/master/packages/utils
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  // IPC test
-  ipcMain.on('ping', () => console.log('pong'))
+  try {
+    tap = new TapManager(findTapBinary(), workdir)
+    tap.spawnTap()
+  } catch (e) {
+    tapError = (e as Error).message
+    console.error(tapError)
+  }
+
+  ipcMain.handle('tap:start', () => requireTap().start())
+  ipcMain.handle('tap:stop', async (_e, clipPath: string) => {
+    await requireTap().stop()
+    return clipSummary(clipPath)
+  })
+  ipcMain.handle('tap:status', () => requireTap().status())
+  ipcMain.handle('app:workdir', () => workdir)
 
   createWindow()
 
   app.on('activate', function () {
-    // On macOS it's common to re-create a window in the app when the
-    // dock icon is clicked and there are no other windows open.
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 })
 
-// Quit when all windows are closed, except on macOS. There, it's common
-// for applications and their menu bar to stay active until the user quits
-// explicitly with Cmd + Q.
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit()
-  }
+app.on('will-quit', () => {
+  tap?.shutdown()
 })
 
-// In this file you can include the rest of your app's specific main process
-// code. You can also put them in separate files and require them here.
+app.on('window-all-closed', () => {
+  app.quit()
+})
