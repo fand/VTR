@@ -62,22 +62,17 @@ export function serializeProject(
   }
 }
 
-export function tracksFromProject(
-  project: LoadedProject,
-  nextId: () => number
-): TrackState[] {
-  return project.tracks
-    .filter((t) => t.clips.length > 0)
-    .map((track) => ({
+export function tracksFromProject(project: LoadedProject, nextId: () => number): TrackState[] {
+  return project.tracks.map((track) => ({
+    id: nextId(),
+    clips: track.clips.map((c) => ({
       id: nextId(),
-      clips: track.clips.map((c) => ({
-        id: nextId(),
-        file: c.file,
-        path: c.path,
-        offset: c.offset,
-        trimIn: c.trimIn,
-        trimOut: c.trimOut,
-        summary: c.summary
-      }))
+      file: c.file,
+      path: c.path,
+      offset: c.offset,
+      trimIn: c.trimIn,
+      trimOut: c.trimOut,
+      summary: c.summary
     }))
+  }))
 }

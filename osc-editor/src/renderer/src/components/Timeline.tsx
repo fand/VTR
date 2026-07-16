@@ -35,6 +35,8 @@ interface TimelineProps {
   onSeek: (sec: number) => void
   onSelect: (id: number | null) => void
   onTracksChange: (tracks: TrackState[], commit: boolean) => void
+  onAddTrack: () => void
+  onDeleteTrack: (trackId: number) => void
 }
 
 const LABEL_W = 96
@@ -91,7 +93,9 @@ export function Timeline({
   playing,
   onSeek,
   onSelect,
-  onTracksChange
+  onTracksChange,
+  onAddTrack,
+  onDeleteTrack
 }: TimelineProps): React.JSX.Element {
   const drag = useRef<Drag | null>(null)
   // Vertical move preview: the clip stays in its DOM parent during the drag
@@ -210,7 +214,18 @@ export function Timeline({
 
         {tracks.map((track, trackIdx) => (
           <div className="track" key={track.id} style={{ height: TRACK_HEIGHT }}>
-            <div className="track-label">Track {trackIdx + 1}</div>
+            <div className="track-label">
+              <span>Track {trackIdx + 1}</span>
+              <button
+                className="track-del"
+                title="delete track"
+                aria-label={`delete track ${trackIdx + 1}`}
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={() => onDeleteTrack(track.id)}
+              >
+                ×
+              </button>
+            </div>
             <div
               className="track-lane"
               style={{ width: widthPx }}
@@ -260,6 +275,16 @@ export function Timeline({
             </div>
           </div>
         )}
+
+        <div className="add-track">
+          <button
+            className="btn small"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={onAddTrack}
+          >
+            + Track
+          </button>
+        </div>
 
         {tracks.length === 0 && !recordingRow && (
           <div className="empty">No clips. Hit ● Rec to record incoming OSC.</div>

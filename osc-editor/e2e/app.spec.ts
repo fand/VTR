@@ -94,12 +94,14 @@ test('record → clip on track → drag → delete → persisted', async () => {
     expect(dragged.tracks[0].clips[0].offset).toBeGreaterThan(4)
     expect(dragged.tracks[0].clips[0].offset).toBeLessThan(6)
 
-    // Delete the selected clip.
+    // Delete the selected clip; the (now empty) track stays.
     await clip.click()
     await page.keyboard.press('Delete')
     await expect(page.locator('.clip')).toHaveCount(0)
+    await expect(page.locator('.track')).toHaveCount(1)
     await sleep(600)
-    expect(readProject(workdir).tracks).toHaveLength(0)
+    expect(readProject(workdir).tracks).toHaveLength(1)
+    expect(readProject(workdir).tracks[0].clips).toHaveLength(0)
   } finally {
     sock.close()
     await app.close()
@@ -136,5 +138,37 @@ test('beacon → tl recorded → clip auto-aligned at record stop', async () => 
     clearInterval(beacon)
     sock.close()
     await app.close()
+  }
+})
+
+test('tracks can be added and deleted without clips', async () => {
+  const { app, page, workdir } = await launchApp()
+  try {
+    await page.getByRole('button', { name: '+ Track' }).click()
+    await page.getByRole('button', { name: '+ Track' }).click()
+    await expect(page.locator('.track')).toHaveCount(2)
+    await expect.poll(() => readProject(workdir).tracks.length).toBe(2)
+
+    await page.locator('.track-label').first().hover()
+    await page.getByLabel('delete track 1').click()
+    await expect(page.locator('.track')).toHaveCount(1)
+    await expect.poll(() => readProject(workdir).tracks.length).toBe(1)
+
+    // Empty tracks survive a relaunch.
+    await app.close()
+    const relaunch = await electron.launch({
+      args: [join(__dirname, '../out/main/index.js')],
+      cwd: workdir,
+      env: {
+        ...process.env,
+        OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
+        OSC_EDITOR_HIDDEN: '1'
+      }
+    })
+    const page2 = await relaunch.firstWindow()
+    await expect(page2.locator('.track')).toHaveCount(1)
+    await relaunch.close()
+  } finally {
+    await app.close().catch(() => {})
   }
 })

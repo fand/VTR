@@ -274,6 +274,35 @@ body {
   position: sticky;
   left: 0;
   z-index: 15;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.track-del {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.track-label:hover .track-del {
+  opacity: 1;
+}
+
+.track-del:hover {
+  color: var(--text);
+}
+
+.add-track {
+  padding: 6px 8px;
+  position: sticky;
+  left: 0;
+  width: 96px;
 }
 
 .track-lane {

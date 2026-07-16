@@ -7,12 +7,7 @@ import {
 } from '../../shared/types'
 import { PlayingState, Timeline } from './components/Timeline'
 import { evalExpr } from './expr'
-import {
-  TrackState,
-  alignClip,
-  serializeProject,
-  tracksFromProject
-} from './timeline/model'
+import { TrackState, alignClip, serializeProject, tracksFromProject } from './timeline/model'
 
 const MIN_PX_PER_SEC = 2
 const MAX_PX_PER_SEC = 400
@@ -58,7 +53,11 @@ function Timecode({
   else if (playing != null) {
     secs = Math.min(playing.startPos + (now - playing.startedAt) / 1000, playing.duration)
   }
-  return <div className={recStartedAt != null ? 'timecode rec' : 'timecode'}>{formatTimecode(Math.max(0, secs))}</div>
+  return (
+    <div className={recStartedAt != null ? 'timecode rec' : 'timecode'}>
+      {formatTimecode(Math.max(0, secs))}
+    </div>
+  )
 }
 
 function NumField({
@@ -221,13 +220,10 @@ function App(): React.JSX.Element {
     return () => clearTimeout(timer)
   }, [loaded, tracks, ports, duration])
 
-  const changePorts = useCallback(
-    (next: PortConfig) => {
-      setPorts(next)
-      window.api.tap.setPorts(next).catch((e: Error) => setError(e.message))
-    },
-    []
-  )
+  const changePorts = useCallback((next: PortConfig) => {
+    setPorts(next)
+    window.api.tap.setPorts(next).catch((e: Error) => setError(e.message))
+  }, [])
 
   useEffect(() => {
     const poll = (): void => {
@@ -280,8 +276,18 @@ function App(): React.JSX.Element {
     }
   }, [recording, busy, newId])
 
-  const onTracksChange = useCallback((next: TrackState[], commit: boolean) => {
-    setTracks(commit ? next.filter((t) => t.clips.length > 0) : next)
+  // Tracks live independently of clips: emptying one no longer removes it.
+  const onTracksChange = useCallback((next: TrackState[]) => {
+    setTracks(next)
+  }, [])
+
+  const addTrack = useCallback(() => {
+    setTracks((ts) => [...ts, { id: newId(), clips: [] }])
+  }, [newId])
+
+  const deleteTrack = useCallback((trackId: number) => {
+    setTracks((ts) => ts.filter((t) => t.id !== trackId))
+    setSelectedId(null)
   }, [])
 
   const stopPreview = useCallback(async () => {
@@ -301,10 +307,7 @@ function App(): React.JSX.Element {
     }
     if (tracks.length === 0) return
     try {
-      const res = await window.api.preview.play(
-        serializeProject(tracks, ports, duration),
-        playhead
-      )
+      const res = await window.api.preview.play(serializeProject(tracks, ports, duration), playhead)
       setPlaying({ startPos: playhead, startedAt: performance.now(), duration: res.duration })
       setError(null)
     } catch (e) {
@@ -367,9 +370,7 @@ function App(): React.JSX.Element {
       if (e.key !== 'Delete' && e.key !== 'Backspace') return
       if (selectedId == null || isTextInput(e.target)) return
       setTracks((ts) =>
-        ts
-          .map((t) => ({ ...t, clips: t.clips.filter((c) => c.id !== selectedId) }))
-          .filter((t) => t.clips.length > 0)
+        ts.map((t) => ({ ...t, clips: t.clips.filter((c) => c.id !== selectedId) }))
       )
       setSelectedId(null)
     }
@@ -465,6 +466,8 @@ function App(): React.JSX.Element {
         onSeek={onSeek}
         onSelect={setSelectedId}
         onTracksChange={onTracksChange}
+        onAddTrack={addTrack}
+        onDeleteTrack={deleteTrack}
       />
 
       <div className="tl-toolbar">
