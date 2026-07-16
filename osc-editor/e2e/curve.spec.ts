@@ -64,9 +64,18 @@ test('curve panel: properties per address/arg, visibility toggle', async () => {
     // Circles: 3 fader points + 2×2 xy points.
     await expect(page.locator('circle')).toHaveCount(7)
 
-    // Hover a point: tooltip with property, value and time; leaves on move-away.
-    await page.locator('circle').nth(1).hover()
+    // The tooltip always shows the point nearest to the cursor, not only on
+    // exact point hover.
+    const mid = (await page.locator('circle').nth(1).boundingBox())!
+    await page.mouse.move(mid.x + mid.width / 2 + 10, mid.y + mid.height / 2 + 5)
     await expect(page.locator('.curve-tooltip')).toHaveText('/fader: 0.5 @ 0.8s')
+    // With a property selected, only its points compete.
+    await page.locator('.curve-prop-name', { hasText: '/xy[1]' }).click()
+    const editorBox = (await page.locator('.curve-editor').boundingBox())!
+    await page.mouse.move(editorBox.x + 15, editorBox.y + editorBox.height / 2)
+    await expect(page.locator('.curve-tooltip')).toHaveText('/xy[1]: 0.2 @ 0.5s')
+    await page.locator('.curve-prop-name', { hasText: '/xy[1]' }).click()
+    // Tooltip clears when the cursor leaves the editor.
     await page.mouse.move(1, 1)
     await expect(page.locator('.curve-tooltip')).toHaveCount(0)
 
