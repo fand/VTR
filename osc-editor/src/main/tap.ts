@@ -8,6 +8,7 @@ import { DEFAULT_PORTS, type PortConfig, type TapStatus } from '../shared/types'
 const REQUEST_TIMEOUT_MS = 3000
 const CONNECT_DEADLINE_MS = 5000
 const RESPAWN_DELAY_MS = 1000
+const RESPAWN_DELAY_MAX_MS = 10_000
 
 /**
  * child: osc-tap is our child process; we respawn it on crash.
@@ -39,6 +40,8 @@ export class TapManager {
   private pending: Pending[] = []
   private buf = ''
   private stopping = false
+  private respawnDelay = RESPAWN_DELAY_MS
+  private spawnedAt = 0
 
   private _ports: PortConfig
 
@@ -97,13 +100,18 @@ export class TapManager {
     const proc = spawn(this.bin, [...this.tapArgs(), '--exit-on-stdin-close'], {
       stdio: ['pipe', 'ignore', 'pipe']
     })
+    this.spawnedAt = Date.now()
     proc.stderr?.on('data', (d: Buffer) => console.log(`[osc-tap] ${d.toString().trimEnd()}`))
     proc.on('exit', (code, signal) => {
       this.proc = null
       this.dropConnection(new Error('osc-tap exited'))
       if (!this.stopping) {
-        console.log(`osc-tap exited (${code ?? signal}), respawning in ${RESPAWN_DELAY_MS}ms`)
-        setTimeout(() => this.spawnTap(), RESPAWN_DELAY_MS)
+        // Back off when the tap dies right after spawning (bad args, port in use…).
+        const lived = Date.now() - this.spawnedAt
+        this.respawnDelay =
+          lived < 2000 ? Math.min(this.respawnDelay * 2, RESPAWN_DELAY_MAX_MS) : RESPAWN_DELAY_MS
+        console.log(`osc-tap exited (${code ?? signal}), respawning in ${this.respawnDelay}ms`)
+        setTimeout(() => this.spawnTap(), this.respawnDelay)
       }
     })
     proc.on('error', (e) => {

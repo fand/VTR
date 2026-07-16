@@ -1,5 +1,5 @@
 import { app, shell, BrowserWindow, ipcMain } from 'electron'
-import { existsSync } from 'fs'
+import { existsSync, statSync } from 'fs'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -18,15 +18,20 @@ let tap: TapManager | null = null
 let tapError: string | null = null
 
 function findTapBinary(): string {
+  if (process.env.OSC_TAP_BIN) {
+    if (existsSync(process.env.OSC_TAP_BIN)) return process.env.OSC_TAP_BIN
+    throw new Error(`OSC_TAP_BIN not found: ${process.env.OSC_TAP_BIN}`)
+  }
+  // Pick the most recently built one so a stale release/debug build never wins.
   const candidates = [
-    process.env.OSC_TAP_BIN,
     join(app.getAppPath(), '../osc-tap/target/release/osc-tap'),
     join(app.getAppPath(), '../osc-tap/target/debug/osc-tap')
-  ].filter((p): p is string => !!p)
-  for (const p of candidates) {
-    if (existsSync(p)) return p
+  ].filter(existsSync)
+  if (candidates.length === 0) {
+    throw new Error('osc-tap binary not found (build osc-tap or set OSC_TAP_BIN)')
   }
-  throw new Error(`osc-tap binary not found (tried ${candidates.join(', ')}); set OSC_TAP_BIN`)
+  candidates.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)
+  return candidates[0]
 }
 
 function requireTap(): TapManager {
