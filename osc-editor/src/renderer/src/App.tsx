@@ -131,7 +131,7 @@ function NumField({
       : {}
   return (
     <label className="port-field">
-      {label}
+      <span className="port-field-label">{label}</span>
       <input
         value={draft}
         disabled={disabled ?? false}
@@ -560,35 +560,30 @@ function App(): React.JSX.Element {
         </button>
         <div className="spacer" />
         <div className="ports-group">
-          <div className="ports-row">
-            <NumField
-              label="in"
-              ariaLabel="in port"
-              value={ports.listen}
-              disabled={!!recording || !!playing}
-              parse={parsePort}
-              onCommit={(listen) => changePorts({ ...ports, listen })}
-            />
-            <span className="port-arrow">→</span>
-            <NumField
-              label="out"
-              ariaLabel="out port"
-              value={ports.forward}
-              disabled={!!recording || !!playing}
-              parse={parsePort}
-              onCommit={(forward) => changePorts({ ...ports, forward })}
-            />
-          </div>
-          <div className="ports-row">
-            <NumField
-              label="clock"
-              ariaLabel="clock port"
-              value={ports.beacon}
-              disabled={!!recording || !!playing}
-              parse={parsePort}
-              onCommit={(beacon) => changePorts({ ...ports, beacon })}
-            />
-          </div>
+          <NumField
+            label="in"
+            ariaLabel="in port"
+            value={ports.listen}
+            disabled={!!recording || !!playing}
+            parse={parsePort}
+            onCommit={(listen) => changePorts({ ...ports, listen })}
+          />
+          <NumField
+            label="out"
+            ariaLabel="out port"
+            value={ports.forward}
+            disabled={!!recording || !!playing}
+            parse={parsePort}
+            onCommit={(forward) => changePorts({ ...ports, forward })}
+          />
+          <NumField
+            label="clock"
+            ariaLabel="clock port"
+            value={ports.beacon}
+            disabled={!!recording || !!playing}
+            parse={parsePort}
+            onCommit={(beacon) => changePorts({ ...ports, beacon })}
+          />
         </div>
         <button className="btn" onClick={doExport} disabled={tracks.length === 0 || !!recording}>
           Export

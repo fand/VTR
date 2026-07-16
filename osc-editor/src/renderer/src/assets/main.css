@@ -133,24 +133,20 @@ body {
   touch-action: none;
 }
 
-.port-arrow {
-  color: var(--text-dim);
-  font-family: var(--mono);
-}
-
+/* Labels on top, inputs below, one column per port. */
 .ports-group {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: auto auto;
+  column-gap: 8px;
+  row-gap: 2px;
 }
 
-.ports-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
+.ports-group .port-field {
+  display: contents;
 }
 
-.ports-row .port-field input {
+.ports-group .port-field input {
   padding: 1px 6px;
 }
 
