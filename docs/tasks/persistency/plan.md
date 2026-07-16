@@ -1,6 +1,7 @@
 # Curve panel + non-destructive edits + persistent undo
 
-Status: plan. Steps land as separate commits, each verified by typecheck + e2e.
+Status: done. Landed as b249688 (edits pipeline), e6157c3 (curve panel),
+aea13ef (point editing), b800678 (persistent undo/redo).
 
 ## Goals
 
