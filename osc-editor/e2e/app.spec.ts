@@ -63,7 +63,7 @@ test('record → clip on track → drag → delete → persisted', async () => {
     }
     await page.getByRole('button', { name: '■ Stop' }).click()
 
-    const clip = page.locator('.clip')
+    const clip = page.locator('.clip:not(.recording)')
     await expect(clip).toHaveCount(1)
     await expect(page.locator('.clip-meta')).toContainText('15 ev')
 
@@ -115,7 +115,7 @@ test('beacon → tl recorded → clip auto-aligned at record stop', async () => 
     }
     await page.getByRole('button', { name: '■ Stop' }).click()
 
-    const clip = page.locator('.clip')
+    const clip = page.locator('.clip:not(.recording)')
     await expect(clip).toHaveCount(1)
     // offset = median(tl - t) ≈ 100s → placed at ~100s * 20px/s ≈ 2000px.
     const left = await clip.evaluate((el) => parseFloat((el as HTMLElement).style.left))
