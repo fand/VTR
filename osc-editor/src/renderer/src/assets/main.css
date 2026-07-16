@@ -449,6 +449,33 @@ body {
   background: var(--bg-lane);
 }
 
+.curve-scroll {
+  position: absolute;
+  inset: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.curve-scroll svg {
+  display: block;
+}
+
+/* Value labels stay pinned to the left edge while the curves scroll. */
+.curve-ylabels {
+  position: absolute;
+  left: 4px;
+  top: 0;
+  pointer-events: none;
+}
+
+.curve-ylabels span {
+  position: absolute;
+  transform: translateY(-100%);
+  font-family: var(--mono);
+  font-size: 9px;
+  white-space: nowrap;
+}
+
 .curve-point {
   cursor: grab;
   touch-action: none;
