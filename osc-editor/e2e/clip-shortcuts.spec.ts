@@ -62,6 +62,14 @@ test('clip keyboard shortcuts: Cmd+C / Cmd+V copy-paste at playhead', async () =
     await page.locator('.ruler').click({ position: { x: 80, y: 10 } })
     await page.keyboard.press('ControlOrMeta+v')
     await expect(page.locator('.clip')).toHaveCount(3)
+
+    // Cmd+D duplicates the selection right after it (4s → left 80+40px).
+    await page.keyboard.press('ControlOrMeta+d')
+    await expect(page.locator('.clip')).toHaveCount(4)
+    const dupLeft = parseFloat(
+      await page.locator('.clip.selected').evaluate((el) => (el as HTMLElement).style.left)
+    )
+    expect(Math.abs(dupLeft - 120)).toBeLessThan(2)
   } finally {
     await app.close()
   }

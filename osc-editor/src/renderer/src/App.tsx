@@ -468,6 +468,21 @@ function App(): React.JSX.Element {
     [commit, newId, playhead]
   )
 
+  /** Duplicate a clip in place, right after the original. */
+  const duplicateClip = useCallback(
+    (clipId: number) => {
+      const id = newId()
+      commit('duplicate clip', (d) => {
+        const t = d.tracks.find((t) => t.clips.some((c) => c.id === clipId))
+        const c = t?.clips.find((c) => c.id === clipId)
+        if (!t || !c) return
+        t.clips.push({ ...c, id, offset: c.offset + clipLen(c) })
+      })
+      setSelectedId(id)
+    },
+    [commit, newId]
+  )
+
   const onClipAction = useCallback(
     (action: ClipAction, clipId: number) => {
       const clip = tracks.flatMap((t) => t.clips).find((c) => c.id === clipId)
@@ -491,17 +506,9 @@ function App(): React.JSX.Element {
           pasteClip(tracks.find((t) => t.clips.some((c) => c.id === clipId))?.id)
           break
         }
-        case 'duplicate': {
-          const id = newId()
-          commit('duplicate clip', (d) => {
-            const c = inDoc(d)
-            if (!c) return
-            const t = d.tracks.find((t) => t.clips.some((c) => c.id === clipId))
-            t?.clips.push({ ...c, id, offset: c.offset + clipLen(c) })
-          })
-          setSelectedId(id)
+        case 'duplicate':
+          duplicateClip(clipId)
           break
-        }
         case 'split': {
           // Cut point in clip-local seconds; both halves keep a playable length.
           const local = clip.trimIn + (playhead - clip.offset)
@@ -518,7 +525,7 @@ function App(): React.JSX.Element {
         }
       }
     },
-    [tracks, playhead, commit, newId, copyClip, pasteClip]
+    [tracks, playhead, commit, newId, copyClip, pasteClip, duplicateClip]
   )
 
   // Cmd+C/Cmd+V on clips. The Edit menu handles the native text-field side
@@ -543,6 +550,10 @@ function App(): React.JSX.Element {
       const k = e.key.toLowerCase()
       if (k === 'c') copySelected()
       else if (k === 'v') pasteAtPlayhead()
+      else if (k === 'd') {
+        e.preventDefault()
+        if (selectedId != null) duplicateClip(selectedId)
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => {
@@ -550,7 +561,7 @@ function App(): React.JSX.Element {
       offPaste()
       window.removeEventListener('keydown', onKey)
     }
-  }, [copySelected, pasteAtPlayhead])
+  }, [copySelected, pasteAtPlayhead, selectedId, duplicateClip])
 
   // A curve point only makes sense within the clip it belongs to.
   const selectClip = useCallback((id: number | null) => {
