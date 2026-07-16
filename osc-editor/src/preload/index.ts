@@ -41,8 +41,8 @@ const api = {
     truncateAfter: (seq: number): Promise<void> => ipcRenderer.invoke('undo:truncateAfter', seq)
   },
   menu: {
-    /** Subscribe to Edit-menu undo/redo (menu accelerators eat Cmd+Z). */
-    on: (channel: 'undo' | 'redo', cb: () => void): (() => void) => {
+    /** Subscribe to Edit-menu actions (menu accelerators eat their keydowns). */
+    on: (channel: 'undo' | 'redo' | 'copy' | 'paste', cb: () => void): (() => void) => {
       const listener = (): void => cb()
       ipcRenderer.on(`menu:${channel}`, listener)
       return () => ipcRenderer.removeListener(`menu:${channel}`, listener)

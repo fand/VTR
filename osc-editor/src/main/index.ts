@@ -87,6 +87,14 @@ function installMenu(): void {
   const send = (channel: string) => (): void => {
     BrowserWindow.getAllWindows()[0]?.webContents.send(channel)
   }
+  // Copy/Paste do the native text-field action here (a no-op without an
+  // editable focus) and also notify the renderer, which handles clips.
+  const sendWithNative = (channel: string, native: 'copy' | 'paste') => (): void => {
+    const wc = BrowserWindow.getAllWindows()[0]?.webContents
+    if (!wc) return
+    wc[native]()
+    wc.send(channel)
+  }
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
       ...(process.platform === 'darwin' ? [{ role: 'appMenu' } as const] : []),
@@ -97,8 +105,12 @@ function installMenu(): void {
           { label: 'Redo', accelerator: 'Shift+CmdOrCtrl+Z', click: send('menu:redo') },
           { type: 'separator' },
           { role: 'cut' },
-          { role: 'copy' },
-          { role: 'paste' },
+          { label: 'Copy', accelerator: 'CmdOrCtrl+C', click: sendWithNative('menu:copy', 'copy') },
+          {
+            label: 'Paste',
+            accelerator: 'CmdOrCtrl+V',
+            click: sendWithNative('menu:paste', 'paste')
+          },
           { role: 'selectAll' }
         ]
       },

@@ -433,10 +433,40 @@ function App(): React.JSX.Element {
     [commit]
   )
 
-  // Clip clipboard for the context menu. Session-local, not the OS clipboard.
-  // Paste overrides id/offset, so storing the stale id is harmless.
-  const clipClipboard = useRef<ClipInst | null>(null)
+  // Clip clipboard (session-local, not the OS clipboard). Paste overrides
+  // id/offset, so storing the stale id is harmless; the source track id
+  // is the paste target when no other track is implied.
+  const clipClipboard = useRef<{ clip: ClipInst; trackId: number } | null>(null)
   const [canPaste, setCanPaste] = useState(false)
+
+  const copyClip = useCallback(
+    (clipId: number) => {
+      const t = tracks.find((t) => t.clips.some((c) => c.id === clipId))
+      const clip = t?.clips.find((c) => c.id === clipId)
+      if (!t || !clip) return
+      clipClipboard.current = { clip, trackId: t.id }
+      setCanPaste(true)
+    },
+    [tracks]
+  )
+
+  /** Paste at the playhead, onto targetTrackId ?? the copy's source track. */
+  const pasteClip = useCallback(
+    (targetTrackId?: number) => {
+      const src = clipClipboard.current
+      if (!src) return
+      const id = newId()
+      commit('paste clip', (d) => {
+        const t =
+          d.tracks.find((t) => t.id === targetTrackId) ??
+          d.tracks.find((t) => t.id === src.trackId) ??
+          d.tracks[0]
+        t?.clips.push({ ...src.clip, id, offset: playhead })
+      })
+      setSelectedId(id)
+    },
+    [commit, newId, playhead]
+  )
 
   const onClipAction = useCallback(
     (action: ClipAction, clipId: number) => {
@@ -454,19 +484,11 @@ function App(): React.JSX.Element {
           })
           break
         case 'copy':
-          clipClipboard.current = clip
-          setCanPaste(true)
+          copyClip(clipId)
           break
         case 'paste': {
-          const src = clipClipboard.current
-          if (!src) return
-          const id = newId()
-          // Paste onto the right-clicked clip's track, at the playhead.
-          commit('paste clip', (d) => {
-            const t = d.tracks.find((t) => t.clips.some((c) => c.id === clipId))
-            t?.clips.push({ ...src, id, offset: playhead })
-          })
-          setSelectedId(id)
+          // Paste onto the right-clicked clip's track.
+          pasteClip(tracks.find((t) => t.clips.some((c) => c.id === clipId))?.id)
           break
         }
         case 'duplicate': {
@@ -496,8 +518,39 @@ function App(): React.JSX.Element {
         }
       }
     },
-    [tracks, playhead, commit, newId]
+    [tracks, playhead, commit, newId, copyClip, pasteClip]
   )
+
+  // Cmd+C/Cmd+V on clips. The Edit menu handles the native text-field side
+  // and notifies us; a keydown fallback covers synthetic input (e2e).
+  const copySelected = useCallback(() => {
+    if (selectedId != null) copyClip(selectedId)
+  }, [selectedId, copyClip])
+
+  const pasteAtPlayhead = useCallback(() => {
+    pasteClip(tracks.find((t) => t.clips.some((c) => c.id === selectedId))?.id)
+  }, [tracks, selectedId, pasteClip])
+
+  useEffect(() => {
+    const offCopy = window.api.menu.on('copy', () => {
+      if (!isTextInput(document.activeElement)) copySelected()
+    })
+    const offPaste = window.api.menu.on('paste', () => {
+      if (!isTextInput(document.activeElement)) pasteAtPlayhead()
+    })
+    const onKey = (e: KeyboardEvent): void => {
+      if (!(e.metaKey || e.ctrlKey) || isTextInput(e.target)) return
+      const k = e.key.toLowerCase()
+      if (k === 'c') copySelected()
+      else if (k === 'v') pasteAtPlayhead()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      offCopy()
+      offPaste()
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [copySelected, pasteAtPlayhead])
 
   // A curve point only makes sense within the clip it belongs to.
   const selectClip = useCallback((id: number | null) => {
