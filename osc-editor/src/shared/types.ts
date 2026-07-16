@@ -91,7 +91,7 @@ export interface ProjectFile {
   ports?: PortConfig
   /** Timeline length, seconds. Export session_end is at least this. */
   duration?: number
-  tracks: { clips: ProjectClip[] }[]
+  tracks: { name?: string; clips: ProjectClip[] }[]
   /**
    * Edit overlays keyed by clip file name. Carried inline over IPC (autosave is
    * debounced, so main must never read sidecars for preview/export), but
@@ -120,7 +120,7 @@ export interface ExportResult {
 export interface LoadedProject {
   ports?: PortConfig
   duration?: number
-  tracks: { clips: LoadedClip[] }[]
+  tracks: { name?: string; clips: LoadedClip[] }[]
   /** Edit overlays read back from sidecar files. */
   edits: Record<string, ClipEdits>
   undoSeq?: number

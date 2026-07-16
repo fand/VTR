@@ -275,6 +275,23 @@ body {
   align-items: flex-start;
 }
 
+.editable-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rename-input {
+  font: inherit;
+  color: var(--text);
+  background: #0c0d10;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 0 4px;
+  width: 100%;
+  min-width: 0;
+}
+
 .track-del {
   background: none;
   border: none;

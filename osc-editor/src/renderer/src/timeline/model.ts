@@ -24,6 +24,8 @@ export interface ClipInst {
 
 export interface TrackState {
   id: number
+  /** User-given name; the UI falls back to "Track N". */
+  name?: string
   clips: ClipInst[]
 }
 
@@ -62,6 +64,7 @@ export function serializeProject(
     edits,
     undoSeq,
     tracks: tracks.map((track) => ({
+      name: track.name,
       clips: track.clips.map(({ file, offset, trimIn, trimOut }) => ({
         file,
         offset,
@@ -75,6 +78,7 @@ export function serializeProject(
 export function tracksFromProject(project: LoadedProject, nextId: () => number): TrackState[] {
   return project.tracks.map((track) => ({
     id: nextId(),
+    name: track.name,
     clips: track.clips.map((c) => ({
       id: nextId(),
       file: c.file,

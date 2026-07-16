@@ -39,9 +39,66 @@ interface TimelineProps {
   onTracksChange: (tracks: TrackState[], commit: boolean) => void
   onAddTrack: () => void
   onDeleteTrack: (trackId: number) => void
+  onRenameTrack: (trackId: number, name: string) => void
 }
 
 const LABEL_W = 96
+
+/** Double-click to edit. Enter/blur commits, Escape cancels, empty resets. */
+export function EditableLabel({
+  value,
+  placeholder,
+  ariaLabel,
+  onRename
+}: {
+  value: string | undefined
+  placeholder: string
+  ariaLabel: string
+  onRename: (name: string) => void
+}): React.JSX.Element {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const cancelled = useRef(false)
+  if (!editing) {
+    return (
+      <span
+        className="editable-label"
+        title="double-click to rename"
+        onDoubleClick={() => {
+          setDraft(value ?? '')
+          cancelled.current = false
+          setEditing(true)
+        }}
+      >
+        {value ?? placeholder}
+      </span>
+    )
+  }
+  return (
+    <input
+      className="rename-input"
+      autoFocus
+      value={draft}
+      aria-label={ariaLabel}
+      onFocus={(e) => e.currentTarget.select()}
+      onChange={(e) => setDraft(e.target.value)}
+      onPointerDown={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        e.stopPropagation()
+        if (e.key === 'Enter') e.currentTarget.blur()
+        if (e.key === 'Escape') {
+          cancelled.current = true
+          e.currentTarget.blur()
+        }
+      }}
+      onBlur={() => {
+        setEditing(false)
+        const name = draft.trim()
+        if (!cancelled.current && name !== (value ?? '')) onRename(name)
+      }}
+    />
+  )
+}
 
 function PlayheadLine({
   playhead,
@@ -97,7 +154,8 @@ export function Timeline({
   onSelect,
   onTracksChange,
   onAddTrack,
-  onDeleteTrack
+  onDeleteTrack,
+  onRenameTrack
 }: TimelineProps): React.JSX.Element {
   const drag = useRef<Drag | null>(null)
   // Vertical move preview: the clip stays in its DOM parent during the drag
@@ -225,7 +283,12 @@ export function Timeline({
         {tracks.map((track, trackIdx) => (
           <div className="track" key={track.id} style={{ height: TRACK_HEIGHT }}>
             <div className="track-label">
-              <span>Track {trackIdx + 1}</span>
+              <EditableLabel
+                value={track.name}
+                placeholder={`Track ${trackIdx + 1}`}
+                ariaLabel={`rename track ${trackIdx + 1}`}
+                onRename={(name) => onRenameTrack(track.id, name)}
+              />
               <button
                 className="track-del"
                 title="delete track"

@@ -35,6 +35,7 @@ export function loadProject(workdir: string): LoadedProject | null {
   const missing: string[] = []
   const edits: Record<string, ClipEdits> = {}
   const tracks = project.tracks.map((track) => ({
+    name: track.name,
     clips: track.clips.flatMap((clip) => {
       const clipPath = join(workdir, clip.file)
       try {

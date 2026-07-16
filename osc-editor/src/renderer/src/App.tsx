@@ -352,6 +352,18 @@ function App(): React.JSX.Element {
     [commit]
   )
 
+  const renameTrack = useCallback(
+    (trackId: number, name: string) => {
+      commit('rename track', (d) => {
+        const t = d.tracks.find((t) => t.id === trackId)
+        if (!t) return
+        if (name) t.name = name
+        else delete t.name
+      })
+    },
+    [commit]
+  )
+
   // A curve point only makes sense within the clip it belongs to.
   const selectClip = useCallback((id: number | null) => {
     setSelectedId(id)
@@ -606,6 +618,7 @@ function App(): React.JSX.Element {
         onTracksChange={onTracksChange}
         onAddTrack={addTrack}
         onDeleteTrack={deleteTrack}
+        onRenameTrack={renameTrack}
       />
 
       <CurvePanel
