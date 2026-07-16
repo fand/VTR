@@ -2,6 +2,8 @@ target/
 node_modules/
 *.sock
 clip-*.jsonl
+*.edits.json
+undo.jsonl
 session.jsonl
 project.json
 test-results/
