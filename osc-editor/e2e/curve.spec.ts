@@ -1,5 +1,5 @@
 import { _electron as electron, expect, test } from '@playwright/test'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -75,6 +75,88 @@ test('curve panel: properties per address/arg, visibility toggle', async () => {
     // pointerdown for seeking, lanes bubble up to the deselect handler).
     await page.locator('.track-lane').click({ position: { x: 500, y: 55 } })
     await expect(page.locator('.curve-prop')).toHaveCount(0)
+  } finally {
+    await app.close()
+  }
+})
+
+test('curve panel: drag and delete points, edits persisted to sidecar', async () => {
+  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  writeFileSync(
+    join(workdir, CLIP),
+    jsonl([
+      { type: 'session_start', t: 0, wall: '2026-07-16T00:00:00Z' },
+      { t: 0.2, port: LISTEN_PORT, a: '/fader', args: [0.1] },
+      { t: 0.8, port: LISTEN_PORT, a: '/fader', args: [0.5] },
+      { t: 1.4, port: LISTEN_PORT, a: '/fader', args: [0.9] },
+      { type: 'session_end', t: 2 }
+    ])
+  )
+  writeFileSync(
+    join(workdir, 'project.json'),
+    JSON.stringify({
+      version: 1,
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT, beacon: BEACON_PORT },
+      duration: 10,
+      tracks: [{ clips: [{ file: CLIP, offset: 0, trimIn: 0, trimOut: 2 }] }]
+    })
+  )
+
+  const app = await electron.launch({
+    args: [join(__dirname, '../out/main/index.js')],
+    cwd: workdir,
+    env: {
+      ...process.env,
+      OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
+      OSC_EDITOR_HIDDEN: '1'
+    }
+  })
+  try {
+    const page = await app.firstWindow()
+    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await page.locator('.clip').click()
+    await expect(page.locator('circle')).toHaveCount(3)
+
+    // Drag the middle point right and up: t and value both grow.
+    const mid = page.locator('circle').nth(1)
+    const box = (await mid.boundingBox())!
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width / 2 + 40, box.y + box.height / 2 - 30, { steps: 5 })
+    await page.mouse.up()
+
+    const sidecar = join(workdir, `${CLIP}.edits.json`)
+    await expect
+      .poll(() => {
+        try {
+          return JSON.parse(readFileSync(sidecar, 'utf8')).set?.['1'] ?? null
+        } catch {
+          return null
+        }
+      })
+      .not.toBeNull()
+    const set1 = JSON.parse(readFileSync(sidecar, 'utf8')).set['1']
+    expect(set1.t).toBeGreaterThan(0.8)
+    expect(set1.args['0']).toBeGreaterThan(0.5)
+    // Edits stay out of project.json.
+    expect(JSON.parse(readFileSync(join(workdir, 'project.json'), 'utf8')).edits).toBeUndefined()
+
+    // Select the first point (plain click) and delete it.
+    await page.locator('circle').first().click()
+    await expect(page.locator('circle.selected')).toHaveCount(1)
+    await page.keyboard.press('Delete')
+    await expect(page.locator('circle')).toHaveCount(2)
+    // The clip itself must survive (the point owned the Delete key).
+    await expect(page.locator('.clip')).toHaveCount(1)
+    await expect
+      .poll(() => {
+        try {
+          return JSON.parse(readFileSync(sidecar, 'utf8')).del?.['0'] ?? null
+        } catch {
+          return null
+        }
+      })
+      .toBe(true)
   } finally {
     await app.close()
   }

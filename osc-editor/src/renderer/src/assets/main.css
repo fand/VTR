@@ -436,6 +436,11 @@ body {
   background: var(--bg-lane);
 }
 
+.curve-point {
+  cursor: grab;
+  touch-action: none;
+}
+
 .curve-empty,
 .curve-note {
   padding: 16px;

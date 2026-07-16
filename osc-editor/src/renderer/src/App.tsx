@@ -6,7 +6,7 @@ import {
   type PortConfig,
   type TapStatus
 } from '../../shared/types'
-import { CurvePanel } from './components/CurvePanel'
+import { CurvePanel, PointPatch, PointSel } from './components/CurvePanel'
 import { PlayingState, Timeline } from './components/Timeline'
 import { evalExpr } from './expr'
 import { TrackState, alignClip, serializeProject, tracksFromProject } from './timeline/model'
@@ -170,6 +170,7 @@ function App(): React.JSX.Element {
   const [recording, setRecording] = useState<{ path: string; startedAt: number } | null>(null)
   const [tracks, setTracks] = useState<TrackState[]>([])
   const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [selectedPoint, setSelectedPoint] = useState<PointSel | null>(null)
   const [pxPerSec, setPxPerSec] = useState(20)
   const [status, setStatus] = useState<TapStatus | null>(null)
   const [statusError, setStatusError] = useState<string | null>(null)
@@ -292,7 +293,58 @@ function App(): React.JSX.Element {
   const deleteTrack = useCallback((trackId: number) => {
     setTracks((ts) => ts.filter((t) => t.id !== trackId))
     setSelectedId(null)
+    setSelectedPoint(null)
   }, [])
+
+  // A curve point only makes sense within the clip it belongs to.
+  const selectClip = useCallback((id: number | null) => {
+    setSelectedId(id)
+    setSelectedPoint(null)
+  }, [])
+
+  const selectedClip =
+    selectedId == null
+      ? null
+      : (tracks.flatMap((t) => t.clips).find((c) => c.id === selectedId) ?? null)
+
+  const onPointEdit = useCallback(
+    (patch: PointPatch) => {
+      const file = selectedClip?.file
+      if (!file) return
+      setEdits((prev) => {
+        const cur = prev[file] ?? {}
+        const curSet = cur.set?.[patch.eventIndex]
+        return {
+          ...prev,
+          [file]: {
+            ...cur,
+            set: {
+              ...cur.set,
+              [patch.eventIndex]: {
+                t: patch.t ?? curSet?.t,
+                args:
+                  patch.argIndex != null && patch.value != null
+                    ? { ...curSet?.args, [patch.argIndex]: patch.value }
+                    : curSet?.args
+              }
+            }
+          }
+        }
+      })
+    },
+    [selectedClip?.file]
+  )
+
+  const deleteSelectedPoint = useCallback(() => {
+    const file = selectedClip?.file
+    const pt = selectedPoint
+    if (!file || !pt) return
+    setEdits((prev) => {
+      const cur = prev[file] ?? {}
+      return { ...prev, [file]: { ...cur, del: { ...cur.del, [pt.eventIndex]: true } } }
+    })
+    setSelectedPoint(null)
+  }, [selectedClip?.file, selectedPoint])
 
   const stopPreview = useCallback(async () => {
     try {
@@ -373,11 +425,16 @@ function App(): React.JSX.Element {
     setTracks((ts) => ts.map((t) => ({ ...t, clips: t.clips.map(alignClip) })))
   }, [])
 
-  // Delete selected clip (not while typing in a field).
+  // Delete selected curve point, else selected clip (not while typing in a field).
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key !== 'Delete' && e.key !== 'Backspace') return
-      if (selectedId == null || isTextInput(e.target)) return
+      if (isTextInput(e.target)) return
+      if (selectedPoint != null) {
+        deleteSelectedPoint()
+        return
+      }
+      if (selectedId == null) return
       setTracks((ts) =>
         ts.map((t) => ({ ...t, clips: t.clips.filter((c) => c.id !== selectedId) }))
       )
@@ -385,18 +442,13 @@ function App(): React.JSX.Element {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [selectedId])
+  }, [selectedId, selectedPoint, deleteSelectedPoint])
 
   const zoom = useCallback((factor: number) => {
     setPxPerSec((z) => Math.min(Math.max(z * factor, MIN_PX_PER_SEC), MAX_PX_PER_SEC))
   }, [])
 
   const hasTl = tracks.some((t) => t.clips.some((c) => c.summary.tlOffset != null))
-
-  const selectedClip =
-    selectedId == null
-      ? null
-      : (tracks.flatMap((t) => t.clips).find((c) => c.id === selectedId) ?? null)
 
   return (
     <div className="app">
@@ -478,13 +530,19 @@ function App(): React.JSX.Element {
         playhead={playhead}
         playing={playing}
         onSeek={onSeek}
-        onSelect={setSelectedId}
+        onSelect={selectClip}
         onTracksChange={onTracksChange}
         onAddTrack={addTrack}
         onDeleteTrack={deleteTrack}
       />
 
-      <CurvePanel clip={selectedClip} edits={selectedClip ? edits[selectedClip.file] : undefined} />
+      <CurvePanel
+        clip={selectedClip}
+        edits={selectedClip ? edits[selectedClip.file] : undefined}
+        selectedPoint={selectedPoint}
+        onSelectPoint={setSelectedPoint}
+        onPointEdit={onPointEdit}
+      />
 
       <div className="tl-toolbar">
         <NumField
