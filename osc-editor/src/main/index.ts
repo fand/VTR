@@ -8,7 +8,7 @@ import { mergeProject } from './merge'
 import { Preview } from './preview'
 import { loadProject, saveProject } from './project'
 import { exportSession } from './session'
-import { TapManager } from './tap'
+import { SpawnMode, TapManager } from './tap'
 import type { ProjectFile } from '../shared/types'
 
 // Working directory: cwd when launched from the CLI (per spec).
@@ -71,7 +71,10 @@ app.whenReady().then(() => {
   })
 
   try {
-    tap = new TapManager(findTapBinary(), workdir)
+    const mode: SpawnMode =
+      (process.env.OSC_TAP_SPAWN as SpawnMode) ??
+      (app.isPackaged && process.platform === 'darwin' ? 'launchd' : 'child')
+    tap = new TapManager(findTapBinary(), workdir, mode)
     tap.spawnTap()
   } catch (e) {
     tapError = (e as Error).message

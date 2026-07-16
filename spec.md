@@ -39,7 +39,7 @@ TouchOSC ──► osc-tap (:10010) ──生UDP──► TD (:10011)
 - ソケットごとに専用スレッド。転送より先に**単調増加クロック**で到着時刻を打刻する。記録タイミングは TD の cook レートから独立していること
 - 高負荷時でも取りこぼし/クラッシュしないこと。テスト・計測方法は別途議論
 - 1メッセージ=1 JSON行を追記し、毎行 flush(クラッシュしても何も失わない)
-- editorへ制御API(clip録音の開始/停止、状態取得)を提供する。方式は未決(unix socket想定)
+- editorへ制御API(clip録音の開始/停止、状態取得)を提供する。方式: unix domain socket + JSON Lines
 
 ### タイムラインビーコン(tl)
 
@@ -91,5 +91,4 @@ TouchOSC ──► osc-tap (:10010) ──生UDP──► TD (:10011)
 
 ## 未決事項
 
-- editor⇄tap制御APIの方式(unix socket / OSC / その他)
-- osc-tapのテスト・計測方法
+- osc-tapの本番相当の計測方法(現状: soakテストで 120Hz gap中央値 8.333ms / p99 8.371ms / ロス0)

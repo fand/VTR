@@ -1,11 +1,26 @@
-import { ChildProcess, spawn } from 'child_process'
+import { ChildProcess, execFileSync, spawn } from 'child_process'
+import { mkdirSync, writeFileSync } from 'fs'
 import net from 'net'
-import { join } from 'path'
+import { homedir } from 'os'
+import { dirname, join } from 'path'
 import type { TapStatus } from '../shared/types'
 
 const REQUEST_TIMEOUT_MS = 3000
 const CONNECT_DEADLINE_MS = 5000
 const RESPAWN_DELAY_MS = 1000
+
+/**
+ * child: osc-tap is our child process; we respawn it on crash.
+ * launchd: osc-tap runs as a launchd user agent (KeepAlive on crash);
+ *          survives an editor crash, bootout on clean editor exit.
+ */
+export type SpawnMode = 'child' | 'launchd'
+
+const LAUNCHD_LABEL = 'com.osc-mtr.osc-tap'
+
+function xmlEscape(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
 
 interface Pending {
   resolve: (v: Record<string, unknown>) => void
@@ -27,24 +42,29 @@ export class TapManager {
 
   constructor(
     private bin: string,
-    readonly workdir: string
+    readonly workdir: string,
+    private mode: SpawnMode = 'child'
   ) {
     this.sockPath = join(workdir, 'osc-tap.sock')
   }
 
+  private tapArgs(): string[] {
+    return [
+      '--listen', '10010',
+      '--forward', '127.0.0.1:10011',
+      '--beacon', '10012',
+      '--outdir', this.workdir,
+      '--control', this.sockPath
+    ]
+  }
+
   spawnTap(): void {
+    if (this.mode === 'launchd') {
+      this.bootstrapLaunchd()
+      return
+    }
     if (this.stopping || this.proc) return
-    const proc = spawn(
-      this.bin,
-      [
-        '--listen', '10010',
-        '--forward', '127.0.0.1:10011',
-        '--beacon', '10012',
-        '--outdir', this.workdir,
-        '--control', this.sockPath
-      ],
-      { stdio: ['ignore', 'ignore', 'pipe'] }
-    )
+    const proc = spawn(this.bin, this.tapArgs(), { stdio: ['ignore', 'ignore', 'pipe'] })
     proc.stderr?.on('data', (d: Buffer) => console.log(`[osc-tap] ${d.toString().trimEnd()}`))
     proc.on('exit', (code, signal) => {
       this.proc = null
@@ -64,8 +84,67 @@ export class TapManager {
   shutdown(): void {
     this.stopping = true
     this.dropConnection(new Error('shutting down'))
+    if (this.mode === 'launchd') {
+      this.launchctl('bootout', `gui/${process.getuid!()}/${LAUNCHD_LABEL}`)
+      return
+    }
     this.proc?.kill()
     this.proc = null
+  }
+
+  private plistPath(): string {
+    return join(homedir(), 'Library', 'LaunchAgents', `${LAUNCHD_LABEL}.plist`)
+  }
+
+  /** Run launchctl; failures are logged, not thrown (bootout of a dead job etc.). */
+  private launchctl(...args: string[]): boolean {
+    try {
+      execFileSync('launchctl', args, { stdio: 'ignore' })
+      return true
+    } catch {
+      console.log(`launchctl ${args[0]} failed (may be fine)`)
+      return false
+    }
+  }
+
+  private bootstrapLaunchd(): void {
+    const programArgs = [this.bin, ...this.tapArgs()]
+      .map((a) => `      <string>${xmlEscape(a)}</string>`)
+      .join('\n')
+    const plist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>${LAUNCHD_LABEL}</string>
+    <key>ProgramArguments</key>
+    <array>
+${programArgs}
+    </array>
+    <key>WorkingDirectory</key>
+    <string>${xmlEscape(this.workdir)}</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+      <key>SuccessfulExit</key>
+      <false/>
+    </dict>
+    <key>ThrottleInterval</key>
+    <integer>1</integer>
+    <key>StandardErrorPath</key>
+    <string>${xmlEscape(join(this.workdir, 'osc-tap.log'))}</string>
+  </dict>
+</plist>
+`
+    mkdirSync(dirname(this.plistPath()), { recursive: true })
+    writeFileSync(this.plistPath(), plist)
+    const domain = `gui/${process.getuid!()}`
+    // Replace any previous incarnation (other workdir/binary).
+    this.launchctl('bootout', `${domain}/${LAUNCHD_LABEL}`)
+    if (!this.launchctl('bootstrap', domain, this.plistPath())) {
+      console.error('launchctl bootstrap failed; osc-tap not running')
+    }
   }
 
   async start(): Promise<string> {
