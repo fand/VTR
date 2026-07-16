@@ -2,7 +2,8 @@ use std::fs::File;
 use std::io::Write as _;
 use std::net::{SocketAddr, UdpSocket};
 use std::path::PathBuf;
-use std::sync::mpsc::{self, Sender};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{self, Sender, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Instant;
@@ -15,6 +16,10 @@ use serde_json::{json, Value};
 use crate::config::Config;
 
 const MAX_DATAGRAM: usize = 65_507;
+/// Kernel receive buffer for the listen socket (best effort).
+const RECV_BUF_BYTES: usize = 4 * 1024 * 1024;
+/// Max packets queued to the writer before we drop (and count) instead of blocking.
+const CHANNEL_CAP: usize = 65_536;
 
 /// Latest beacon: (TD timeline seconds, arrival time).
 type BeaconState = Arc<Mutex<Option<(f64, Instant)>>>;
@@ -27,7 +32,7 @@ pub struct Tap {
 
 #[derive(Clone)]
 pub struct Handle {
-    tx: Sender<Msg>,
+    tx: SyncSender<Msg>,
 }
 
 enum Msg {
@@ -56,6 +61,8 @@ pub struct Status {
     pub beacon_tl: Option<f64>,
     /// Seconds since the last beacon arrived.
     pub beacon_age: Option<f64>,
+    /// Packets dropped because the writer backlog was full.
+    pub dropped: u64,
 }
 
 impl Handle {
@@ -86,9 +93,9 @@ impl Handle {
 
 impl Tap {
     pub fn start(config: Config) -> Result<Tap> {
-        let listen = UdpSocket::bind(config.listen)
+        let listen = bind_udp(config.listen, Some(RECV_BUF_BYTES))
             .with_context(|| format!("bind listen {}", config.listen))?;
-        let beacon_sock = UdpSocket::bind(config.beacon)
+        let beacon_sock = bind_udp(config.beacon, None)
             .with_context(|| format!("bind beacon {}", config.beacon))?;
         let forward = UdpSocket::bind("0.0.0.0:0").context("bind forward socket")?;
         forward
@@ -100,12 +107,14 @@ impl Tap {
         std::fs::create_dir_all(&config.outdir)?;
 
         let beacon: BeaconState = Arc::new(Mutex::new(None));
-        let (tx, rx) = mpsc::channel::<Msg>();
+        let dropped = Arc::new(AtomicU64::new(0));
+        let (tx, rx) = mpsc::sync_channel::<Msg>(CHANNEL_CAP);
 
         // recv thread: stamp, forward raw, hand off to writer. No parsing here.
         {
             let beacon = beacon.clone();
             let tx = tx.clone();
+            let dropped = dropped.clone();
             thread::Builder::new().name("recv".into()).spawn(move || {
                 let mut buf = [0u8; MAX_DATAGRAM];
                 loop {
@@ -121,15 +130,19 @@ impl Tap {
                         eprintln!("osc-tap: forward error: {e}");
                     }
                     let snapshot = *beacon.lock().unwrap();
-                    if tx
-                        .send(Msg::Packet {
-                            buf: buf[..n].to_vec(),
-                            t,
-                            beacon: snapshot,
-                        })
-                        .is_err()
-                    {
-                        break;
+                    match tx.try_send(Msg::Packet {
+                        buf: buf[..n].to_vec(),
+                        t,
+                        beacon: snapshot,
+                    }) {
+                        Ok(()) => {}
+                        Err(TrySendError::Full(_)) => {
+                            let d = dropped.fetch_add(1, Ordering::Relaxed) + 1;
+                            if d == 1 || d % 1000 == 0 {
+                                eprintln!("osc-tap: writer backlog full, {d} packets dropped");
+                            }
+                        }
+                        Err(TrySendError::Disconnected(_)) => break,
                     }
                 }
             })?;
@@ -175,11 +188,12 @@ impl Tap {
         {
             let outdir = config.outdir.clone();
             let beacon = beacon.clone();
+            let dropped = dropped.clone();
             let listen_port = listen_addr.port();
             let forward_addr = config.forward;
             thread::Builder::new()
                 .name("writer".into())
-                .spawn(move || writer_loop(rx, outdir, listen_port, forward_addr, beacon))?;
+                .spawn(move || writer_loop(rx, outdir, listen_port, forward_addr, beacon, dropped))?;
         }
 
         Ok(Tap {
@@ -207,6 +221,7 @@ fn writer_loop(
     listen_port: u16,
     forward_addr: SocketAddr,
     beacon: BeaconState,
+    dropped: Arc<AtomicU64>,
 ) {
     let mut rec: Option<Recording> = None;
 
@@ -282,6 +297,7 @@ fn writer_loop(
                     events: rec.as_ref().map(|r| r.events).unwrap_or(0),
                     beacon_tl,
                     beacon_age,
+                    dropped: dropped.load(Ordering::Relaxed),
                 });
             }
         }
@@ -366,6 +382,23 @@ fn arg_to_json(arg: &OscType) -> Option<Value> {
             Some(json!(format!("{other:?}")))
         }
     }
+}
+
+/// Bind a UDP socket, optionally enlarging the kernel receive buffer (best effort).
+fn bind_udp(addr: SocketAddr, recv_buf: Option<usize>) -> Result<UdpSocket> {
+    let domain = if addr.is_ipv4() {
+        socket2::Domain::IPV4
+    } else {
+        socket2::Domain::IPV6
+    };
+    let socket = socket2::Socket::new(domain, socket2::Type::DGRAM, None)?;
+    if let Some(bytes) = recv_buf {
+        if let Err(e) = socket.set_recv_buffer_size(bytes) {
+            eprintln!("osc-tap: warn: set_recv_buffer_size({bytes}) failed: {e}");
+        }
+    }
+    socket.bind(&addr.into())?;
+    Ok(socket.into())
 }
 
 fn round6(x: f64) -> f64 {
