@@ -1,6 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
-import type { ClipSummary, LoadedProject, ProjectFile, TapStatus } from '../shared/types'
+import type {
+  ClipSummary,
+  ExportResult,
+  LoadedProject,
+  ProjectFile,
+  TapStatus
+} from '../shared/types'
 
 const api = {
   tap: {
@@ -11,6 +17,15 @@ const api = {
   project: {
     load: (): Promise<LoadedProject | null> => ipcRenderer.invoke('project:load'),
     save: (project: ProjectFile): Promise<void> => ipcRenderer.invoke('project:save', project)
+  },
+  session: {
+    export: (project: ProjectFile): Promise<ExportResult> =>
+      ipcRenderer.invoke('session:export', project)
+  },
+  preview: {
+    play: (project: ProjectFile, fromSec: number): Promise<{ duration: number }> =>
+      ipcRenderer.invoke('preview:play', project, fromSec),
+    stop: (): Promise<{ position: number }> => ipcRenderer.invoke('preview:stop')
   },
   workdir: (): Promise<string> => ipcRenderer.invoke('app:workdir')
 }

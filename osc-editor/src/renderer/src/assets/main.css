@@ -65,6 +65,10 @@ body {
   border-radius: 4px;
 }
 
+.timecode.rec {
+  color: var(--rec);
+}
+
 .btn {
   font: inherit;
   color: var(--text);
@@ -99,6 +103,31 @@ body {
   flex: 1;
 }
 
+.btn.play.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: #ffd24d;
+  z-index: 18;
+  pointer-events: none;
+}
+
+.info-banner {
+  padding: 6px 12px;
+  background: #1d3a26;
+  color: #8fe0a8;
+  border-bottom: 1px solid #2a5c38;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
 .error-banner {
   padding: 6px 12px;
   background: #3a1d20;
@@ -116,6 +145,8 @@ body {
 
 .tl-content {
   min-width: 100%;
+  min-height: 100%;
+  position: relative;
 }
 
 .ruler-row {

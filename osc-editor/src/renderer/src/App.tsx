@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type { TapStatus } from '../../shared/types'
-import { Timeline } from './components/Timeline'
+import { PlayingState, Timeline } from './components/Timeline'
 import {
   TrackState,
   alignClip,
@@ -23,10 +23,19 @@ function formatTimecode(s: number): string {
   return `${pad(h, 2)}:${pad(m, 2)}:${pad(sec, 2)}.${pad(ms, 3)}`
 }
 
-function Timecode({ startedAt }: { startedAt: number | null }): React.JSX.Element {
+function Timecode({
+  recStartedAt,
+  playing,
+  playhead
+}: {
+  recStartedAt: number | null
+  playing: PlayingState | null
+  playhead: number
+}): React.JSX.Element {
   const [now, setNow] = useState(0)
+  const animating = recStartedAt != null || playing != null
   useEffect(() => {
-    if (startedAt == null) {
+    if (!animating) {
       setNow(0)
       return
     }
@@ -37,9 +46,13 @@ function Timecode({ startedAt }: { startedAt: number | null }): React.JSX.Elemen
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [startedAt])
-  const secs = startedAt == null ? 0 : Math.max(0, (now - startedAt) / 1000)
-  return <div className="timecode">{formatTimecode(secs)}</div>
+  }, [animating])
+  let secs = playhead
+  if (recStartedAt != null) secs = (now - recStartedAt) / 1000
+  else if (playing != null) {
+    secs = Math.min(playing.startPos + (now - playing.startedAt) / 1000, playing.duration)
+  }
+  return <div className={recStartedAt != null ? 'timecode rec' : 'timecode'}>{formatTimecode(Math.max(0, secs))}</div>
 }
 
 function App(): React.JSX.Element {
@@ -50,7 +63,10 @@ function App(): React.JSX.Element {
   const [status, setStatus] = useState<TapStatus | null>(null)
   const [statusError, setStatusError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [info, setInfo] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [playhead, setPlayhead] = useState(0)
+  const [playing, setPlaying] = useState<PlayingState | null>(null)
   const nextId = useRef(1)
   const loaded = useRef(false)
   const newId = useCallback((): number => nextId.current++, [])
@@ -137,6 +153,76 @@ function App(): React.JSX.Element {
     setTracks(commit ? next.filter((t) => t.clips.length > 0) : next)
   }, [])
 
+  const stopPreview = useCallback(async () => {
+    try {
+      const { position } = await window.api.preview.stop()
+      setPlayhead(position)
+    } catch (e) {
+      setError((e as Error).message)
+    }
+    setPlaying(null)
+  }, [])
+
+  const togglePlay = useCallback(async () => {
+    if (playing) {
+      await stopPreview()
+      return
+    }
+    if (tracks.length === 0) return
+    try {
+      const { duration } = await window.api.preview.play(serializeProject(tracks), playhead)
+      setPlaying({ startPos: playhead, startedAt: performance.now(), duration })
+      setError(null)
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }, [playing, tracks, playhead, stopPreview])
+
+  // Auto-stop when the playhead reaches the end.
+  useEffect(() => {
+    if (!playing) return
+    const remaining =
+      (playing.duration - playing.startPos) * 1000 - (performance.now() - playing.startedAt)
+    const timer = setTimeout(() => stopPreview(), Math.max(remaining, 0) + 100)
+    return () => clearTimeout(timer)
+  }, [playing, stopPreview])
+
+  const onSeek = useCallback(
+    (sec: number) => {
+      if (playing) return
+      setPlayhead(sec)
+    },
+    [playing]
+  )
+
+  const doExport = useCallback(async () => {
+    try {
+      const result = await window.api.session.export(serializeProject(tracks))
+      setInfo(`exported ${result.path} (${result.events} events, ${result.duration.toFixed(1)}s)`)
+      setError(null)
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }, [tracks])
+
+  // Info banner auto-hide.
+  useEffect(() => {
+    if (!info) return
+    const timer = setTimeout(() => setInfo(null), 5000)
+    return () => clearTimeout(timer)
+  }, [info])
+
+  // Space toggles preview unless recording.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.code !== 'Space' || recording) return
+      e.preventDefault()
+      togglePlay()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [togglePlay, recording])
+
   const alignAll = useCallback(() => {
     setTracks((ts) => ts.map((t) => ({ ...t, clips: t.clips.map(alignClip) })))
   }, [])
@@ -167,13 +253,24 @@ function App(): React.JSX.Element {
     <div className="app">
       <header className="header">
         <span className="logo">osc-mtr</span>
-        <Timecode startedAt={recording?.startedAt ?? null} />
+        <Timecode
+          recStartedAt={recording?.startedAt ?? null}
+          playing={playing}
+          playhead={playhead}
+        />
         <button
           className={recording ? 'btn rec active' : 'btn rec'}
           onClick={toggleRecord}
           disabled={busy}
         >
           {recording ? '■ Stop' : '● Rec'}
+        </button>
+        <button
+          className={playing ? 'btn play active' : 'btn play'}
+          onClick={togglePlay}
+          disabled={busy || !!recording || tracks.length === 0}
+        >
+          {playing ? '⏹ Stop' : '▶ Play'}
         </button>
         <button
           className="btn"
@@ -190,18 +287,22 @@ function App(): React.JSX.Element {
         <button className="btn" onClick={() => zoom(1.5)} title="zoom in">
           +
         </button>
-        <button className="btn" disabled title="not implemented yet">
+        <button className="btn" onClick={doExport} disabled={tracks.length === 0 || !!recording}>
           Export
         </button>
       </header>
 
       {error && <div className="error-banner">{error}</div>}
+      {info && <div className="info-banner">{info}</div>}
 
       <Timeline
         tracks={tracks}
         pxPerSec={pxPerSec}
         selectedId={selectedId}
         recordingRow={recording ? { events: status?.events ?? 0 } : null}
+        playhead={playhead}
+        playing={playing}
+        onSeek={onSeek}
         onSelect={setSelectedId}
         onTracksChange={onTracksChange}
       />

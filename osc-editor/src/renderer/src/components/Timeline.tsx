@@ -1,5 +1,12 @@
-import React, { useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { ClipInst, MIN_CLIP_LEN, TrackState, clipLen, contentEnd } from '../timeline/model'
+
+export interface PlayingState {
+  startPos: number
+  /** performance.now() when playback started. */
+  startedAt: number
+  duration: number
+}
 
 export const TRACK_HEIGHT = 64
 const TRIM_HANDLE_PX = 8
@@ -21,8 +28,39 @@ interface TimelineProps {
   pxPerSec: number
   selectedId: number | null
   recordingRow: { events: number } | null
+  playhead: number
+  playing: PlayingState | null
+  onSeek: (sec: number) => void
   onSelect: (id: number | null) => void
   onTracksChange: (tracks: TrackState[], commit: boolean) => void
+}
+
+const LABEL_W = 96
+
+function PlayheadLine({
+  playhead,
+  playing,
+  pxPerSec
+}: {
+  playhead: number
+  playing: PlayingState | null
+  pxPerSec: number
+}): React.JSX.Element {
+  const [, force] = useState(0)
+  useEffect(() => {
+    if (!playing) return
+    let raf: number
+    const loop = (): void => {
+      force((x) => x + 1)
+      raf = requestAnimationFrame(loop)
+    }
+    raf = requestAnimationFrame(loop)
+    return () => cancelAnimationFrame(raf)
+  }, [playing])
+  const sec = playing
+    ? Math.min(playing.startPos + (performance.now() - playing.startedAt) / 1000, playing.duration)
+    : playhead
+  return <div className="playhead" style={{ left: LABEL_W + sec * pxPerSec }} />
 }
 
 function rulerStep(pxPerSec: number): number {
@@ -46,6 +84,9 @@ export function Timeline({
   pxPerSec,
   selectedId,
   recordingRow,
+  playhead,
+  playing,
+  onSeek,
   onSelect,
   onTracksChange
 }: TimelineProps): React.JSX.Element {
@@ -139,7 +180,15 @@ export function Timeline({
       <div className="tl-content" style={{ width: widthPx + 96 }}>
         <div className="ruler-row">
           <div className="track-label ruler-corner" />
-          <div className="ruler" style={{ width: widthPx }}>
+          <div
+            className="ruler"
+            style={{ width: widthPx }}
+            onPointerDown={(e) => {
+              e.stopPropagation()
+              const rect = e.currentTarget.getBoundingClientRect()
+              onSeek(Math.max(0, (e.clientX - rect.left) / pxPerSec))
+            }}
+          >
             {marks.map((s) => (
               <div key={s} className="ruler-mark" style={{ left: s * pxPerSec }}>
                 {formatRulerLabel(s)}
@@ -147,6 +196,8 @@ export function Timeline({
             ))}
           </div>
         </div>
+
+        <PlayheadLine playhead={playhead} playing={playing} pxPerSec={pxPerSec} />
 
         {tracks.map((track, trackIdx) => (
           <div className="track" key={track.id} style={{ height: TRACK_HEIGHT }}>

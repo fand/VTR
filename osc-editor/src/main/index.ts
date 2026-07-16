@@ -4,7 +4,10 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { clipSummary } from './clips'
+import { mergeProject } from './merge'
+import { Preview } from './preview'
 import { loadProject, saveProject } from './project'
+import { exportSession } from './session'
 import { TapManager } from './tap'
 import type { ProjectFile } from '../shared/types'
 
@@ -84,6 +87,15 @@ app.whenReady().then(() => {
   ipcMain.handle('app:workdir', () => workdir)
   ipcMain.handle('project:load', () => loadProject(workdir))
   ipcMain.handle('project:save', (_e, project: ProjectFile) => saveProject(workdir, project))
+  ipcMain.handle('session:export', (_e, project: ProjectFile) => exportSession(workdir, project))
+
+  const preview = new Preview()
+  ipcMain.handle('preview:play', (_e, project: ProjectFile, fromSec: number) => {
+    const { events, duration } = mergeProject(workdir, project)
+    preview.play(events, fromSec)
+    return { duration }
+  })
+  ipcMain.handle('preview:stop', () => ({ position: preview.stop() }))
 
   createWindow()
 

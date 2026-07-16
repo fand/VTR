@@ -53,6 +53,12 @@ export interface LoadedClip extends ProjectClip {
   summary: ClipSummary
 }
 
+export interface ExportResult {
+  path: string
+  events: number
+  duration: number
+}
+
 export interface LoadedProject {
   tracks: { clips: LoadedClip[] }[]
   /** Clip files referenced by project.json but unreadable. */
