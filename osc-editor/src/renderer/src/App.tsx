@@ -181,6 +181,8 @@ function App(): React.JSX.Element {
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [selectedPoint, setSelectedPoint] = useState<PointSel | null>(null)
   const [pxPerSec, setPxPerSec] = useState(20)
+  const [curveHeight, setCurveHeight] = useState(220)
+  const splitDrag = useRef<{ y: number; h: number } | null>(null)
   const [status, setStatus] = useState<TapStatus | null>(null)
   const [statusError, setStatusError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -640,8 +642,28 @@ function App(): React.JSX.Element {
         onZoom={zoom}
       />
 
+      <div
+        className="panel-splitter"
+        role="separator"
+        aria-label="resize curve panel"
+        onPointerDown={(e) => {
+          splitDrag.current = { y: e.clientY, h: curveHeight }
+          e.currentTarget.setPointerCapture(e.pointerId)
+        }}
+        onPointerMove={(e) => {
+          const d = splitDrag.current
+          if (!d) return
+          const h = d.h + (d.y - e.clientY)
+          setCurveHeight(Math.min(Math.max(h, 80), window.innerHeight - 240))
+        }}
+        onPointerUp={() => {
+          splitDrag.current = null
+        }}
+      />
+
       <CurvePanel
         clip={selectedClip}
+        height={curveHeight}
         edits={selectedClip ? edits[selectedClip.file] : undefined}
         selectedPoint={selectedPoint}
         onSelectPoint={setSelectedPoint}
