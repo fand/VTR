@@ -7,6 +7,6 @@
   - [x] マーカーはtext labelを持ち、ダブルクリックで編集可能
   - [x] ドラッグで移動可能
   - [x] 現在画面右下にあるzoom controlもtimeline headerの右端に移動しよう
-- clipのcopy/paste
+- [x] clipのcopy/paste
 - clipのduplicateはCmd+Dでできるようにする
 - clip複数選択
