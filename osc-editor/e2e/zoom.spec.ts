@@ -72,24 +72,39 @@ test('timeline pinch zoom (ctrl+wheel) scales around the cursor', async () => {
     await pinch(200)
     await expect.poll(width).toBeLessThan(before * 1.2)
 
-    // Curve editor zooms its time axis the same way.
+    // Curve editor zooms its time axis the same way, anchored at the pointer.
     await page.locator('.clip').click()
     const svg = page.locator('.curve-scroll svg')
     const svgWidth = async (): Promise<number> => Number(await svg.getAttribute('width'))
     const svgBefore = await svgWidth()
-    await page.locator('.curve-editor').evaluate((el) => {
-      el.dispatchEvent(
-        new WheelEvent('wheel', {
-          deltaY: -100,
-          ctrlKey: true,
-          clientX: 400,
-          clientY: 500,
-          bubbles: true,
-          cancelable: true
-        })
-      )
-    })
-    await expect.poll(svgWidth).toBeGreaterThan(svgBefore * 2)
+    const editorBox = (await page.locator('.curve-editor').boundingBox())!
+    const clientX = editorBox.x + 300
+    // Normalized time position under the cursor (PAD = 10).
+    const norm = (): Promise<number> =>
+      page.locator('.curve-scroll').evaluate((el, x) => {
+        const rect = el.getBoundingClientRect()
+        return (el.scrollLeft + (x - rect.left) - 10) / (el.scrollWidth - 20)
+      }, clientX)
+    const normBefore = await norm()
+    // Two events in one tick: pinch outruns re-renders, both must compound.
+    await page.locator('.curve-editor').evaluate((el, x) => {
+      for (let i = 0; i < 2; i++) {
+        el.dispatchEvent(
+          new WheelEvent('wheel', {
+            deltaY: -100,
+            ctrlKey: true,
+            clientX: x,
+            clientY: 500,
+            bubbles: true,
+            cancelable: true
+          })
+        )
+      }
+    }, clientX)
+    // e^2 ≈ 7.4× — a single applied event (e ≈ 2.7×) fails this.
+    await expect.poll(svgWidth).toBeGreaterThan(svgBefore * 6)
+    // The time under the cursor stays put.
+    expect(await norm()).toBeCloseTo(normBefore, 2)
   } finally {
     await app.close()
   }

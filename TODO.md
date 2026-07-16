@@ -1,6 +1,6 @@
 # TODO
 
-- curve editor: pinch in/outによるzoom in/outはpointer位置を基準に行う
+- [x] curve editor: pinch in/outによるzoom in/outはpointer位置を基準に行う
 - property listでプロパティ名をクリックしたときは、表示toggleではなく、property選択する
   - Shift+Clickで複数選択できる
   - 選択したpropertyのカーブは太く表示される
