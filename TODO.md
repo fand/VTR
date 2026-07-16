@@ -1,9 +1,12 @@
 # TODO
 
-- [x] curve editor: pinch in/outによるzoom in/outはpointer位置を基準に行う
-- [x] property listでプロパティ名をクリックしたときは、表示toggleではなく、property選択する
-  - Shift+Clickで複数選択できる
-  - 選択したpropertyのカーブは太く表示される
-- [x] curve editor: hover時の値の表示について、pointにhoverしたときだけでなく、常にマウスから最も近いpointの値を表示したい
-  - curveが選択されているときはそのカーブの最近傍点の値
-  - そうでない時は、表示されている全てのpointの中の最近傍点
+- Timelineにマーカー機能を追加したい
+  - Timeline panelにheaderを追加し、そこにmarker追加ボタンを追加
+    - クリックしたらplayhead位置にmarker追加
+  - Mキーでも追加できる
+  - マーカーはtext labelを持ち、ダブルクリックで編集可能
+  - ドラッグで移動可能
+  - 現在画面右下にあるzoom controlもtimeline headerの右端に移動しよう
+- clipのcopy/paste
+- clipのduplicateはCmd+Dでできるようにする
+- clip複数選択
