@@ -6,6 +6,7 @@ import {
   type PortConfig,
   type TapStatus
 } from '../../shared/types'
+import { CurvePanel } from './components/CurvePanel'
 import { PlayingState, Timeline } from './components/Timeline'
 import { evalExpr } from './expr'
 import { TrackState, alignClip, serializeProject, tracksFromProject } from './timeline/model'
@@ -392,6 +393,11 @@ function App(): React.JSX.Element {
 
   const hasTl = tracks.some((t) => t.clips.some((c) => c.summary.tlOffset != null))
 
+  const selectedClip =
+    selectedId == null
+      ? null
+      : (tracks.flatMap((t) => t.clips).find((c) => c.id === selectedId) ?? null)
+
   return (
     <div className="app">
       <header className="header">
@@ -477,6 +483,8 @@ function App(): React.JSX.Element {
         onAddTrack={addTrack}
         onDeleteTrack={deleteTrack}
       />
+
+      <CurvePanel clip={selectedClip} edits={selectedClip ? edits[selectedClip.file] : undefined} />
 
       <div className="tl-toolbar">
         <NumField
