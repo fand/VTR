@@ -1,0 +1,4 @@
+{"seq":1,"label":"edit point","patches":[{"op":"add","path":["edits","clip-20260716-120138.jsonl"],"value":{"set":{"85":{"t":7.17215809705879,"args":{"0":0.47167478015075376}}}}}],"inversePatches":[{"op":"remove","path":["edits","clip-20260716-120138.jsonl"]}]}
+{"seq":5,"label":"add track","patches":[{"op":"add","path":["tracks",3],"value":{"id":13,"clips":[]}}],"inversePatches":[{"op":"remove","path":["tracks",3]}]}
+{"seq":6,"label":"add track","patches":[{"op":"add","path":["tracks",4],"value":{"id":14,"clips":[]}}],"inversePatches":[{"op":"remove","path":["tracks",4]}]}
+{"seq":7,"label":"add track","patches":[{"op":"add","path":["tracks",5],"value":{"id":15,"clips":[]}}],"inversePatches":[{"op":"remove","path":["tracks",5]}]}
