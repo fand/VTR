@@ -52,13 +52,15 @@ export function serializeProject(
   tracks: TrackState[],
   ports: PortConfig,
   duration: number,
-  edits: Record<string, ClipEdits>
+  edits: Record<string, ClipEdits>,
+  undoSeq: number
 ): ProjectFile {
   return {
     version: 1,
     ports,
     duration,
     edits,
+    undoSeq,
     tracks: tracks.map((track) => ({
       clips: track.clips.map(({ file, offset, trimIn, trimOut }) => ({
         file,

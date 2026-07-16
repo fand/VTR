@@ -50,7 +50,14 @@ export function loadProject(workdir: string): LoadedProject | null {
       }
     })
   }))
-  return { ports: project.ports, duration: project.duration, tracks, edits, missing }
+  return {
+    ports: project.ports,
+    duration: project.duration,
+    tracks,
+    edits,
+    undoSeq: project.undoSeq,
+    missing
+  }
 }
 
 export function saveProject(workdir: string, project: ProjectFile): void {

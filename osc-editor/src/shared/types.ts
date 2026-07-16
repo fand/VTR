@@ -59,6 +59,21 @@ export interface ClipEdits {
   del?: Record<number, true>
 }
 
+/** Structural mirror of immer's Patch (kept immer-free for the main process). */
+export interface UndoPatch {
+  op: 'replace' | 'remove' | 'add'
+  path: (string | number)[]
+  value?: unknown
+}
+
+/** One undoable change, persisted as a line of undo.jsonl. */
+export interface UndoEntry {
+  seq: number
+  label: string
+  patches: UndoPatch[]
+  inversePatches: UndoPatch[]
+}
+
 /** One clip placed on the timeline (stored in project.json). */
 export interface ProjectClip {
   /** Clip file name, relative to the working directory. */
@@ -83,6 +98,11 @@ export interface ProjectFile {
    * persisted as <file>.edits.json sidecars to keep project.json small.
    */
   edits?: Record<string, ClipEdits>
+  /**
+   * Undo seq of the saved doc: the boot-time cursor into undo.jsonl. Entries
+   * at or below it become the undo stack, the rest the redo stack.
+   */
+  undoSeq?: number
 }
 
 /** ProjectClip enriched with parsed clip metadata (load result). */
@@ -103,6 +123,7 @@ export interface LoadedProject {
   tracks: { clips: LoadedClip[] }[]
   /** Edit overlays read back from sidecar files. */
   edits: Record<string, ClipEdits>
+  undoSeq?: number
   /** Clip files referenced by project.json but unreadable. */
   missing: string[]
 }

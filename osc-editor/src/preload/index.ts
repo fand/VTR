@@ -7,7 +7,8 @@ import type {
   OscEvent,
   PortConfig,
   ProjectFile,
-  TapStatus
+  TapStatus,
+  UndoEntry
 } from '../shared/types'
 
 const api = {
@@ -32,6 +33,19 @@ const api = {
     play: (project: ProjectFile, fromSec: number): Promise<{ duration: number }> =>
       ipcRenderer.invoke('preview:play', project, fromSec),
     stop: (): Promise<{ position: number }> => ipcRenderer.invoke('preview:stop')
+  },
+  undo: {
+    load: (): Promise<UndoEntry[]> => ipcRenderer.invoke('undo:load'),
+    append: (entry: UndoEntry): Promise<void> => ipcRenderer.invoke('undo:append', entry),
+    truncateAfter: (seq: number): Promise<void> => ipcRenderer.invoke('undo:truncateAfter', seq)
+  },
+  menu: {
+    /** Subscribe to Edit-menu undo/redo (menu accelerators eat Cmd+Z). */
+    on: (channel: 'undo' | 'redo', cb: () => void): (() => void) => {
+      const listener = (): void => cb()
+      ipcRenderer.on(`menu:${channel}`, listener)
+      return () => ipcRenderer.removeListener(`menu:${channel}`, listener)
+    }
   },
   workdir: (): Promise<string> => ipcRenderer.invoke('app:workdir')
 }

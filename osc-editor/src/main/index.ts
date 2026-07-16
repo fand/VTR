@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain } from 'electron'
+import { app, shell, BrowserWindow, Menu, ipcMain } from 'electron'
 import { existsSync, statSync } from 'fs'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -9,7 +9,8 @@ import { Preview } from './preview'
 import { loadProject, readProjectPorts, saveProject } from './project'
 import { exportSession } from './session'
 import { SpawnMode, TapManager } from './tap'
-import { DEFAULT_PORTS, type PortConfig, type ProjectFile } from '../shared/types'
+import { appendUndo, loadUndoLog, truncateUndoAfter } from './undo'
+import { DEFAULT_PORTS, type PortConfig, type ProjectFile, type UndoEntry } from '../shared/types'
 
 // Working directory: cwd when launched from the CLI (per spec).
 const workdir = process.cwd()
@@ -77,8 +78,38 @@ function createWindow(): void {
 // No dock icon, no app activation — the running test never grabs focus.
 if (hidden && process.platform === 'darwin') app.setActivationPolicy('accessory')
 
+/**
+ * Custom Edit menu: the default menu's Undo/Redo roles would swallow
+ * Cmd+Z before the page ever sees the keydown. Ours forwards to the
+ * renderer, which owns the history.
+ */
+function installMenu(): void {
+  const send = (channel: string) => (): void => {
+    BrowserWindow.getAllWindows()[0]?.webContents.send(channel)
+  }
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      ...(process.platform === 'darwin' ? [{ role: 'appMenu' } as const] : []),
+      {
+        label: 'Edit',
+        submenu: [
+          { label: 'Undo', accelerator: 'CmdOrCtrl+Z', click: send('menu:undo') },
+          { label: 'Redo', accelerator: 'Shift+CmdOrCtrl+Z', click: send('menu:redo') },
+          { type: 'separator' },
+          { role: 'cut' },
+          { role: 'copy' },
+          { role: 'paste' },
+          { role: 'selectAll' }
+        ]
+      },
+      { role: 'windowMenu' }
+    ])
+  )
+}
+
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.osc-mtr.editor')
+  installMenu()
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
@@ -109,6 +140,9 @@ app.whenReady().then(() => {
   ipcMain.handle('clip:events', (_e, path: string) => readClip(path).events)
   ipcMain.handle('project:load', () => loadProject(workdir))
   ipcMain.handle('project:save', (_e, project: ProjectFile) => saveProject(workdir, project))
+  ipcMain.handle('undo:load', () => loadUndoLog(workdir))
+  ipcMain.handle('undo:append', (_e, entry: UndoEntry) => appendUndo(workdir, entry))
+  ipcMain.handle('undo:truncateAfter', (_e, seq: number) => truncateUndoAfter(workdir, seq))
   ipcMain.handle('session:export', (_e, project: ProjectFile) => exportSession(workdir, project))
 
   const preview = new Preview()

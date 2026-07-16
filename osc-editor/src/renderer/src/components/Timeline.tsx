@@ -21,6 +21,8 @@ interface Drag {
   startX: number
   startY: number
   orig: ClipInst
+  /** Set once past the click threshold; a plain click never commits. */
+  moved: boolean
 }
 
 interface TimelineProps {
@@ -160,18 +162,26 @@ export function Timeline({
       fromTrack: trackIdx,
       startX: e.clientX,
       startY: e.clientY,
-      orig: clip
+      orig: clip,
+      moved: false
     }
     e.currentTarget.setPointerCapture(e.pointerId)
   }
 
   const onClipPointerMove = (e: React.PointerEvent<HTMLDivElement>): void => {
-    if (drag.current) applyDrag(e, false)
+    const d = drag.current
+    if (!d) return
+    if (!d.moved && Math.abs(e.clientX - d.startX) < 3 && Math.abs(e.clientY - d.startY) < 3) {
+      return
+    }
+    d.moved = true
+    applyDrag(e, false)
   }
 
   const onClipPointerUp = (e: React.PointerEvent<HTMLDivElement>): void => {
-    if (!drag.current) return
-    applyDrag(e, true)
+    const d = drag.current
+    if (!d) return
+    if (d.moved) applyDrag(e, true)
     drag.current = null
     setDragRow(null)
   }

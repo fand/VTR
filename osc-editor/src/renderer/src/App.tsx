@@ -2,13 +2,13 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
   DEFAULT_DURATION,
   DEFAULT_PORTS,
-  type ClipEdits,
   type PortConfig,
   type TapStatus
 } from '../../shared/types'
 import { CurvePanel, PointPatch, PointSel } from './components/CurvePanel'
 import { PlayingState, Timeline } from './components/Timeline'
 import { evalExpr } from './expr'
+import { Doc, useHistory } from './history'
 import { TrackState, alignClip, serializeProject, tracksFromProject } from './timeline/model'
 
 const MIN_PX_PER_SEC = 2
@@ -69,6 +69,7 @@ function NumField({
   disabled,
   parse,
   onCommit,
+  onInput,
   dragStep
 }: {
   label: string
@@ -78,6 +79,9 @@ function NumField({
   /** Returns the validated number, or null to reject. */
   parse: (draft: string) => number | null
   onCommit: (n: number) => void
+  /** Transient value while dragging; the release fires onCommit once. Without
+   *  it every drag step commits (fine for ports, which have no history). */
+  onInput?: (n: number) => void
   /** Units per px of horizontal drag on the label. Omit to disable dragging. */
   dragStep?: number
 }): React.JSX.Element {
@@ -89,7 +93,7 @@ function NumField({
     else setDraft(String(value))
   }
   // Unfocused input acts as a drag handle; a plain click focuses it for typing.
-  const drag = useRef<{ x: number; start: number; moved: boolean } | null>(null)
+  const drag = useRef<{ x: number; start: number; moved: boolean; last: number } | null>(null)
   const dragProps =
     dragStep && !disabled
       ? {
@@ -97,7 +101,7 @@ function NumField({
           onPointerDown: (e: React.PointerEvent<HTMLInputElement>) => {
             if (document.activeElement === e.currentTarget) return // normal editing
             e.preventDefault() // don't focus yet; wait to see if it's a drag
-            drag.current = { x: e.clientX, start: value, moved: false }
+            drag.current = { x: e.clientX, start: value, moved: false, last: value }
             e.currentTarget.setPointerCapture(e.pointerId)
           },
           onPointerMove: (e: React.PointerEvent<HTMLInputElement>) => {
@@ -107,14 +111,20 @@ function NumField({
             if (!d.moved && Math.abs(dx) < 3) return
             d.moved = true
             const n = parse(String(Math.round((d.start + dx * dragStep) / dragStep) * dragStep))
-            if (n != null && n !== value) onCommit(n)
+            if (n != null && n !== d.last) {
+              d.last = n
+              ;(onInput ?? onCommit)(n)
+            }
           },
           onPointerUp: (e: React.PointerEvent<HTMLInputElement>) => {
             const d = drag.current
             drag.current = null
-            if (d && !d.moved) {
+            if (!d) return
+            if (!d.moved) {
               e.currentTarget.focus()
               e.currentTarget.select()
+            } else if (onInput && d.last !== d.start) {
+              onCommit(d.last)
             }
           }
         }
@@ -168,7 +178,6 @@ function sliderToZoom(v: number): number {
 
 function App(): React.JSX.Element {
   const [recording, setRecording] = useState<{ path: string; startedAt: number } | null>(null)
-  const [tracks, setTracks] = useState<TrackState[]>([])
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [selectedPoint, setSelectedPoint] = useState<PointSel | null>(null)
   const [pxPerSec, setPxPerSec] = useState(20)
@@ -180,37 +189,64 @@ function App(): React.JSX.Element {
   const [playhead, setPlayhead] = useState(0)
   const [playing, setPlaying] = useState<PlayingState | null>(null)
   const [ports, setPorts] = useState<PortConfig>(DEFAULT_PORTS)
-  const [duration, setDuration] = useState(DEFAULT_DURATION)
-  const [edits, setEdits] = useState<Record<string, ClipEdits>>({})
   const nextId = useRef(1)
   const [loaded, setLoaded] = useState(false)
   const newId = useCallback((): number => nextId.current++, [])
 
-  // Load project.json once at boot.
+  // Undo/redo can reinstall ids from an earlier session; keep the counter
+  // ahead of them and drop selections that no longer resolve.
+  const onRestore = useCallback((doc: Doc): void => {
+    let max = 0
+    for (const t of doc.tracks) {
+      max = Math.max(max, t.id)
+      for (const c of t.clips) max = Math.max(max, c.id)
+    }
+    nextId.current = Math.max(nextId.current, max + 1)
+    setSelectedId((id) =>
+      id != null && doc.tracks.some((t) => t.clips.some((c) => c.id === id)) ? id : null
+    )
+    setSelectedPoint(null)
+  }, [])
+
+  const history = useHistory({ tracks: [], duration: DEFAULT_DURATION, edits: {} }, onRestore)
+  const { reset, transient, commit, undo, redo } = history
+  const { tracks, duration, edits } = history.doc
+
+  // Load project.json and the undo log once at boot.
   useEffect(() => {
-    window.api.project
-      .load()
-      .then((project) => {
+    Promise.all([window.api.project.load(), window.api.undo.load()])
+      .then(([project, log]) => {
+        let doc: Doc = { tracks: [], duration: DEFAULT_DURATION, edits: {} }
         if (project) {
-          setTracks(tracksFromProject(project, newId))
-          setEdits(project.edits)
-          if (project.duration != null) setDuration(project.duration)
+          doc = {
+            tracks: tracksFromProject(project, newId),
+            duration: project.duration ?? DEFAULT_DURATION,
+            edits: project.edits
+          }
           if (project.ports) {
             // Older project.json may lack the beacon port.
-            const loaded = { ...DEFAULT_PORTS, ...project.ports }
-            setPorts(loaded)
-            window.api.tap.setPorts(loaded).catch((e: Error) => setError(e.message))
+            const loadedPorts = { ...DEFAULT_PORTS, ...project.ports }
+            setPorts(loadedPorts)
+            window.api.tap.setPorts(loadedPorts).catch((e: Error) => setError(e.message))
           }
           if (project.missing.length > 0) {
             setError(`missing clip files: ${project.missing.join(', ')}`)
           }
         }
+        // undoSeq is the cursor: entries at or below it are undoable from the
+        // saved state, later ones are redo (incl. crash-recovery tails).
+        const cursor = project?.undoSeq ?? Math.max(0, ...log.map((e) => e.seq))
+        reset(
+          doc,
+          log.filter((e) => e.seq <= cursor),
+          log.filter((e) => e.seq > cursor)
+        )
       })
       .catch((e: Error) => setError(e.message))
       .finally(() => {
         setLoaded(true)
       })
-  }, [newId])
+  }, [newId, reset])
 
   // Autosave (debounced), but never before the initial load finished.
   // `loaded` is state (not a ref) so an edit made during the load still
@@ -219,11 +255,11 @@ function App(): React.JSX.Element {
     if (!loaded) return
     const timer = setTimeout(() => {
       window.api.project
-        .save(serializeProject(tracks, ports, duration, edits))
+        .save(serializeProject(tracks, ports, duration, edits, history.seq))
         .catch((e: Error) => setError(e.message))
     }, 400)
     return () => clearTimeout(timer)
-  }, [loaded, tracks, ports, duration, edits])
+  }, [loaded, tracks, ports, duration, edits, history.seq])
 
   const changePorts = useCallback((next: PortConfig) => {
     setPorts(next)
@@ -251,23 +287,23 @@ function App(): React.JSX.Element {
     try {
       if (recording) {
         const summary = await window.api.tap.stop(recording.path)
-        setTracks((ts) => [
-          ...ts,
-          {
-            id: newId(),
-            clips: [
-              alignClip({
-                id: newId(),
-                file: summary.name,
-                path: summary.path,
-                offset: 0,
-                trimIn: 0,
-                trimOut: Math.max(summary.duration, 0.1),
-                summary
-              })
-            ]
-          }
-        ])
+        const track: TrackState = {
+          id: newId(),
+          clips: [
+            alignClip({
+              id: newId(),
+              file: summary.name,
+              path: summary.path,
+              offset: 0,
+              trimIn: 0,
+              trimOut: Math.max(summary.duration, 0.1),
+              summary
+            })
+          ]
+        }
+        commit('record clip', (d) => {
+          d.tracks.push(track)
+        })
         setRecording(null)
       } else {
         const path = await window.api.tap.start()
@@ -282,19 +318,39 @@ function App(): React.JSX.Element {
   }, [recording, busy, newId])
 
   // Tracks live independently of clips: emptying one no longer removes it.
-  const onTracksChange = useCallback((next: TrackState[]) => {
-    setTracks(next)
-  }, [])
+  // Drags stream transient docs and commit once on release (one undo entry).
+  const onTracksChange = useCallback(
+    (next: TrackState[], isCommit: boolean) => {
+      if (isCommit) {
+        commit('edit clips', (d) => {
+          d.tracks = next
+        })
+      } else {
+        transient((d) => {
+          d.tracks = next
+        })
+      }
+    },
+    [commit, transient]
+  )
 
   const addTrack = useCallback(() => {
-    setTracks((ts) => [...ts, { id: newId(), clips: [] }])
-  }, [newId])
+    const id = newId()
+    commit('add track', (d) => {
+      d.tracks.push({ id, clips: [] })
+    })
+  }, [commit, newId])
 
-  const deleteTrack = useCallback((trackId: number) => {
-    setTracks((ts) => ts.filter((t) => t.id !== trackId))
-    setSelectedId(null)
-    setSelectedPoint(null)
-  }, [])
+  const deleteTrack = useCallback(
+    (trackId: number) => {
+      commit('delete track', (d) => {
+        d.tracks = d.tracks.filter((t) => t.id !== trackId)
+      })
+      setSelectedId(null)
+      setSelectedPoint(null)
+    },
+    [commit]
+  )
 
   // A curve point only makes sense within the clip it belongs to.
   const selectClip = useCallback((id: number | null) => {
@@ -308,43 +364,34 @@ function App(): React.JSX.Element {
       : (tracks.flatMap((t) => t.clips).find((c) => c.id === selectedId) ?? null)
 
   const onPointEdit = useCallback(
-    (patch: PointPatch) => {
+    (patch: PointPatch, isCommit: boolean) => {
       const file = selectedClip?.file
       if (!file) return
-      setEdits((prev) => {
-        const cur = prev[file] ?? {}
-        const curSet = cur.set?.[patch.eventIndex]
-        return {
-          ...prev,
-          [file]: {
-            ...cur,
-            set: {
-              ...cur.set,
-              [patch.eventIndex]: {
-                t: patch.t ?? curSet?.t,
-                args:
-                  patch.argIndex != null && patch.value != null
-                    ? { ...curSet?.args, [patch.argIndex]: patch.value }
-                    : curSet?.args
-              }
-            }
-          }
+      const apply = (d: Doc): void => {
+        const clipEdits = (d.edits[file] ??= {})
+        const set = (clipEdits.set ??= {})
+        const entry = (set[patch.eventIndex] ??= {})
+        if (patch.t != null) entry.t = patch.t
+        if (patch.argIndex != null && patch.value != null) {
+          ;(entry.args ??= {})[patch.argIndex] = patch.value
         }
-      })
+      }
+      if (isCommit) commit('edit point', apply)
+      else transient(apply)
     },
-    [selectedClip?.file]
+    [selectedClip?.file, commit, transient]
   )
 
   const deleteSelectedPoint = useCallback(() => {
     const file = selectedClip?.file
     const pt = selectedPoint
     if (!file || !pt) return
-    setEdits((prev) => {
-      const cur = prev[file] ?? {}
-      return { ...prev, [file]: { ...cur, del: { ...cur.del, [pt.eventIndex]: true } } }
+    commit('delete point', (d) => {
+      const clipEdits = (d.edits[file] ??= {})
+      ;(clipEdits.del ??= {})[pt.eventIndex] = true
     })
     setSelectedPoint(null)
-  }, [selectedClip?.file, selectedPoint])
+  }, [selectedClip?.file, selectedPoint, commit])
 
   const stopPreview = useCallback(async () => {
     try {
@@ -364,7 +411,7 @@ function App(): React.JSX.Element {
     if (tracks.length === 0) return
     try {
       const res = await window.api.preview.play(
-        serializeProject(tracks, ports, duration, edits),
+        serializeProject(tracks, ports, duration, edits, history.seq),
         playhead
       )
       setPlaying({ startPos: playhead, startedAt: performance.now(), duration: res.duration })
@@ -394,7 +441,7 @@ function App(): React.JSX.Element {
   const doExport = useCallback(async () => {
     try {
       const result = await window.api.session.export(
-        serializeProject(tracks, ports, duration, edits)
+        serializeProject(tracks, ports, duration, edits, history.seq)
       )
       setInfo(`exported ${result.path} (${result.events} events, ${result.duration.toFixed(1)}s)`)
       setError(null)
@@ -422,8 +469,12 @@ function App(): React.JSX.Element {
   }, [togglePlay, recording])
 
   const alignAll = useCallback(() => {
-    setTracks((ts) => ts.map((t) => ({ ...t, clips: t.clips.map(alignClip) })))
-  }, [])
+    commit('align clips', (d) => {
+      for (const t of d.tracks) {
+        for (const c of t.clips) c.offset = alignClip(c).offset
+      }
+    })
+  }, [commit])
 
   // Delete selected curve point, else selected clip (not while typing in a field).
   useEffect(() => {
@@ -435,14 +486,40 @@ function App(): React.JSX.Element {
         return
       }
       if (selectedId == null) return
-      setTracks((ts) =>
-        ts.map((t) => ({ ...t, clips: t.clips.filter((c) => c.id !== selectedId) }))
-      )
+      commit('delete clip', (d) => {
+        for (const t of d.tracks) t.clips = t.clips.filter((c) => c.id !== selectedId)
+      })
       setSelectedId(null)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [selectedId, selectedPoint, deleteSelectedPoint])
+  }, [selectedId, selectedPoint, deleteSelectedPoint, commit])
+
+  // Undo/redo arrives two ways: the Edit menu (real usage — its accelerator
+  // swallows the native Cmd+Z) and a keydown fallback (synthetic input, e.g.
+  // e2e, never reaches menu accelerators). Exactly one path fires per press.
+  useEffect(() => {
+    const offUndo = window.api.menu.on('undo', () => {
+      if (isTextInput(document.activeElement)) document.execCommand('undo')
+      else undo()
+    })
+    const offRedo = window.api.menu.on('redo', () => {
+      if (isTextInput(document.activeElement)) document.execCommand('redo')
+      else redo()
+    })
+    const onKey = (e: KeyboardEvent): void => {
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z' || isTextInput(e.target)) return
+      e.preventDefault()
+      if (e.shiftKey) redo()
+      else undo()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      offUndo()
+      offRedo()
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [undo, redo])
 
   const zoom = useCallback((factor: number) => {
     setPxPerSec((z) => Math.min(Math.max(z * factor, MIN_PX_PER_SEC), MAX_PX_PER_SEC))
@@ -550,7 +627,16 @@ function App(): React.JSX.Element {
           ariaLabel="timeline duration"
           value={duration}
           parse={parseDuration}
-          onCommit={setDuration}
+          onInput={(n) =>
+            transient((d) => {
+              d.duration = n
+            })
+          }
+          onCommit={(n) =>
+            commit('duration', (d) => {
+              d.duration = n
+            })
+          }
           dragStep={1}
         />
         <span className="toolbar-unit">s</span>
