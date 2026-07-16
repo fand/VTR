@@ -5,8 +5,12 @@ import { mergeProject } from './merge'
 
 const SESSION_FILE = 'session.jsonl'
 
-/** Write the merged project as a single session.jsonl (the app↔TD contract). */
-export function exportSession(workdir: string, project: ProjectFile): ExportResult {
+/** Write the merged project as a single session JSONL (the app↔TD contract). */
+export function exportSession(
+  workdir: string,
+  project: ProjectFile,
+  outPath: string = join(workdir, SESSION_FILE)
+): ExportResult {
   const merged = mergeProject(workdir, project)
   const { events } = merged
   // Session length = timeline length (never shorter than the content).
@@ -26,9 +30,8 @@ export function exportSession(workdir: string, project: ProjectFile): ExportResu
   }
   lines.push(JSON.stringify({ type: 'session_end', t: duration }))
 
-  const path = join(workdir, SESSION_FILE)
-  const tmp = path + '.tmp'
+  const tmp = outPath + '.tmp'
   writeFileSync(tmp, lines.join('\n') + '\n')
-  renameSync(tmp, path)
-  return { path, events: events.length, duration }
+  renameSync(tmp, outPath)
+  return { path: outPath, events: events.length, duration }
 }

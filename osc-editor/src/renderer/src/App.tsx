@@ -471,6 +471,7 @@ function App(): React.JSX.Element {
       const result = await window.api.session.export(
         serializeProject(tracks, ports, duration, edits, history.seq)
       )
+      if (!result) return // save dialog cancelled
       setInfo(`exported ${result.path} (${result.events} events, ${result.duration.toFixed(1)}s)`)
       setError(null)
     } catch (e) {

@@ -26,7 +26,8 @@ const api = {
     save: (project: ProjectFile): Promise<void> => ipcRenderer.invoke('project:save', project)
   },
   session: {
-    export: (project: ProjectFile): Promise<ExportResult> =>
+    /** Resolves null when the user cancels the save dialog. */
+    export: (project: ProjectFile): Promise<ExportResult | null> =>
       ipcRenderer.invoke('session:export', project)
   },
   preview: {

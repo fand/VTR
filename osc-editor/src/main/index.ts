@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, Menu, ipcMain } from 'electron'
+import { app, shell, BrowserWindow, Menu, dialog, ipcMain } from 'electron'
 import { existsSync, statSync } from 'fs'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -143,7 +143,21 @@ app.whenReady().then(() => {
   ipcMain.handle('undo:load', () => loadUndoLog(workdir))
   ipcMain.handle('undo:append', (_e, entry: UndoEntry) => appendUndo(workdir, entry))
   ipcMain.handle('undo:truncateAfter', (_e, seq: number) => truncateUndoAfter(workdir, seq))
-  ipcMain.handle('session:export', (_e, project: ProjectFile) => exportSession(workdir, project))
+  // Ask where to save; null = user cancelled. Hidden (e2e) skips the native
+  // dialog — it would hang the test — and writes the default session.jsonl.
+  ipcMain.handle('session:export', async (e, project: ProjectFile) => {
+    let outPath = join(workdir, 'session.jsonl')
+    if (!hidden) {
+      const win = BrowserWindow.fromWebContents(e.sender)
+      const res = await dialog.showSaveDialog(win!, {
+        defaultPath: outPath,
+        filters: [{ name: 'JSONL', extensions: ['jsonl'] }]
+      })
+      if (res.canceled || !res.filePath) return null
+      outPath = res.filePath
+    }
+    return exportSession(workdir, project, outPath)
+  })
 
   const preview = new Preview()
   ipcMain.handle('preview:play', (_e, project: ProjectFile, fromSec: number) => {
