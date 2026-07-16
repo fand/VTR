@@ -21,6 +21,8 @@ export interface ClipInst {
   offset: number
   trimIn: number
   trimOut: number
+  /** Muted clips are skipped on preview/export. */
+  muted?: boolean
   summary: ClipSummary
 }
 
@@ -67,12 +69,13 @@ export function serializeProject(
     undoSeq,
     tracks: tracks.map((track) => ({
       name: track.name,
-      clips: track.clips.map(({ file, name, offset, trimIn, trimOut }) => ({
+      clips: track.clips.map(({ file, name, offset, trimIn, trimOut, muted }) => ({
         file,
         name,
         offset,
         trimIn,
-        trimOut
+        trimOut,
+        muted
       }))
     }))
   }
@@ -90,6 +93,7 @@ export function tracksFromProject(project: LoadedProject, nextId: () => number):
       offset: c.offset,
       trimIn: c.trimIn,
       trimOut: c.trimOut,
+      muted: c.muted,
       summary: c.summary
     }))
   }))

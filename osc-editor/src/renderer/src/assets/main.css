@@ -373,6 +373,49 @@ body {
   right: 0;
 }
 
+.clip.muted {
+  opacity: 0.45;
+}
+
+.ctx-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+}
+
+.ctx-menu {
+  position: fixed;
+  min-width: 160px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+}
+
+.ctx-menu button {
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+.ctx-menu button:hover:not(:disabled) {
+  background: var(--accent);
+  color: #fff;
+}
+
+.ctx-menu button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .clip.recording {
   background: #5a2326;
   border-color: var(--rec);

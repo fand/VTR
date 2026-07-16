@@ -19,6 +19,9 @@ export function mergeProject(
   let duration = 0
   for (const track of project.tracks) {
     for (const clip of track.clips) {
+      // Muted clips still occupy the timeline, so they count into duration.
+      duration = Math.max(duration, clip.offset + (clip.trimOut - clip.trimIn))
+      if (clip.muted) continue
       const data = readClip(join(workdir, clip.file))
       // Edits first: a t edit decides whether the event falls inside the trim.
       const clipEvents = applyEdits(data.events, project.edits?.[clip.file])
@@ -31,7 +34,6 @@ export function mergeProject(
           args: e.args
         })
       }
-      duration = Math.max(duration, clip.offset + (clip.trimOut - clip.trimIn))
     }
   }
   events.sort((a, b) => a.t - b.t)

@@ -6,10 +6,18 @@ import {
   type TapStatus
 } from '../../shared/types'
 import { CurvePanel, PointPatch, PointSel } from './components/CurvePanel'
-import { PlayingState, Timeline } from './components/Timeline'
+import { ClipAction, PlayingState, Timeline } from './components/Timeline'
 import { evalExpr } from './expr'
 import { Doc, useHistory } from './history'
-import { TrackState, alignClip, serializeProject, tracksFromProject } from './timeline/model'
+import {
+  ClipInst,
+  MIN_CLIP_LEN,
+  TrackState,
+  alignClip,
+  clipLen,
+  serializeProject,
+  tracksFromProject
+} from './timeline/model'
 
 const MIN_PX_PER_SEC = 2
 const MAX_PX_PER_SEC = 400
@@ -382,6 +390,72 @@ function App(): React.JSX.Element {
     [commit]
   )
 
+  // Clip clipboard for the context menu. Session-local, not the OS clipboard.
+  // Paste overrides id/offset, so storing the stale id is harmless.
+  const clipClipboard = useRef<ClipInst | null>(null)
+  const [canPaste, setCanPaste] = useState(false)
+
+  const onClipAction = useCallback(
+    (action: ClipAction, clipId: number) => {
+      const clip = tracks.flatMap((t) => t.clips).find((c) => c.id === clipId)
+      if (!clip) return
+      const inDoc = (d: Doc): ClipInst | undefined =>
+        d.tracks.flatMap((t) => t.clips).find((c) => c.id === clipId)
+      switch (action) {
+        case 'mute':
+          commit(clip.muted ? 'unmute clip' : 'mute clip', (d) => {
+            const c = inDoc(d)
+            if (!c) return
+            if (c.muted) delete c.muted
+            else c.muted = true
+          })
+          break
+        case 'copy':
+          clipClipboard.current = clip
+          setCanPaste(true)
+          break
+        case 'paste': {
+          const src = clipClipboard.current
+          if (!src) return
+          const id = newId()
+          // Paste onto the right-clicked clip's track, at the playhead.
+          commit('paste clip', (d) => {
+            const t = d.tracks.find((t) => t.clips.some((c) => c.id === clipId))
+            t?.clips.push({ ...src, id, offset: playhead })
+          })
+          setSelectedId(id)
+          break
+        }
+        case 'duplicate': {
+          const id = newId()
+          commit('duplicate clip', (d) => {
+            const c = inDoc(d)
+            if (!c) return
+            const t = d.tracks.find((t) => t.clips.some((c) => c.id === clipId))
+            t?.clips.push({ ...c, id, offset: c.offset + clipLen(c) })
+          })
+          setSelectedId(id)
+          break
+        }
+        case 'split': {
+          // Cut point in clip-local seconds; both halves keep a playable length.
+          const local = clip.trimIn + (playhead - clip.offset)
+          if (local < clip.trimIn + MIN_CLIP_LEN || local > clip.trimOut - MIN_CLIP_LEN) return
+          const id = newId()
+          commit('split clip', (d) => {
+            const c = inDoc(d)
+            if (!c) return
+            const t = d.tracks.find((t) => t.clips.some((c) => c.id === clipId))
+            t?.clips.push({ ...c, id, offset: playhead, trimIn: local })
+            c.trimOut = local
+          })
+          break
+        }
+      }
+    },
+    [tracks, playhead, commit, newId]
+  )
+
   // A curve point only makes sense within the clip it belongs to.
   const selectClip = useCallback((id: number | null) => {
     setSelectedId(id)
@@ -641,6 +715,8 @@ function App(): React.JSX.Element {
         onDeleteTrack={deleteTrack}
         onRenameTrack={renameTrack}
         onRenameClip={renameClip}
+        onClipAction={onClipAction}
+        canPaste={canPaste}
         onZoom={zoom}
       />
 

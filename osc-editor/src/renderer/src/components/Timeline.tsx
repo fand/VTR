@@ -14,6 +14,8 @@ const RULER_STEPS = [0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300]
 
 type DragMode = 'move' | 'trim-in' | 'trim-out'
 
+export type ClipAction = 'mute' | 'copy' | 'paste' | 'duplicate' | 'split'
+
 interface Drag {
   mode: DragMode
   clipId: number
@@ -41,6 +43,10 @@ interface TimelineProps {
   onDeleteTrack: (trackId: number) => void
   onRenameTrack: (trackId: number, name: string) => void
   onRenameClip: (clipId: number, name: string) => void
+  /** Context-menu action on a clip; paste lands on that clip's track. */
+  onClipAction: (action: ClipAction, clipId: number) => void
+  /** False disables Paste (nothing copied yet). */
+  canPaste: boolean
   /** Pinch/ctrl-wheel zoom; factor > 1 zooms in. The caller clamps. */
   onZoom: (factor: number) => void
 }
@@ -162,6 +168,8 @@ export function Timeline({
   onDeleteTrack,
   onRenameTrack,
   onRenameClip,
+  onClipAction,
+  canPaste,
   onZoom
 }: TimelineProps): React.JSX.Element {
   const drag = useRef<Drag | null>(null)
@@ -169,6 +177,8 @@ export function Timeline({
   // (re-parenting would kill pointer capture) and is shifted with translateY.
   const [dragRow, setDragRow] = useState<{ clipId: number; delta: number } | null>(null)
   const [renaming, setRenaming] = useState<{ kind: 'track' | 'clip'; id: number } | null>(null)
+  // Right-click menu; the snapshot of the clip drives item labels/enabling.
+  const [menu, setMenu] = useState<{ x: number; y: number; clip: ClipInst } | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   // Time + viewport x under the cursor at pinch start; scroll is restored
   // after the zoomed width renders so that point stays put.
@@ -280,6 +290,20 @@ export function Timeline({
     setDragRow(null)
   }
 
+  useEffect(() => {
+    if (!menu) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setMenu(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [menu])
+
+  const menuAction = (action: ClipAction): void => {
+    if (menu) onClipAction(action, menu.clip.id)
+    setMenu(null)
+  }
+
   const end = Math.max(duration, contentEnd(tracks))
   const widthPx = Math.max(end * pxPerSec, 600)
   const step = rulerStep(pxPerSec)
@@ -296,6 +320,7 @@ export function Timeline({
             style={{ width: widthPx }}
             onPointerDown={(e) => {
               e.stopPropagation()
+              if (e.button !== 0) return
               e.currentTarget.setPointerCapture(e.pointerId)
               const rect = e.currentTarget.getBoundingClientRect()
               onSeek(Math.max(0, (e.clientX - rect.left) / pxPerSec))
@@ -342,7 +367,10 @@ export function Timeline({
               className="track-lane"
               style={{ width: widthPx }}
               onPointerDown={(e) => {
-                // Clip drags call stopPropagation, so this is an empty-lane click.
+                // Clip drags call stopPropagation, so this is an empty-lane
+                // click — or a right-click on a clip bubbling up; seek on
+                // the primary button only.
+                if (e.button !== 0) return
                 const rect = e.currentTarget.getBoundingClientRect()
                 onSeek(Math.max(0, (e.clientX - rect.left) / pxPerSec))
               }}
@@ -350,7 +378,11 @@ export function Timeline({
               {track.clips.map((clip) => (
                 <div
                   key={clip.id}
-                  className={clip.id === selectedId ? 'clip selected' : 'clip'}
+                  className={
+                    'clip' +
+                    (clip.id === selectedId ? ' selected' : '') +
+                    (clip.muted ? ' muted' : '')
+                  }
                   style={{
                     left: clip.offset * pxPerSec,
                     width: Math.max(clipLen(clip) * pxPerSec, 12),
@@ -365,6 +397,11 @@ export function Timeline({
                   // Pointer capture retargets the dblclick from the label
                   // span to this div, so the rename trigger lives here.
                   onDoubleClick={() => setRenaming({ kind: 'clip', id: clip.id })}
+                  onContextMenu={(e) => {
+                    e.preventDefault()
+                    onSelect(clip.id)
+                    setMenu({ x: e.clientX, y: e.clientY, clip })
+                  }}
                 >
                   <span className="clip-name">
                     <EditableLabel
@@ -415,6 +452,50 @@ export function Timeline({
           <div className="empty">No clips. Hit ● Rec to record incoming OSC.</div>
         )}
       </div>
+
+      {menu && (
+        <div
+          className="ctx-overlay"
+          onPointerDown={(e) => {
+            e.stopPropagation()
+            setMenu(null)
+          }}
+          onContextMenu={(e) => {
+            e.preventDefault()
+            setMenu(null)
+          }}
+        >
+          <div
+            className="ctx-menu"
+            role="menu"
+            style={{ left: menu.x, top: menu.y }}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <button role="menuitem" onClick={() => menuAction('mute')}>
+              {menu.clip.muted ? 'Unmute' : 'Mute'}
+            </button>
+            <button role="menuitem" onClick={() => menuAction('copy')}>
+              Copy
+            </button>
+            <button role="menuitem" disabled={!canPaste} onClick={() => menuAction('paste')}>
+              Paste
+            </button>
+            <button role="menuitem" onClick={() => menuAction('duplicate')}>
+              Duplicate
+            </button>
+            <button
+              role="menuitem"
+              disabled={
+                playhead < menu.clip.offset + MIN_CLIP_LEN ||
+                playhead > menu.clip.offset + clipLen(menu.clip) - MIN_CLIP_LEN
+              }
+              onClick={() => menuAction('split')}
+            >
+              Split at playhead
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -86,6 +86,8 @@ export interface ProjectClip {
   trimIn: number
   /** Clip-local end, seconds. */
   trimOut: number
+  /** Muted clips are skipped on preview/export. */
+  muted?: boolean
 }
 
 export interface ProjectFile {
