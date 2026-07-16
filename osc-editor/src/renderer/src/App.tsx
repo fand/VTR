@@ -636,6 +636,7 @@ function App(): React.JSX.Element {
         onDeleteTrack={deleteTrack}
         onRenameTrack={renameTrack}
         onRenameClip={renameClip}
+        onZoom={zoom}
       />
 
       <CurvePanel

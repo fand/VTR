@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ClipInst, MIN_CLIP_LEN, TrackState, clipLen, contentEnd } from '../timeline/model'
 
 export interface PlayingState {
@@ -41,6 +41,8 @@ interface TimelineProps {
   onDeleteTrack: (trackId: number) => void
   onRenameTrack: (trackId: number, name: string) => void
   onRenameClip: (clipId: number, name: string) => void
+  /** Pinch/ctrl-wheel zoom; factor > 1 zooms in. The caller clamps. */
+  onZoom: (factor: number) => void
 }
 
 const LABEL_W = 96
@@ -159,13 +161,42 @@ export function Timeline({
   onAddTrack,
   onDeleteTrack,
   onRenameTrack,
-  onRenameClip
+  onRenameClip,
+  onZoom
 }: TimelineProps): React.JSX.Element {
   const drag = useRef<Drag | null>(null)
   // Vertical move preview: the clip stays in its DOM parent during the drag
   // (re-parenting would kill pointer capture) and is shifted with translateY.
   const [dragRow, setDragRow] = useState<{ clipId: number; delta: number } | null>(null)
   const [renaming, setRenaming] = useState<{ kind: 'track' | 'clip'; id: number } | null>(null)
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  // Time + viewport x under the cursor at pinch start; scroll is restored
+  // after the zoomed width renders so that point stays put.
+  const pinchAnchor = useRef<{ t: number; viewX: number } | null>(null)
+
+  // macOS pinch arrives as ctrl+wheel; preventDefault needs a non-passive
+  // listener, which React's onWheel doesn't provide.
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent): void => {
+      if (!e.ctrlKey) return
+      e.preventDefault()
+      const viewX = e.clientX - el.getBoundingClientRect().left
+      pinchAnchor.current = { t: (el.scrollLeft + viewX - LABEL_W) / pxPerSec, viewX }
+      onZoom(Math.exp(-e.deltaY * 0.01))
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [pxPerSec, onZoom])
+
+  useLayoutEffect(() => {
+    const el = scrollRef.current
+    const a = pinchAnchor.current
+    if (!el || !a) return
+    pinchAnchor.current = null
+    el.scrollLeft = LABEL_W + a.t * pxPerSec - a.viewX
+  }, [pxPerSec])
 
   const applyDrag = (e: React.PointerEvent, commit: boolean): void => {
     const d = drag.current
@@ -256,7 +287,7 @@ export function Timeline({
   for (let s = 0; s <= end; s += step) marks.push(Math.round(s * 1e6) / 1e6)
 
   return (
-    <div className="timeline-scroll" onPointerDown={() => onSelect(null)}>
+    <div className="timeline-scroll" ref={scrollRef} onPointerDown={() => onSelect(null)}>
       <div className="tl-content" style={{ width: widthPx + 96 }}>
         <div className="ruler-row">
           <div className="track-label ruler-corner" />
