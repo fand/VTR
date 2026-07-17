@@ -2,6 +2,7 @@ import { _electron as electron, expect, test } from '@playwright/test'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { expectPointCount } from './curveHooks'
 
 // Suite-specific ports so a running dev instance (default 10010-10012) never collides.
 const LISTEN_PORT = 15210
@@ -64,7 +65,7 @@ test('track select: cmd/shift multi-select, curve shows track clips', async () =
     await expect(page.locator('.track-label.selected')).toHaveCount(1)
     await expect(page.locator('.clip.selected')).toHaveCount(0)
     await expect(page.locator('.curve-prop-name')).toHaveText(['/a'])
-    await expect(page.locator('circle')).toHaveCount(2)
+    await expectPointCount(page, 2)
 
     // Cmd-click track 2: both tracks selected, curves merge.
     await page
@@ -73,7 +74,7 @@ test('track select: cmd/shift multi-select, curve shows track clips', async () =
       .click({ modifiers: ['ControlOrMeta'] })
     await expect(page.locator('.track-label.selected')).toHaveCount(2)
     await expect(page.locator('.curve-prop-name')).toHaveText(['/a', '/b'])
-    await expect(page.locator('circle')).toHaveCount(3)
+    await expectPointCount(page, 3)
 
     // Shift-click track 2 again: toggled off.
     await page
@@ -81,7 +82,7 @@ test('track select: cmd/shift multi-select, curve shows track clips', async () =
       .nth(1)
       .click({ modifiers: ['Shift'] })
     await expect(page.locator('.track-label.selected')).toHaveCount(1)
-    await expect(page.locator('circle')).toHaveCount(2)
+    await expectPointCount(page, 2)
 
     // Selecting a clip clears the track selection; the clip wins the curve panel.
     await page.locator('.clip').nth(1).click()

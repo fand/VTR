@@ -75,7 +75,7 @@ test('timeline pinch zoom (ctrl+wheel) scales around the cursor', async () => {
 
     // Curve editor zooms its time axis the same way, anchored at the pointer.
     await page.locator('.clip').click()
-    const svg = page.locator('.curve-scroll svg')
+    const svg = page.locator('.curve-scroll svg.curve-under')
     const svgWidth = async (): Promise<number> => Number(await svg.getAttribute('width'))
     const svgBefore = await svgWidth()
     const editorBox = (await page.locator('.curve-editor').boundingBox())!
@@ -147,7 +147,7 @@ test('curve editor x/y zoom sliders scale the axes; y zoom scrolls vertically', 
     await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
     await page.locator('.clip').click()
 
-    const svg = page.locator('.curve-scroll svg')
+    const svg = page.locator('.curve-scroll svg.curve-under')
     await expect(svg).toBeVisible()
     const w0 = Number(await svg.getAttribute('width'))
     const h0 = Number(await svg.getAttribute('height'))

@@ -2,6 +2,14 @@ import { _electron as electron, expect, test } from '@playwright/test'
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import {
+  curvePoints,
+  expectCurveCount,
+  expectPointCount,
+  expectPropDimmed,
+  expectPropDrawn,
+  expectPropSelected
+} from './curveHooks'
 
 // Suite-specific ports so a running dev instance (default 10010-10012) never collides.
 const LISTEN_PORT = 14410
@@ -60,15 +68,15 @@ test('curve panel: properties per address/arg, visibility toggle', async () => {
     await page.locator('.clip').click()
     // One property per (address, numeric arg): /fader, /xy[0], /xy[1]. /name is a string.
     await expect(page.locator('.curve-prop-name')).toHaveText(['/fader', '/xy[0]', '/xy[1]'])
-    await expect(page.locator('polyline')).toHaveCount(3)
-    await expect(page.locator('polyline[data-prop="/fader"]')).toHaveCount(1)
-    // Circles: 3 fader points + 2×2 xy points.
-    await expect(page.locator('circle')).toHaveCount(7)
+    await expectCurveCount(page, 3)
+    await expectPropDrawn(page, '/fader', true)
+    // Points: 3 fader + 2×2 xy.
+    await expectPointCount(page, 7)
 
     // The tooltip always shows the point nearest to the cursor, not only on
     // exact point hover.
-    const mid = (await page.locator('circle').nth(1).boundingBox())!
-    await page.mouse.move(mid.x + mid.width / 2 + 10, mid.y + mid.height / 2 + 5)
+    const mid = (await curvePoints(page))[1]
+    await page.mouse.move(mid.x + 10, mid.y + 5)
     await expect(page.locator('.curve-tooltip')).toHaveText('/fader: 0.5 @ 0.8s')
     // With a property selected, only its points compete.
     await page.locator('.curve-prop-name', { hasText: '/xy[1]' }).click()
@@ -101,25 +109,23 @@ test('curve panel: properties per address/arg, visibility toggle', async () => {
     ).toHaveCount(1)
     await page.locator('.curve-prop-name', { hasText: '/xy[1]' }).click()
 
-    // Toggle /fader off → its polyline disappears.
+    // Toggle /fader off → its curve disappears.
     await page.getByLabel('toggle /fader').uncheck()
-    await expect(page.locator('polyline')).toHaveCount(2)
-    await expect(page.locator('polyline[data-prop="/fader"]')).toHaveCount(0)
+    await expectCurveCount(page, 2)
+    await expectPropDrawn(page, '/fader', false)
     await page.getByLabel('toggle /fader').check()
-    await expect(page.locator('polyline')).toHaveCount(3)
+    await expectCurveCount(page, 3)
 
     // Click a property name → selects it (not a visibility toggle); thick curve.
-    const strokeW = (prop: string): Promise<string | null> =>
-      page.locator(`polyline[data-prop="${prop}"]`).getAttribute('stroke-width')
     await page.locator('.curve-prop-name', { hasText: '/fader' }).click()
     await expect(page.locator('.curve-prop.selected')).toHaveCount(1)
     await expect(page.getByLabel('toggle /fader')).toBeChecked()
-    expect(await strokeW('/fader')).toBe('3')
-    expect(await strokeW('/xy[0]')).toBe('1.5')
+    await expectPropSelected(page, '/fader', true)
+    await expectPropSelected(page, '/xy[0]', false)
     // Shift+click adds to the selection.
     await page.locator('.curve-prop-name', { hasText: '/xy[0]' }).click({ modifiers: ['Shift'] })
     await expect(page.locator('.curve-prop.selected')).toHaveCount(2)
-    expect(await strokeW('/xy[0]')).toBe('3')
+    await expectPropSelected(page, '/xy[0]', true)
     // Checkbox still toggles visibility only; selection is untouched.
     await page.getByLabel('toggle /xy[1]').uncheck()
     await expect(page.locator('.curve-prop.selected')).toHaveCount(2)
@@ -128,7 +134,7 @@ test('curve panel: properties per address/arg, visibility toggle', async () => {
     await page.locator('.curve-prop-name', { hasText: '/xy[0]' }).click({ modifiers: ['Shift'] })
     await page.locator('.curve-prop-name', { hasText: '/fader' }).click()
     await expect(page.locator('.curve-prop.selected')).toHaveCount(0)
-    expect(await strokeW('/fader')).toBe('1.5')
+    await expectPropSelected(page, '/fader', false)
 
     // Deselect (click empty lane area far from the clip; the ruler swallows
     // pointerdown for seeking, lanes bubble up to the deselect handler).
@@ -178,23 +184,23 @@ test('curve panel: filter input narrows the property list and drawn curves', asy
     await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
     await page.locator('.clip').click()
     await expect(page.locator('.curve-prop-name')).toHaveText(['/fader', '/xy[0]', '/xy[1]'])
-    await expect(page.locator('polyline')).toHaveCount(3)
+    await expectCurveCount(page, 3)
 
     // "xy" keeps only /xy[0] and /xy[1], in the list and on the canvas.
     await page.getByLabel('filter properties').fill('xy')
     await expect(page.locator('.curve-prop-name')).toHaveText(['/xy[0]', '/xy[1]'])
-    await expect(page.locator('polyline')).toHaveCount(2)
-    await expect(page.locator('polyline[data-prop="/fader"]')).toHaveCount(0)
+    await expectCurveCount(page, 2)
+    await expectPropDrawn(page, '/fader', false)
 
     // No match: empty list, no curves.
     await page.getByLabel('filter properties').fill('nope')
     await expect(page.locator('.curve-prop-name')).toHaveCount(0)
-    await expect(page.locator('polyline')).toHaveCount(0)
+    await expectCurveCount(page, 0)
 
     // Clearing restores everything.
     await page.getByLabel('filter properties').fill('')
     await expect(page.locator('.curve-prop-name')).toHaveCount(3)
-    await expect(page.locator('polyline')).toHaveCount(3)
+    await expectCurveCount(page, 3)
   } finally {
     await app.close()
   }
@@ -286,24 +292,21 @@ test('curve panel: selecting a property dims other curves and hides their points
     await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
     await page.locator('.clip').click()
     // 3 fader + 2 xy points.
-    await expect(page.locator('circle')).toHaveCount(5)
+    await expectPointCount(page, 5)
 
-    const opacity = (prop: string): Promise<string | null> =>
-      page.locator(`g[data-prop="${prop}"]`).getAttribute('opacity')
-
-    // Select /fader: other curves fade to 0.1 and lose their point circles.
+    // Select /fader: other curves dim and lose their points.
     await page.locator('.curve-prop-name', { hasText: '/fader' }).click()
-    expect(await opacity('/fader')).toBe('1')
-    expect(await opacity('/xy[0]')).toBe('0.1')
-    expect(await opacity('/xy[1]')).toBe('0.1')
-    await expect(page.locator('circle')).toHaveCount(3)
-    // Dimmed polylines are still drawn.
-    await expect(page.locator('polyline')).toHaveCount(3)
+    await expectPropDimmed(page, '/fader', false)
+    await expectPropDimmed(page, '/xy[0]', true)
+    await expectPropDimmed(page, '/xy[1]', true)
+    await expectPointCount(page, 3)
+    // Dimmed curves are still drawn.
+    await expectCurveCount(page, 3)
 
     // Deselect: everything back.
     await page.locator('.curve-prop-name', { hasText: '/fader' }).click()
-    expect(await opacity('/xy[0]')).toBe('1')
-    await expect(page.locator('circle')).toHaveCount(5)
+    await expectPropDimmed(page, '/xy[0]', false)
+    await expectPointCount(page, 5)
   } finally {
     await app.close()
   }
@@ -347,27 +350,25 @@ test('curve panel: clicking a curve line selects its property', async () => {
     await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
     await page.locator('.clip').click()
     // 3 fader + 2 xy points.
-    await expect(page.locator('circle')).toHaveCount(5)
+    await expectPointCount(page, 5)
 
     // Click the flat /fader segment between its 2nd and 3rd points (step-after:
-    // it sits at the 2nd point's value 0.5) — away from any point circle, and
-    // on the shared 0–1 axis no other curve passes near 0.5 there.
-    const faderPoints = page.locator('g[data-prop="/fader"] circle')
-    const b0 = (await faderPoints.nth(1).boundingBox())!
-    const b1 = (await faderPoints.nth(2).boundingBox())!
-    const midX = (b0.x + b1.x) / 2 + b0.width / 2
-    const midY = b0.y + b0.height / 2
+    // it sits at the 2nd point's value 0.5) — away from any point, and on the
+    // shared 0–1 axis no other curve passes near 0.5 there.
+    const fader = (await curvePoints(page)).filter((p) => p.label === '/fader')
+    const midX = (fader[1].x + fader[2].x) / 2
+    const midY = fader[1].y
     await page.mouse.click(midX, midY)
 
     // /fader is selected: its row highlights, other curves dim and lose points.
     await expect(page.locator('.curve-prop.selected')).toHaveText(/\/fader/)
-    expect(await page.locator('g[data-prop="/xy[0]"]').getAttribute('opacity')).toBe('0.1')
-    await expect(page.locator('circle')).toHaveCount(3)
+    await expectPropDimmed(page, '/xy[0]', true)
+    await expectPointCount(page, 3)
 
     // Clicking the selected curve again deselects it.
     await page.mouse.click(midX, midY)
     await expect(page.locator('.curve-prop.selected')).toHaveCount(0)
-    await expect(page.locator('circle')).toHaveCount(5)
+    await expectPointCount(page, 5)
 
     // Select again, then click empty space: the property deselects too.
     await page.mouse.click(midX, midY)
@@ -375,7 +376,7 @@ test('curve panel: clicking a curve line selects its property', async () => {
     const editor = (await page.locator('.curve-editor').boundingBox())!
     await page.mouse.click(editor.x + editor.width * 0.15, editor.y + editor.height * 0.3)
     await expect(page.locator('.curve-prop.selected')).toHaveCount(0)
-    await expect(page.locator('circle')).toHaveCount(5)
+    await expectPointCount(page, 5)
   } finally {
     await app.close()
   }
@@ -429,7 +430,7 @@ test('curve panel: multi-select shows every selected clip, timeline time axis', 
 
     // One clip: its 2 points, no clip-range overlay.
     await page.locator('.clip').first().click()
-    await expect(page.locator('circle')).toHaveCount(2)
+    await expectPointCount(page, 2)
     await expect(page.locator('.curve-clip-range')).toHaveCount(0)
 
     // Shift-click the second clip: both clips' events merge into /fader.
@@ -437,7 +438,7 @@ test('curve panel: multi-select shows every selected clip, timeline time axis', 
       .locator('.clip')
       .nth(1)
       .click({ modifiers: ['Shift'] })
-    await expect(page.locator('circle')).toHaveCount(3)
+    await expectPointCount(page, 3)
     await expect(page.locator('.curve-prop-name')).toHaveText(['/fader'])
 
     // Each clip gets a faint bar+fill over its timeline span.
@@ -449,8 +450,9 @@ test('curve panel: multi-select shows every selected clip, timeline time axis', 
     expect(fill1.width).toBeCloseTo(fill0.width, 0)
 
     // The rightmost point is clip-b's; its tooltip shows timeline time (2 + 0.2).
-    const last = (await page.locator('circle').last().boundingBox())!
-    await page.mouse.move(last.x + last.width / 2 + 2, last.y + last.height / 2 + 2)
+    const pts = await curvePoints(page)
+    const last = pts[pts.length - 1]
+    await page.mouse.move(last.x + 2, last.y + 2)
     await expect(page.locator('.curve-tooltip')).toHaveText('/fader: 0.9 @ 2.2s')
   } finally {
     await app.close()
@@ -493,14 +495,13 @@ test('curve panel: drag and delete points, edits persisted to sidecar', async ()
     const page = await app.firstWindow()
     await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
     await page.locator('.clip').click()
-    await expect(page.locator('circle')).toHaveCount(3)
+    await expectPointCount(page, 3)
 
     // Drag the middle point right and up: t and value both grow.
-    const mid = page.locator('circle').nth(1)
-    const box = (await mid.boundingBox())!
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    const box = (await curvePoints(page))[1]
+    await page.mouse.move(box.x, box.y)
     await page.mouse.down()
-    await page.mouse.move(box.x + box.width / 2 + 40, box.y + box.height / 2 - 30, { steps: 5 })
+    await page.mouse.move(box.x + 40, box.y - 30, { steps: 5 })
     await page.mouse.up()
     await page.keyboard.press('ControlOrMeta+s')
 
@@ -521,10 +522,11 @@ test('curve panel: drag and delete points, edits persisted to sidecar', async ()
     expect(JSON.parse(readFileSync(join(workdir, 'project.json'), 'utf8')).edits).toBeUndefined()
 
     // Select the first point (plain click) and delete it.
-    await page.locator('circle').first().click()
+    const first = (await curvePoints(page))[0]
+    await page.mouse.click(first.x, first.y)
     await expect(page.locator('circle.selected')).toHaveCount(1)
     await page.keyboard.press('Delete')
-    await expect(page.locator('circle')).toHaveCount(2)
+    await expectPointCount(page, 2)
     // The clip itself must survive (the point owned the Delete key).
     await expect(page.locator('.clip')).toHaveCount(1)
     await page.keyboard.press('ControlOrMeta+s')
@@ -578,10 +580,12 @@ test('curve panel: transform box moves and scales the selected points', async ()
     const page = await app.firstWindow()
     await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
     await page.locator('.clip').click()
-    await expect(page.locator('circle')).toHaveCount(3)
+    await expectPointCount(page, 3)
 
     // Single selection: no box.
-    await page.locator('circle').first().click()
+    const first = (await curvePoints(page))[0]
+    await page.mouse.click(first.x, first.y)
+    await expect(page.locator('circle.selected')).toHaveCount(1)
     await expect(page.locator('.curve-xform-box')).toHaveCount(0)
 
     // Marquee all 3 points: the box appears around them.
@@ -685,11 +689,11 @@ test('curve panel: double-click / cmd+click on a curve inserts a point', async (
     const page = await app.firstWindow()
     await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
     await page.locator('.clip').click()
-    await expect(page.locator('circle')).toHaveCount(3)
+    await expectPointCount(page, 3)
 
     const center = async (i: number): Promise<{ x: number; y: number }> => {
-      const b = (await page.locator('circle').nth(i).boundingBox())!
-      return { x: b.x + b.width / 2, y: b.y + b.height / 2 }
+      const p = (await curvePoints(page))[i]
+      return { x: p.x, y: p.y }
     }
 
     // Double-click the flat segment between the first two points (step-after:
@@ -697,7 +701,7 @@ test('curve panel: double-click / cmd+click on a curve inserts a point', async (
     const c0 = await center(0)
     const c1 = await center(1)
     await page.mouse.dblclick((c0.x + c1.x) / 2, c0.y)
-    await expect(page.locator('circle')).toHaveCount(4)
+    await expectPointCount(page, 4)
     await expect(page.locator('circle.selected')).toHaveCount(1)
     await page.keyboard.press('ControlOrMeta+s')
 
@@ -724,11 +728,11 @@ test('curve panel: double-click / cmd+click on a curve inserts a point', async (
     await page.keyboard.down('ControlOrMeta')
     await page.mouse.click((c2.x + c3.x) / 2, c2.y)
     await page.keyboard.up('ControlOrMeta')
-    await expect(page.locator('circle')).toHaveCount(5)
+    await expectPointCount(page, 5)
 
     // Each insert is one undo step.
     await page.keyboard.press('ControlOrMeta+z')
-    await expect(page.locator('circle')).toHaveCount(4)
+    await expectPointCount(page, 4)
 
     // The added point reaches the export.
     await page.getByRole('button', { name: 'Export' }).click()
@@ -780,17 +784,17 @@ test('curve header: snap locks drags to the grid, Box toggles the transform box'
     const page = await app.firstWindow()
     await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
     await page.locator('.clip').click()
-    await expect(page.locator('circle')).toHaveCount(3)
+    await expectPointCount(page, 3)
 
     // Snap on: a free drag of the middle point lands on the grid
     // (0.2s time step, 0.2 value step on the 0–1 axis).
     const snapBtn = page.locator('.curve-header').getByRole('button', { name: 'Snap' })
     await snapBtn.click()
     await expect(snapBtn).toHaveAttribute('aria-pressed', 'true')
-    const mid = (await page.locator('circle').nth(1).boundingBox())!
-    await page.mouse.move(mid.x + mid.width / 2, mid.y + mid.height / 2)
+    const mid = (await curvePoints(page))[1]
+    await page.mouse.move(mid.x, mid.y)
     await page.mouse.down()
-    await page.mouse.move(mid.x + mid.width / 2 + 50, mid.y + mid.height / 2 - 20, { steps: 5 })
+    await page.mouse.move(mid.x + 50, mid.y - 20, { steps: 5 })
     await page.mouse.up()
     await page.keyboard.press('ControlOrMeta+s')
 
@@ -868,7 +872,7 @@ test('curve header: pencil clicks add points to the selected curve', async () =>
     const page = await app.firstWindow()
     await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
     await page.locator('.clip').click()
-    await expect(page.locator('circle')).toHaveCount(3)
+    await expectPointCount(page, 3)
 
     const pencilBtn = page.locator('.curve-header').getByRole('button', { name: 'Pencil' })
     await pencilBtn.click()
@@ -877,12 +881,12 @@ test('curve header: pencil clicks add points to the selected curve', async () =>
     // No curve selected: a click still rubber-bands / clears, adds nothing.
     const editor = (await page.locator('.curve-editor').boundingBox())!
     await page.mouse.click(editor.x + editor.width / 2, editor.y + editor.height * 0.25)
-    await expect(page.locator('circle')).toHaveCount(3)
+    await expectPointCount(page, 3)
 
     // Select /fader, then click empty space: a point lands there, selected.
     await page.locator('.curve-prop-name', { hasText: '/fader' }).click()
     await page.mouse.click(editor.x + editor.width / 2, editor.y + editor.height * 0.25)
-    await expect(page.locator('circle')).toHaveCount(4)
+    await expectPointCount(page, 4)
     await expect(page.locator('circle.selected')).toHaveCount(1)
     await page.keyboard.press('ControlOrMeta+s')
 
@@ -908,8 +912,8 @@ test('curve header: pencil clicks add points to the selected curve', async () =>
       steps: 20
     })
     await page.mouse.up()
-    const drawn = await page.locator('circle').count()
-    expect(drawn).toBeGreaterThan(7)
+    await expect.poll(() => curvePoints(page).then((p) => p.length)).toBeGreaterThan(7)
+    const drawn = (await curvePoints(page)).length
     // The whole stroke is selected and lands in the sidecar.
     await expect(page.locator('circle.selected')).toHaveCount(drawn - 4)
     await page.keyboard.press('ControlOrMeta+s')
@@ -925,13 +929,13 @@ test('curve header: pencil clicks add points to the selected curve', async () =>
 
     // One undo removes the whole stroke.
     await page.keyboard.press('ControlOrMeta+z')
-    await expect(page.locator('circle')).toHaveCount(4)
+    await expectPointCount(page, 4)
 
     // Pencil off: an empty-space click goes back to clearing the selection
     // (a spot away from every point and segment).
     await pencilBtn.click()
     await page.mouse.click(editor.x + editor.width * 0.3, editor.y + editor.height * 0.1)
-    await expect(page.locator('circle')).toHaveCount(4)
+    await expectPointCount(page, 4)
     await expect(page.locator('circle.selected')).toHaveCount(0)
   } finally {
     await app.close()
@@ -974,7 +978,7 @@ test('curve panel: marquee selects multiple points, group drag and delete', asyn
     const page = await app.firstWindow()
     await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
     await page.locator('.clip').click()
-    await expect(page.locator('circle')).toHaveCount(3)
+    await expectPointCount(page, 3)
 
     // Rubber-band across the whole editor: all 3 points selected.
     const box = (await page.locator('.curve-editor').boundingBox())!
@@ -986,11 +990,10 @@ test('curve panel: marquee selects multiple points, group drag and delete', asyn
     await expect(page.locator('circle.selected')).toHaveCount(3)
 
     // Dragging one selected point moves the whole group.
-    const mid = page.locator('circle').nth(1)
-    const midBox = (await mid.boundingBox())!
-    await page.mouse.move(midBox.x + midBox.width / 2, midBox.y + midBox.height / 2)
+    const midBox = (await curvePoints(page))[1]
+    await page.mouse.move(midBox.x, midBox.y)
     await page.mouse.down()
-    await page.mouse.move(midBox.x + midBox.width / 2 + 40, midBox.y + midBox.height / 2, {
+    await page.mouse.move(midBox.x + 40, midBox.y, {
       steps: 5
     })
     await page.mouse.up()
@@ -1012,7 +1015,7 @@ test('curve panel: marquee selects multiple points, group drag and delete', asyn
     // Group stays selected; Delete removes all of them.
     await expect(page.locator('circle.selected')).toHaveCount(3)
     await page.keyboard.press('Delete')
-    await expect(page.locator('circle')).toHaveCount(0)
+    await expectPointCount(page, 0)
     await expect(page.locator('.clip')).toHaveCount(1)
 
     // A plain click on empty space clears the marquee selection state (no crash).

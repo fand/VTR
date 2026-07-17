@@ -778,8 +778,29 @@ body {
   overflow-y: auto;
 }
 
-.curve-scroll svg {
+/* Layering: grid svg < curve canvas < overlay svg. The scroll container must
+   not create a stacking context, so the z-indexes interleave with the
+   viewport-fixed canvas sibling. */
+.curve-content {
+  position: relative;
+}
+
+.curve-content svg {
+  position: absolute;
+  top: 0;
+  left: 0;
   display: block;
+}
+
+.curve-content svg.curve-over {
+  z-index: 2;
+}
+
+.curve-canvas {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
 }
 
 /* Value labels stay pinned to the left edge while the curves scroll. */
