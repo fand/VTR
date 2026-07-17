@@ -35,7 +35,8 @@ export function mergeProject(
           t: round6(clip.offset + (e.t - clip.trimIn)),
           port: e.port,
           a: e.a,
-          args: e.args
+          args: e.args,
+          types: e.types
         })
       }
     }
