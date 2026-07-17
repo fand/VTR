@@ -1,6 +1,6 @@
 import { applyPatches, enablePatches, produce, produceWithPatches } from 'immer'
 import { useCallback, useRef, useState } from 'react'
-import type { ClipEdits, UndoEntry } from '../../shared/types'
+import { UNDO_CAP, type ClipEdits, type UndoEntry } from '../../shared/types'
 import type { MarkerState, TrackState } from './timeline/model'
 
 enablePatches()
@@ -13,8 +13,6 @@ export interface Doc {
   edits: Record<string, ClipEdits>
 }
 
-/** In-memory history cap; the on-disk log is capped in the main process. */
-const MAX_ENTRIES = 1000
 
 export interface History {
   doc: Doc
@@ -67,7 +65,8 @@ export function useHistory(
 
   const reset = useCallback(
     (d: Doc, p: UndoEntry[], f: UndoEntry[]): void => {
-      past.current = p
+      // The disk log can briefly hold more than the cap; undo depth can't.
+      past.current = p.slice(-UNDO_CAP)
       future.current = f
       nextSeq.current = Math.max(0, ...p.map((e) => e.seq), ...f.map((e) => e.seq)) + 1
       base.current = null
@@ -102,7 +101,7 @@ export function useHistory(
       }
       const entry: UndoEntry = { seq: nextSeq.current++, label, patches, inversePatches }
       past.current.push(entry)
-      if (past.current.length > MAX_ENTRIES) past.current.shift()
+      if (past.current.length > UNDO_CAP) past.current.shift()
       window.api.undo.append(entry).catch(persistError)
       install(next)
     },

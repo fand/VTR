@@ -55,6 +55,10 @@ const resolveClip = (file: string): string =>
 // userData and it moves into the bundle on Save As.
 const undoDir = (): string => projectDir ?? dataDir
 
+// undoSeq of the last saved/loaded doc; log compaction must keep everything
+// past it (boot's redo / crash-recovery tail).
+let savedUndoSeq = 0
+
 let tap: TapManager | null = null
 let tapError: string | null = null
 
@@ -237,6 +241,7 @@ app.whenReady().then(() => {
     const project = loadProject(projectPath, stagingDir)
     if (!project) throw new Error(`project not found: ${path}`)
     projectDir = dirname(projectPath)
+    savedUndoSeq = project.undoSeq ?? 0
     return { path, project }
   }
   ipcMain.handle('project:load', () => (cliProjectPath ? load(cliProjectPath) : null))
@@ -249,6 +254,7 @@ app.whenReady().then(() => {
     collectClips(dir, stagingDir, project, resolveClip)
     transferUndoLog(undoDir(), dir, projectDir === null)
     projectDir = dir
+    savedUndoSeq = project.undoSeq ?? 0
     saveProject(projectPath, project, stagingDir)
   })
   // Hidden (e2e) skips native dialogs; OSC_EDITOR_DIALOG_PATH stands in for
@@ -277,7 +283,7 @@ app.whenReady().then(() => {
     return res.canceled || !res.filePath ? null : res.filePath
   })
   ipcMain.handle('undo:load', () => loadUndoLog(undoDir()))
-  ipcMain.handle('undo:append', (_e, entry: UndoEntry) => appendUndo(undoDir(), entry))
+  ipcMain.handle('undo:append', (_e, entry: UndoEntry) => appendUndo(undoDir(), entry, savedUndoSeq))
   ipcMain.handle('undo:truncateAfter', (_e, seq: number) => truncateUndoAfter(undoDir(), seq))
   // Ask where to save; null = user cancelled. Hidden (e2e) skips the native
   // dialog — it would hang the test — and writes the default session.jsonl.

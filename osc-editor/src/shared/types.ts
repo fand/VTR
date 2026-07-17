@@ -44,6 +44,9 @@ export interface PortConfig {
 
 export const DEFAULT_PORTS: PortConfig = { listen: 10010, forward: 10011, beacon: 10012 }
 
+/** Undo depth: the in-memory stacks and the compacted on-disk log share it. */
+export const UNDO_CAP = 1000
+
 /** Default timeline length, seconds. */
 export const DEFAULT_DURATION = 60
 

@@ -8,11 +8,9 @@ import {
   writeFileSync
 } from 'fs'
 import { join } from 'path'
-import type { UndoEntry } from '../shared/types'
+import { UNDO_CAP, type UndoEntry } from '../shared/types'
 
 const UNDO_FILE = 'undo.jsonl'
-/** Entries kept when the log is compacted. */
-const CAP = 1000
 
 /** Line counts per log path, so append doesn't re-read the file. */
 const counts = new Map<string, number>()
@@ -45,13 +43,21 @@ function rewrite(dir: string, entries: UndoEntry[]): void {
   counts.set(path, entries.length)
 }
 
-export function appendUndo(dir: string, entry: UndoEntry): void {
+export function appendUndo(dir: string, entry: UndoEntry, savedSeq: number): void {
   const path = logPath(dir)
   const count = (counts.get(path) ?? loadUndoLog(dir).length) + 1
   appendFileSync(path, JSON.stringify(entry) + '\n')
   counts.set(path, count)
-  // Compact once the file holds twice what anyone can undo through.
-  if (count > 2 * CAP) rewrite(dir, loadUndoLog(dir).slice(-CAP))
+  // Compact once the file holds twice what anyone can undo through. Only
+  // saved-doc history (seq <= savedSeq) may go: everything past savedSeq is
+  // boot's redo/crash-recovery tail and must stay contiguous from savedSeq.
+  if (count > 2 * UNDO_CAP) {
+    const entries = loadUndoLog(dir)
+    const saved = entries.filter((e) => e.seq <= savedSeq)
+    const tail = entries.filter((e) => e.seq > savedSeq)
+    const kept = [...saved.slice(-UNDO_CAP), ...tail]
+    if (kept.length < entries.length) rewrite(dir, kept)
+  }
 }
 
 /** Linear history: a commit after undo drops the redo branch from the log. */
