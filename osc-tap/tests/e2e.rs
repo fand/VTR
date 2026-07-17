@@ -70,8 +70,8 @@ fn records_events_with_types_and_session_lines() {
     let handle = tap.handle();
     let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
 
-    let clip = handle.start_clip().unwrap();
-    assert!(handle.start_clip().is_err(), "double start must fail");
+    let clip = handle.start_clip(None).unwrap();
+    assert!(handle.start_clip(None).is_err(), "double start must fail");
 
     tx.send_to(
         &encode_msg("/fader", vec![OscType::Float(0.42)]),
@@ -160,7 +160,7 @@ fn stamps_tl_from_beacon() {
         thread::sleep(Duration::from_millis(10));
     }
 
-    let clip = handle.start_clip().unwrap();
+    let clip = handle.start_clip(None).unwrap();
     thread::sleep(Duration::from_millis(50));
     tx.send_to(&encode_msg("/x", vec![OscType::Int(1)]), tap.listen_addr)
         .unwrap();
@@ -193,7 +193,7 @@ fn clock_rate_zero_freezes_tl() {
     }
     assert_eq!(handle.status().unwrap().beacon_rate, Some(0.0));
 
-    let clip = handle.start_clip().unwrap();
+    let clip = handle.start_clip(None).unwrap();
     thread::sleep(Duration::from_millis(300));
     tx.send_to(&encode_msg("/x", vec![OscType::Int(1)]), tap.listen_addr)
         .unwrap();
@@ -252,4 +252,28 @@ fn control_socket_roundtrip() {
 
     let bad = request("nope");
     assert_eq!(bad["ok"], false);
+}
+
+#[test]
+fn start_with_dir_records_into_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (tap, _td) = start_tap(tmp.path());
+    let handle = tap.handle();
+    let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
+
+    // The dir does not exist yet; start must create it.
+    let dir = tmp.path().join("bundle").join("clips");
+    let line = serde_json::json!({"cmd": "start", "dir": dir}).to_string();
+    let resp = osc_tap::control::dispatch(&line, &handle);
+    assert_eq!(resp["ok"], true, "resp = {resp}");
+    let clip = std::path::PathBuf::from(resp["clip"].as_str().unwrap());
+    assert_eq!(clip.parent().unwrap(), dir);
+
+    tx.send_to(&encode_msg("/x", vec![OscType::Int(1)]), tap.listen_addr)
+        .unwrap();
+    wait_events(&handle, 1);
+    handle.stop_clip().unwrap();
+
+    let lines = read_lines(&clip);
+    assert_eq!(lines[1]["a"], "/x");
 }

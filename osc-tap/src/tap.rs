@@ -58,6 +58,8 @@ enum Msg {
         beacon: Option<Beacon>,
     },
     Start {
+        /// Record into this directory instead of the default outdir.
+        dir: Option<PathBuf>,
         reply: Sender<Result<PathBuf, String>>,
     },
     Stop {
@@ -84,10 +86,10 @@ pub struct Status {
 }
 
 impl Handle {
-    pub fn start_clip(&self) -> Result<PathBuf, String> {
+    pub fn start_clip(&self, dir: Option<PathBuf>) -> Result<PathBuf, String> {
         let (tx, rx) = mpsc::channel();
         self.tx
-            .send(Msg::Start { reply: tx })
+            .send(Msg::Start { dir, reply: tx })
             .map_err(|_| "writer thread gone".to_string())?;
         rx.recv().map_err(|_| "writer thread gone".to_string())?
     }
@@ -272,12 +274,13 @@ fn writer_loop(
                     }
                 }
             }
-            Msg::Start { reply } => {
+            Msg::Start { dir, reply } => {
                 if rec.is_some() {
                     let _ = reply.send(Err("already recording".into()));
                     continue;
                 }
-                match start_recording(&outdir, listen_port, forward_addr) {
+                match start_recording(dir.as_deref().unwrap_or(&outdir), listen_port, forward_addr)
+                {
                     Ok(r) => {
                         let _ = reply.send(Ok(r.path.clone()));
                         rec = Some(r);
@@ -326,6 +329,7 @@ fn start_recording(
     listen_port: u16,
     forward_addr: SocketAddr,
 ) -> Result<Recording> {
+    std::fs::create_dir_all(outdir).with_context(|| format!("create dir {outdir:?}"))?;
     let now = chrono::Local::now();
     let stamp = now.format("%Y%m%d-%H%M%S");
     let mut path = outdir.join(format!("clip-{stamp}.jsonl"));

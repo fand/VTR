@@ -10,7 +10,7 @@ use crate::tap::Handle;
 
 /// Serve the JSON Lines control API on a unix domain socket. Blocks forever.
 ///
-/// Requests:  {"cmd":"start"} | {"cmd":"stop"} | {"cmd":"status"}
+/// Requests:  {"cmd":"start","dir"?:"/abs/path"} | {"cmd":"stop"} | {"cmd":"status"}
 /// Responses: {"ok":true,...} | {"ok":false,"error":"..."}
 pub fn serve(path: &Path, handle: Handle) -> Result<()> {
     // Remove a stale socket from a previous run.
@@ -51,7 +51,7 @@ pub fn dispatch(line: &str, handle: &Handle) -> Value {
         Err(e) => return json!({"ok": false, "error": format!("bad json: {e}")}),
     };
     match request["cmd"].as_str() {
-        Some("start") => match handle.start_clip() {
+        Some("start") => match handle.start_clip(request["dir"].as_str().map(Into::into)) {
             Ok(path) => json!({"ok": true, "clip": path}),
             Err(e) => json!({"ok": false, "error": e}),
         },

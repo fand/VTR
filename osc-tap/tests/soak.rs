@@ -69,7 +69,7 @@ fn burst_no_loss() {
     let handle = tap.handle();
     let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
 
-    let clip = handle.start_clip().unwrap();
+    let clip = handle.start_clip(None).unwrap();
     for i in 0..N {
         tx.send_to(
             &encode_msg("/burst", vec![OscType::Int(i as i32)]),
@@ -101,7 +101,7 @@ fn soak_120hz() {
     let handle = tap.handle();
     let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
 
-    let clip = handle.start_clip().unwrap();
+    let clip = handle.start_clip(None).unwrap();
     let period = Duration::from_secs_f64(1.0 / HZ);
     let start = Instant::now();
     for i in 0..n {
