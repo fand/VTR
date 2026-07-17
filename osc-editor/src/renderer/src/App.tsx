@@ -277,7 +277,8 @@ function App(): React.JSX.Element {
 
   const history = useHistory(
     { tracks: [], markers: [], duration: DEFAULT_DURATION, edits: {} },
-    onRestore
+    onRestore,
+    setError
   )
   const { reset, transient, commit, undo, redo } = history
   const { tracks, markers, duration, edits } = history.doc

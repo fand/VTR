@@ -35,7 +35,11 @@ export interface History {
   redo: () => void
 }
 
-export function useHistory(initial: Doc, onRestore: (doc: Doc) => void): History {
+export function useHistory(
+  initial: Doc,
+  onRestore: (doc: Doc) => void,
+  onError: (message: string) => void
+): History {
   const [doc, setDoc] = useState(initial)
   const docRef = useRef(doc)
   const base = useRef<Doc | null>(null)
@@ -44,6 +48,12 @@ export function useHistory(initial: Doc, onRestore: (doc: Doc) => void): History
   const nextSeq = useRef(1)
   // Stacks live in refs; render-facing facts about them live in state.
   const [meta, setMeta] = useState({ seq: 0, canUndo: false, canRedo: false })
+
+  // In-memory history works either way, but undo won't survive a restart.
+  const persistError = useCallback(
+    (e: Error): void => onError(`failed to write undo log: ${e.message}`),
+    [onError]
+  )
 
   const install = useCallback((next: Doc): void => {
     docRef.current = next
@@ -88,15 +98,15 @@ export function useHistory(initial: Doc, onRestore: (doc: Doc) => void): History
         // Linear history: a new commit discards the redo branch.
         future.current = []
         const top = past.current[past.current.length - 1]
-        window.api.undo.truncateAfter(top?.seq ?? 0).catch(() => {})
+        window.api.undo.truncateAfter(top?.seq ?? 0).catch(persistError)
       }
       const entry: UndoEntry = { seq: nextSeq.current++, label, patches, inversePatches }
       past.current.push(entry)
       if (past.current.length > MAX_ENTRIES) past.current.shift()
-      window.api.undo.append(entry).catch(() => {})
+      window.api.undo.append(entry).catch(persistError)
       install(next)
     },
-    [install]
+    [install, persistError]
   )
 
   const restore = useCallback(
@@ -112,9 +122,9 @@ export function useHistory(initial: Doc, onRestore: (doc: Doc) => void): History
   const dropHistory = useCallback((): void => {
     past.current = []
     future.current = []
-    window.api.undo.truncateAfter(0).catch(() => {})
+    window.api.undo.truncateAfter(0).catch(persistError)
     install(docRef.current)
-  }, [install])
+  }, [install, persistError])
 
   const undo = useCallback((): void => {
     const entry = past.current.pop()
