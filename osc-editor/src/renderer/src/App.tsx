@@ -898,13 +898,18 @@ function App(): React.JSX.Element {
     setPlaying(null)
   }, [playing])
 
+  // In-flight guard: two fast Space presses would both see playing === null
+  // and both call preview.play; the second's startedAt then skews the playhead.
+  const playFlight = useRef(false)
   const togglePlay = useCallback(async () => {
-    if (playing) {
-      await pausePreview()
-      return
-    }
-    if (tracks.length === 0) return
+    if (playFlight.current) return
+    playFlight.current = true
     try {
+      if (playing) {
+        await pausePreview()
+        return
+      }
+      if (tracks.length === 0) return
       const res = await window.api.preview.play(
         serializeProject(tracks, markers, ports, duration, edits, history.seq),
         playhead
@@ -913,6 +918,8 @@ function App(): React.JSX.Element {
       setError(null)
     } catch (e) {
       setError((e as Error).message)
+    } finally {
+      playFlight.current = false
     }
   }, [playing, tracks, markers, ports, duration, edits, playhead, pausePreview])
 
