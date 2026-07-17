@@ -76,3 +76,14 @@ test('a late reply to a timed-out request is not matched to the next request', a
   await expect(tap.status()).rejects.toThrow('timed out')
   await expect(tap.start()).resolves.toBe('/clips/real.jsonl')
 })
+
+test('concurrent requests during initial connect share one socket', async () => {
+  const { tap, connections } = await setup((_req, reply) => {
+    reply({ ok: true, status: { recording: false } })
+  })
+
+  const [a, b] = await Promise.all([tap.status(), tap.status()])
+  expect(a).toEqual({ recording: false })
+  expect(b).toEqual({ recording: false })
+  expect(connections()).toBe(1)
+})

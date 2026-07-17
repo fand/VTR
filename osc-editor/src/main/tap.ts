@@ -37,6 +37,7 @@ export class TapManager {
   readonly sockPath: string
   private proc: ChildProcess | null = null
   private sock: net.Socket | null = null
+  private connecting: Promise<net.Socket> | null = null
   private pending = new Map<number, Pending>()
   private nextId = 1
   private buf = ''
@@ -238,8 +239,16 @@ ${programArgs}
     })
   }
 
-  private async connect(): Promise<net.Socket> {
-    if (this.sock && !this.sock.destroyed) return this.sock
+  private connect(): Promise<net.Socket> {
+    if (this.sock && !this.sock.destroyed) return Promise.resolve(this.sock)
+    // Share one in-flight connect so concurrent callers never open two sockets.
+    this.connecting ??= this.connectWithRetry().finally(() => {
+      this.connecting = null
+    })
+    return this.connecting
+  }
+
+  private async connectWithRetry(): Promise<net.Socket> {
     const deadline = Date.now() + CONNECT_DEADLINE_MS
     for (;;) {
       try {
