@@ -592,20 +592,19 @@ function App(): React.JSX.Element {
     })
   }, [])
 
-  // The curve panel edits one clip at a time.
-  const selectedClip =
-    selectedIds.length === 1
-      ? (tracks.flatMap((t) => t.clips).find((c) => c.id === selectedIds[0]) ?? null)
-      : null
+  // The curve panel shows every selected clip's events.
+  const selectedClips = React.useMemo(
+    () => tracks.flatMap((t) => t.clips).filter((c) => selectedIds.includes(c.id)),
+    [tracks, selectedIds]
+  )
 
   const onPointEdit = useCallback(
     (patches: PointPatch[], isCommit: boolean) => {
-      const file = selectedClip?.file
-      if (!file || patches.length === 0) return
+      if (patches.length === 0) return
       const apply = (d: Doc): void => {
-        const clipEdits = (d.edits[file] ??= {})
-        const set = (clipEdits.set ??= {})
         for (const patch of patches) {
+          const clipEdits = (d.edits[patch.file] ??= {})
+          const set = (clipEdits.set ??= {})
           const entry = (set[patch.eventIndex] ??= {})
           if (patch.t != null) entry.t = patch.t
           if (patch.argIndex != null && patch.value != null) {
@@ -616,19 +615,19 @@ function App(): React.JSX.Element {
       if (isCommit) commit('edit points', apply)
       else transient(apply)
     },
-    [selectedClip?.file, commit, transient]
+    [commit, transient]
   )
 
   const deleteSelectedPoints = useCallback(() => {
-    const file = selectedClip?.file
-    if (!file || selectedPoints.length === 0) return
+    if (selectedPoints.length === 0) return
     commit('delete points', (d) => {
-      const clipEdits = (d.edits[file] ??= {})
-      const del = (clipEdits.del ??= {})
-      for (const pt of selectedPoints) del[pt.eventIndex] = true
+      for (const pt of selectedPoints) {
+        const clipEdits = (d.edits[pt.file] ??= {})
+        ;(clipEdits.del ??= {})[pt.eventIndex] = true
+      }
     })
     setSelectedPoints([])
-  }, [selectedClip?.file, selectedPoints, commit])
+  }, [selectedPoints, commit])
 
   const stopPreview = useCallback(async () => {
     try {
@@ -892,9 +891,9 @@ function App(): React.JSX.Element {
       />
 
       <CurvePanel
-        clip={selectedClip}
+        clips={selectedClips}
         height={curveHeight}
-        edits={selectedClip ? edits[selectedClip.file] : undefined}
+        edits={edits}
         selectedPoints={selectedPoints}
         onSelectPoints={setSelectedPoints}
         onPointEdit={onPointEdit}
