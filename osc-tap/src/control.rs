@@ -50,7 +50,7 @@ pub fn dispatch(line: &str, handle: &Handle) -> Value {
         Ok(v) => v,
         Err(e) => return json!({"ok": false, "error": format!("bad json: {e}")}),
     };
-    match request["cmd"].as_str() {
+    let mut response = match request["cmd"].as_str() {
         Some("start") => match handle.start_clip(request["dir"].as_str().map(Into::into)) {
             Ok(path) => json!({"ok": true, "clip": path}),
             Err(e) => json!({"ok": false, "error": e}),
@@ -64,5 +64,10 @@ pub fn dispatch(line: &str, handle: &Handle) -> Value {
             Err(e) => json!({"ok": false, "error": e}),
         },
         _ => json!({"ok": false, "error": "unknown cmd"}),
+    };
+    // Echo the request id so the client can match replies to requests.
+    if let Some(id) = request.get("id") {
+        response["id"] = id.clone();
     }
+    response
 }

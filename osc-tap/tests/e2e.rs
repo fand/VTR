@@ -255,6 +255,21 @@ fn control_socket_roundtrip() {
 }
 
 #[test]
+fn control_replies_echo_request_id() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (tap, _td) = start_tap(tmp.path());
+    let handle = tap.handle();
+
+    let resp = osc_tap::control::dispatch(r#"{"cmd":"status","id":7}"#, &handle);
+    assert_eq!(resp["ok"], true);
+    assert_eq!(resp["id"], 7);
+
+    // No id in the request -> no id in the reply.
+    let resp = osc_tap::control::dispatch(r#"{"cmd":"status"}"#, &handle);
+    assert!(resp.get("id").is_none());
+}
+
+#[test]
 fn start_with_dir_records_into_it() {
     let tmp = tempfile::tempdir().unwrap();
     let (tap, _td) = start_tap(tmp.path());
