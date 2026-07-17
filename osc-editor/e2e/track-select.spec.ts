@@ -87,7 +87,8 @@ test('track select: cmd/shift multi-select, curve shows track clips', async () =
     await expect(page.locator('.track-label.selected')).toHaveCount(0)
     await expect(page.locator('.curve-prop-name')).toHaveText(['/b'])
 
-    // Back to a track; an empty-lane click clears it.
+    // Back to a track; an empty-lane click clears the selection but the
+    // curve panel keeps showing the last selection's clips.
     await page.locator('.track .track-label').nth(0).click()
     await expect(page.locator('.track-label.selected')).toHaveCount(1)
     await page
@@ -95,7 +96,11 @@ test('track select: cmd/shift multi-select, curve shows track clips', async () =
       .nth(0)
       .click({ position: { x: 500, y: 40 } })
     await expect(page.locator('.track-label.selected')).toHaveCount(0)
-    await expect(page.locator('.curve-empty')).toBeVisible()
+    await expect(page.locator('.curve-prop-name')).toHaveText(['/a'])
+
+    // A new selection replaces it.
+    await page.locator('.clip').nth(1).click()
+    await expect(page.locator('.curve-prop-name')).toHaveText(['/b'])
   } finally {
     await app.close()
   }

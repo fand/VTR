@@ -609,18 +609,22 @@ function App(): React.JSX.Element {
   }, [])
 
   // The curve panel shows every selected clip's events; with no clip
-  // selected, the selected tracks' clips.
-  const selectedClips = React.useMemo(
-    () => tracks.flatMap((t) => t.clips).filter((c) => selectedIds.includes(c.id)),
-    [tracks, selectedIds]
-  )
-  const curveClips = React.useMemo(
-    () =>
-      selectedClips.length > 0
-        ? selectedClips
-        : tracks.filter((t) => selectedTrackIds.includes(t.id)).flatMap((t) => t.clips),
-    [selectedClips, tracks, selectedTrackIds]
-  )
+  // selected, the selected tracks' clips. Deselecting doesn't clear it:
+  // the panel keeps the last selection until a new one replaces it.
+  const [curveSel, setCurveSel] = useState<{ clipIds: number[]; trackIds: number[] }>({
+    clipIds: [],
+    trackIds: []
+  })
+  useEffect(() => {
+    if (selectedIds.length > 0) setCurveSel({ clipIds: selectedIds, trackIds: [] })
+    else if (selectedTrackIds.length > 0) setCurveSel({ clipIds: [], trackIds: selectedTrackIds })
+  }, [selectedIds, selectedTrackIds])
+  const curveClips = React.useMemo(() => {
+    if (curveSel.clipIds.length > 0) {
+      return tracks.flatMap((t) => t.clips).filter((c) => curveSel.clipIds.includes(c.id))
+    }
+    return tracks.filter((t) => curveSel.trackIds.includes(t.id)).flatMap((t) => t.clips)
+  }, [tracks, curveSel])
 
   const onPointEdit = useCallback(
     (patches: PointPatch[], isCommit: boolean) => {

@@ -114,8 +114,10 @@ test('curve panel: properties per address/arg, visibility toggle', async () => {
 
     // Deselect (click empty lane area far from the clip; the ruler swallows
     // pointerdown for seeking, lanes bubble up to the deselect handler).
+    // The curve panel keeps showing the last selected clip.
     await page.locator('.track-lane').click({ position: { x: 500, y: 55 } })
-    await expect(page.locator('.curve-prop')).toHaveCount(0)
+    await expect(page.locator('.clip.selected')).toHaveCount(0)
+    await expect(page.locator('.curve-prop-name')).toHaveText(['/fader', '/xy[0]', '/xy[1]'])
   } finally {
     await app.close()
   }
