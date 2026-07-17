@@ -682,19 +682,26 @@ function App(): React.JSX.Element {
     setSelectedPoints([])
   }, [selectedPoints, commit])
 
-  const stopPreview = useCallback(async () => {
+  // Pause freezes the playhead where playback stopped; Play resumes from it.
+  // The renderer clock decides the pause position: main freezes at the last
+  // *sent* event, which can sit before the visible playhead.
+  const pausePreview = useCallback(async () => {
+    if (playing) {
+      setPlayhead(
+        Math.min(playing.startPos + (performance.now() - playing.startedAt) / 1000, playing.duration)
+      )
+    }
     try {
-      const { position } = await window.api.preview.stop()
-      setPlayhead(position)
+      await window.api.preview.stop()
     } catch (e) {
       setError((e as Error).message)
     }
     setPlaying(null)
-  }, [])
+  }, [playing])
 
   const togglePlay = useCallback(async () => {
     if (playing) {
-      await stopPreview()
+      await pausePreview()
       return
     }
     if (tracks.length === 0) return
@@ -708,16 +715,16 @@ function App(): React.JSX.Element {
     } catch (e) {
       setError((e as Error).message)
     }
-  }, [playing, tracks, markers, ports, duration, edits, playhead, stopPreview])
+  }, [playing, tracks, markers, ports, duration, edits, playhead, pausePreview])
 
-  // Auto-stop when the playhead reaches the end.
+  // Auto-pause when the playhead reaches the end.
   useEffect(() => {
     if (!playing) return
     const remaining =
       (playing.duration - playing.startPos) * 1000 - (performance.now() - playing.startedAt)
-    const timer = setTimeout(() => stopPreview(), Math.max(remaining, 0) + 100)
+    const timer = setTimeout(() => pausePreview(), Math.max(remaining, 0) + 100)
     return () => clearTimeout(timer)
-  }, [playing, stopPreview])
+  }, [playing, pausePreview])
 
   const onSeek = useCallback(
     (sec: number) => {
@@ -879,7 +886,7 @@ function App(): React.JSX.Element {
           onClick={togglePlay}
           disabled={busy || !!recording || tracks.length === 0}
         >
-          {playing ? '⏹ Stop' : '▶ Play'}
+          {playing ? '⏸ Pause' : '▶ Play'}
         </button>
         <button
           className="btn"

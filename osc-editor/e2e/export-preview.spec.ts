@@ -86,6 +86,39 @@ test('export writes merged session.jsonl', async () => {
   }
 })
 
+test('pause keeps the playhead where playback stopped; play resumes from it', async () => {
+  const { app, page } = await launchApp()
+  const sock = dgram.createSocket('udp4')
+  try {
+    await recordClip(page, sock, 8) // ~0.7s span
+    await page.getByLabel('timeline duration').fill('30')
+    await page.getByLabel('timeline duration').press('Enter')
+
+    // Playhead x at default zoom: LABEL_W (96) + sec * 20px/s.
+    const playheadLeft = (): Promise<number> =>
+      page.locator('.playhead').evaluate((el) => parseFloat((el as HTMLElement).style.left))
+
+    await page.getByRole('button', { name: '▶ Play' }).click()
+    await sleep(600)
+    await page.getByRole('button', { name: '⏸ Pause' }).click()
+    await expect(page.getByRole('button', { name: '▶ Play' })).toBeVisible()
+    const pausedAt = await playheadLeft()
+    // ~0.6s in: the playhead stayed there instead of snapping back to 0.
+    expect(pausedAt).toBeGreaterThan(96 + 6)
+    await sleep(300) // paused: it must not creep
+    expect(await playheadLeft()).toBeCloseTo(pausedAt, 1)
+
+    // Resume: playback continues from the paused position.
+    await page.getByRole('button', { name: '▶ Play' }).click()
+    await sleep(500)
+    await page.getByRole('button', { name: '⏸ Pause' }).click()
+    expect(await playheadLeft()).toBeGreaterThan(pausedAt + 4)
+  } finally {
+    sock.close()
+    await app.close()
+  }
+})
+
 test('preview replays events to TD port with original spacing', async () => {
   const { app, page } = await launchApp()
   const sock = dgram.createSocket('udp4')
