@@ -280,6 +280,12 @@ function App(): React.JSX.Element {
   const { reset, transient, commit, undo, redo } = history
   const { tracks, markers, duration, edits } = history.doc
 
+  // Clip clipboard (session-local, not the OS clipboard). Paste overrides
+  // id/offset, so storing stale ids is harmless; the source track ids are
+  // the paste targets when no other track is implied.
+  const clipClipboard = useRef<{ clip: ClipInst; trackId: number }[]>([])
+  const [canPaste, setCanPaste] = useState(false)
+
   // Install a loaded project (boot or File > Open) into the editor.
   const applyLoaded = useCallback(
     (path: string | null, project: LoadedProject | null, log: UndoEntry[]): void => {
@@ -319,6 +325,9 @@ function App(): React.JSX.Element {
       setSelectedIds([])
       setSelectedTrackIds([])
       setSelectedPoints([])
+      // Clipboard clips reference files in the previous bundle; drop them.
+      clipClipboard.current = []
+      setCanPaste(false)
     },
     [newId, reset]
   )
@@ -617,12 +626,6 @@ function App(): React.JSX.Element {
     },
     [commit]
   )
-
-  // Clip clipboard (session-local, not the OS clipboard). Paste overrides
-  // id/offset, so storing stale ids is harmless; the source track ids are
-  // the paste targets when no other track is implied.
-  const clipClipboard = useRef<{ clip: ClipInst; trackId: number }[]>([])
-  const [canPaste, setCanPaste] = useState(false)
 
   const copyClips = useCallback(
     (clipIds: number[]) => {
