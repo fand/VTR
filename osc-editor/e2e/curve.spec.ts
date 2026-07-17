@@ -123,6 +123,48 @@ test('curve panel: properties per address/arg, visibility toggle', async () => {
   }
 })
 
+test('curve panel: property list sorted by address', async () => {
+  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  writeFileSync(
+    join(workdir, CLIP),
+    jsonl([
+      { type: 'session_start', t: 0, wall: '2026-07-16T00:00:00Z' },
+      // Insertion order (/zoom, /xy, /fader) differs from address order.
+      { t: 0.2, port: LISTEN_PORT, a: '/zoom', args: [1] },
+      { t: 0.4, port: LISTEN_PORT, a: '/xy', args: [0.1, 0.2] },
+      { t: 0.6, port: LISTEN_PORT, a: '/fader', args: [0.5] },
+      { type: 'session_end', t: 1 }
+    ])
+  )
+  writeFileSync(
+    join(workdir, 'project.json'),
+    JSON.stringify({
+      version: 1,
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT, beacon: BEACON_PORT },
+      duration: 10,
+      tracks: [{ clips: [{ file: CLIP, offset: 0, trimIn: 0, trimOut: 1 }] }]
+    })
+  )
+
+  const app = await electron.launch({
+    args: [join(__dirname, '../out/main/index.js')],
+    cwd: workdir,
+    env: {
+      ...process.env,
+      OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
+      OSC_EDITOR_HIDDEN: '1'
+    }
+  })
+  try {
+    const page = await app.firstWindow()
+    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await page.locator('.clip').click()
+    await expect(page.locator('.curve-prop-name')).toHaveText(['/fader', '/xy[0]', '/xy[1]', '/zoom'])
+  } finally {
+    await app.close()
+  }
+})
+
 test('curve panel: multi-select shows every selected clip, timeline time axis', async () => {
   const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
   writeFileSync(

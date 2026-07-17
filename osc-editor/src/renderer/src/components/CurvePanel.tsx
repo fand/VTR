@@ -79,7 +79,13 @@ function buildProperties(
       })
     }
   }
-  return [...byKey.entries()].map(([key, points], i) => {
+  // Sort by address, then arg index, so the list order is stable and scannable.
+  const sorted = [...byKey.entries()].sort(([a], [b]) => {
+    const [aAddr, aIdx] = a.split(' ')
+    const [bAddr, bIdx] = b.split(' ')
+    return aAddr === bAddr ? Number(aIdx) - Number(bIdx) : aAddr < bAddr ? -1 : 1
+  })
+  return sorted.map(([key, points], i) => {
     points.sort((a, b) => a.t - b.t)
     const [addr, argIdx] = key.split(' ')
     const label = (argCount.get(addr) ?? 1) > 1 ? `${addr}[${argIdx}]` : addr
