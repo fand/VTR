@@ -1,16 +1,29 @@
 import { app, shell, BrowserWindow, Menu, dialog, ipcMain } from 'electron'
 import { existsSync, mkdirSync, statSync } from 'fs'
-import { dirname, join, resolve } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
+import { basename, dirname, join, resolve } from 'path'
 import { clipSummary, readClip } from './clips'
 import { mergeProject } from './merge'
 import { Preview } from './preview'
-import { PROJECT_FILE, loadProject, readProjectPorts, resolveClipPath, saveProject } from './project'
+import {
+  collectClips,
+  loadProject,
+  normalizeProjectPath,
+  readProjectPorts,
+  resolveClipPath,
+  saveProject
+} from './project'
 import { SESSION_FILE, exportSession } from './session'
 import { SpawnMode, TapManager } from './tap'
 import { appendUndo, loadUndoLog, truncateUndoAfter } from './undo'
-import { DEFAULT_PORTS, type PortConfig, type ProjectFile, type UndoEntry } from '../shared/types'
+import {
+  DEFAULT_PORTS,
+  type LoadedProject,
+  type PortConfig,
+  type ProjectFile,
+  type UndoEntry
+} from '../shared/types'
 
 // Working directory: cwd when launched from the CLI (per spec).
 const workdir = process.cwd()
@@ -30,12 +43,13 @@ const stagingDir = join(dataDir, 'recordings')
 const cliArg = process.argv[app.isPackaged ? 1 : 2]
 const cliProjectPath = cliArg ? resolve(workdir, cliArg) : null
 
-// Dir the current project file lives in; clip files resolve against it.
-// Defaults to the workdir until a project is opened or saved elsewhere.
-let projectDir = workdir
+// Dir the current project lives in (the .oscproj bundle, or the dir of a
+// legacy flat project.json). Null until a project is opened or saved.
+let projectDir: string | null = null
 
 // Clip files resolve against the project bundle, then staging.
-const resolveClip = (file: string): string => resolveClipPath(projectDir, stagingDir, file)
+const resolveClip = (file: string): string =>
+  resolveClipPath(projectDir ?? workdir, stagingDir, file)
 
 let tap: TapManager | null = null
 let tapError: string | null = null
@@ -165,7 +179,7 @@ app.whenReady().then(() => {
     // Start on the project's ports right away — no restart dance at boot.
     const ports = {
       ...DEFAULT_PORTS,
-      ...(cliProjectPath ? readProjectPorts(cliProjectPath) : undefined)
+      ...(cliProjectPath ? readProjectPorts(normalizeProjectPath(cliProjectPath)) : undefined)
     }
     tap = new TapManager(findTapBinary(), dataDir, stagingDir, mode, ports)
     tap.spawnTap()
@@ -174,7 +188,10 @@ app.whenReady().then(() => {
     console.error(tapError)
   }
 
-  ipcMain.handle('tap:start', () => requireTap().start())
+  // Record straight into the open project's bundle; staging only when untitled.
+  ipcMain.handle('tap:start', () =>
+    requireTap().start(projectDir ? join(projectDir, 'clips') : undefined)
+  )
   ipcMain.handle('tap:stop', async (_e, clipPath: string) => {
     await requireTap().stop()
     return clipSummary(clipPath)
@@ -183,24 +200,34 @@ app.whenReady().then(() => {
   ipcMain.handle('tap:setPorts', (_e, ports: PortConfig) => requireTap().setPorts(ports))
   ipcMain.handle('app:workdir', () => workdir)
   // Raw events; the renderer applies its own (possibly newer) edit overlay.
-  ipcMain.handle('clip:events', (_e, path: string) => readClip(path).events)
+  // A stale path (clip collected into a bundle since) re-resolves by name.
+  ipcMain.handle('clip:events', (_e, path: string) => {
+    try {
+      return readClip(path).events
+    } catch {
+      return readClip(resolveClip(basename(path))).events
+    }
+  })
   // Boot load: the CLI-arg project (if any); the default is an empty project.
-  ipcMain.handle('project:load', () => {
-    if (!cliProjectPath) return null
-    const project = loadProject(cliProjectPath, stagingDir)
-    if (!project) throw new Error(`project not found: ${cliProjectPath}`)
-    projectDir = dirname(cliProjectPath)
-    return { path: cliProjectPath, project }
-  })
-  ipcMain.handle('project:loadPath', (_e, path: string) => {
-    const project = loadProject(path, stagingDir)
+  // Load/save accept a .oscproj bundle or a flat project.json path; the
+  // renderer keeps the path as given (window title, save target).
+  const load = (path: string): { path: string; project: LoadedProject } => {
+    const projectPath = normalizeProjectPath(path)
+    const project = loadProject(projectPath, stagingDir)
     if (!project) throw new Error(`project not found: ${path}`)
-    projectDir = dirname(path)
+    projectDir = dirname(projectPath)
     return { path, project }
-  })
+  }
+  ipcMain.handle('project:load', () => (cliProjectPath ? load(cliProjectPath) : null))
+  ipcMain.handle('project:loadPath', (_e, path: string) => load(path))
   ipcMain.handle('project:save', (_e, path: string, project: ProjectFile) => {
-    projectDir = dirname(path)
-    saveProject(path, project, stagingDir)
+    const projectPath = normalizeProjectPath(path)
+    const dir = dirname(projectPath)
+    mkdirSync(dir, { recursive: true })
+    // Resolve sources with the outgoing projectDir, then adopt the new one.
+    collectClips(dir, stagingDir, project, resolveClip)
+    projectDir = dir
+    saveProject(projectPath, project, stagingDir)
   })
   // Hidden (e2e) skips native dialogs; OSC_EDITOR_DIALOG_PATH stands in for
   // the user's pick (open returns null without it, save falls back to the
@@ -208,20 +235,22 @@ app.whenReady().then(() => {
   ipcMain.handle('project:openDialog', async (e) => {
     if (hidden) return process.env.OSC_EDITOR_DIALOG_PATH ?? null
     const win = BrowserWindow.fromWebContents(e.sender)
+    // openDirectory: a .oscproj is a plain dir wherever LSTypeIsPackage
+    // doesn't apply (dev runs, non-mac).
     const res = await dialog.showOpenDialog(win!, {
-      defaultPath: projectDir,
-      filters: [{ name: 'Project', extensions: ['json'] }],
-      properties: ['openFile']
+      defaultPath: projectDir ?? workdir,
+      filters: [{ name: 'Project', extensions: ['oscproj', 'json'] }],
+      properties: ['openFile', 'openDirectory']
     })
     return res.canceled || res.filePaths.length === 0 ? null : res.filePaths[0]
   })
   ipcMain.handle('project:saveDialog', async (e, defaultPath?: string) => {
-    const fallback = defaultPath ?? join(projectDir, PROJECT_FILE)
+    const fallback = defaultPath ?? join(projectDir ?? workdir, 'Untitled.oscproj')
     if (hidden) return process.env.OSC_EDITOR_DIALOG_PATH ?? fallback
     const win = BrowserWindow.fromWebContents(e.sender)
     const res = await dialog.showSaveDialog(win!, {
       defaultPath: fallback,
-      filters: [{ name: 'Project', extensions: ['json'] }]
+      filters: [{ name: 'Project', extensions: ['oscproj'] }]
     })
     return res.canceled || !res.filePath ? null : res.filePath
   })
@@ -231,7 +260,10 @@ app.whenReady().then(() => {
   // Ask where to save; null = user cancelled. Hidden (e2e) skips the native
   // dialog — it would hang the test — and writes the default session.jsonl.
   ipcMain.handle('session:export', async (e, project: ProjectFile) => {
-    let outPath = join(projectDir, SESSION_FILE)
+    // Default next to the project: a bundle's parent dir, not inside it.
+    const exportDir =
+      projectDir == null ? workdir : projectDir.endsWith('.oscproj') ? dirname(projectDir) : projectDir
+    let outPath = join(exportDir, SESSION_FILE)
     if (!hidden) {
       const win = BrowserWindow.fromWebContents(e.sender)
       const res = await dialog.showSaveDialog(win!, {

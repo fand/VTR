@@ -194,8 +194,9 @@ ${programArgs}
     }
   }
 
-  async start(): Promise<string> {
-    const r = await this.request('start')
+  /** Start recording, into `dir` instead of the default outdir when given. */
+  async start(dir?: string): Promise<string> {
+    const r = await this.request('start', dir ? { dir } : undefined)
     return r.clip as string
   }
 
@@ -208,7 +209,10 @@ ${programArgs}
     return r.status as unknown as TapStatus
   }
 
-  private async request(cmd: string): Promise<Record<string, unknown>> {
+  private async request(
+    cmd: string,
+    extra?: Record<string, unknown>
+  ): Promise<Record<string, unknown>> {
     const sock = await this.connect()
     return new Promise((resolve, reject) => {
       const entry: Pending = {
@@ -227,7 +231,7 @@ ${programArgs}
         }, REQUEST_TIMEOUT_MS)
       }
       this.pending.push(entry)
-      sock.write(JSON.stringify({ cmd }) + '\n')
+      sock.write(JSON.stringify({ cmd, ...extra }) + '\n')
     })
   }
 

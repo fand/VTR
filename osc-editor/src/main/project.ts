@@ -1,10 +1,15 @@
-import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { editsEmpty } from '../shared/edits'
 import type { ClipEdits, LoadedProject, PortConfig, ProjectFile } from '../shared/types'
 import { clipSummary } from './clips'
 
 export const PROJECT_FILE = 'project.json'
+
+/** A project ref is either a project.json path or a .oscproj bundle dir. */
+export function normalizeProjectPath(path: string): string {
+  return path.endsWith('.oscproj') ? join(path, PROJECT_FILE) : path
+}
 
 /**
  * Where a clip file lives: the project bundle's clips/, the project dir
@@ -70,6 +75,46 @@ export function loadProject(projectPath: string, stagingDir: string): LoadedProj
     edits,
     undoSeq: project.undoSeq,
     missing
+  }
+}
+
+/** Move within a volume, copy+delete across volumes. */
+function transfer(src: string, dest: string, deleteSrc: boolean): void {
+  if (deleteSrc) {
+    try {
+      renameSync(src, dest)
+      return
+    } catch {
+      // EXDEV etc; fall through to copy.
+    }
+  }
+  copyFileSync(src, dest)
+  if (deleteSrc) rmSync(src, { force: true })
+}
+
+/**
+ * Bring every referenced clip (and its edits sidecar) into <dir>/clips/ so a
+ * saved project is self-contained. Staged recordings are moved (the project
+ * now owns them); clips owned by another project dir are copied.
+ */
+export function collectClips(
+  dir: string,
+  stagingDir: string,
+  project: ProjectFile,
+  resolveFrom: (file: string) => string
+): void {
+  for (const track of project.tracks) {
+    for (const clip of track.clips) {
+      const src = resolveFrom(clip.file)
+      const dest = join(dir, 'clips', clip.file)
+      if (!existsSync(src) || src === dest || src === join(dir, clip.file)) continue
+      mkdirSync(join(dir, 'clips'), { recursive: true })
+      const fromStaging = src === join(stagingDir, clip.file)
+      transfer(src, dest, fromStaging)
+      if (existsSync(`${src}.edits.json`)) {
+        transfer(`${src}.edits.json`, `${dest}.edits.json`, fromStaging)
+      }
+    }
   }
 }
 
