@@ -18,7 +18,7 @@ function jsonl(lines: object[]): string {
   return lines.map((l) => JSON.stringify(l)).join('\n') + '\n'
 }
 
-test('edits sidecar: applied on export, survives autosave', async () => {
+test('edits sidecar: applied on export, survives save round-trip', async () => {
   const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
   writeFileSync(
     join(workdir, CLIP),
@@ -68,7 +68,8 @@ test('edits sidecar: applied on export, survives autosave', async () => {
       { t: 0.5, port: LISTEN_PORT, a: '/a', args: [0.9] }
     ])
 
-    // The autosave round-trip (load → save) must not lose or inline the overlay.
+    // The save round-trip (load → Cmd+S) must not lose or inline the overlay.
+    await page.keyboard.press('ControlOrMeta+s')
     await expect
       .poll(() => JSON.parse(readFileSync(join(workdir, `${CLIP}.edits.json`), 'utf8')))
       .toEqual(EDITS)

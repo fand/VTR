@@ -72,7 +72,8 @@ test('timeline markers: add at playhead, persist in project.json', async () => {
     await page.keyboard.press('m')
     await expect(page.locator('.marker-flag')).toHaveCount(2)
 
-    // Autosave persists both.
+    // Explicit save (Cmd+S) persists both.
+    await page.keyboard.press('ControlOrMeta+s')
     await expect.poll(() => readMarkers().length).toBe(2)
     expect(Math.abs(readMarkers()[0].time - 8)).toBeLessThan(0.1)
 
@@ -81,6 +82,7 @@ test('timeline markers: add at playhead, persist in project.json', async () => {
     await page.getByLabel('rename marker 1').fill('drop')
     await page.getByLabel('rename marker 1').press('Enter')
     await expect(page.locator('.marker-flag').first()).toHaveText('drop')
+    await page.keyboard.press('ControlOrMeta+s')
     await expect.poll(() => readMarkers()[0]?.label).toBe('drop')
 
     // Drag the first marker +40px (2s at 20 px/s): 8s → 10s.
@@ -90,6 +92,7 @@ test('timeline markers: add at playhead, persist in project.json', async () => {
     await page.mouse.down()
     await page.mouse.move(box.x + box.width / 2 + 40, box.y + box.height / 2, { steps: 4 })
     await page.mouse.up()
+    await page.keyboard.press('ControlOrMeta+s')
     await expect.poll(() => readMarkers()[0]?.time).toBeGreaterThan(9.9)
     expect(readMarkers()[0].time).toBeLessThan(10.1)
 
@@ -105,6 +108,7 @@ test('timeline markers: add at playhead, persist in project.json', async () => {
     await flag.click({ button: 'right' })
     await page.getByRole('menuitem', { name: 'Delete marker' }).click()
     await expect(page.locator('.marker-flag')).toHaveCount(1)
+    await page.keyboard.press('ControlOrMeta+s')
     await expect.poll(() => readMarkers().length).toBe(1)
   } finally {
     await app.close()

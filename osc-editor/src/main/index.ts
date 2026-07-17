@@ -1,12 +1,12 @@
 import { app, shell, BrowserWindow, Menu, dialog, ipcMain } from 'electron'
 import { existsSync, statSync } from 'fs'
-import { join } from 'path'
+import { dirname, join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { clipSummary, readClip } from './clips'
 import { mergeProject } from './merge'
 import { Preview } from './preview'
-import { loadProject, readProjectPorts, saveProject } from './project'
+import { PROJECT_FILE, loadProject, readProjectPorts, saveProject } from './project'
 import { exportSession } from './session'
 import { SpawnMode, TapManager } from './tap'
 import { appendUndo, loadUndoLog, truncateUndoAfter } from './undo'
@@ -14,6 +14,10 @@ import { DEFAULT_PORTS, type PortConfig, type ProjectFile, type UndoEntry } from
 
 // Working directory: cwd when launched from the CLI (per spec).
 const workdir = process.cwd()
+
+// Dir the current project file lives in; clip files resolve against it.
+// Defaults to the workdir until a project is opened or saved elsewhere.
+let projectDir = workdir
 
 let tap: TapManager | null = null
 let tapError: string | null = null
@@ -99,6 +103,15 @@ function installMenu(): void {
     Menu.buildFromTemplate([
       ...(process.platform === 'darwin' ? [{ role: 'appMenu' } as const] : []),
       {
+        label: 'File',
+        submenu: [
+          { label: 'Open…', accelerator: 'CmdOrCtrl+O', click: send('menu:open') },
+          { type: 'separator' },
+          { label: 'Save', accelerator: 'CmdOrCtrl+S', click: send('menu:save') },
+          { label: 'Save As…', accelerator: 'Shift+CmdOrCtrl+S', click: send('menu:saveAs') }
+        ]
+      },
+      {
         label: 'Edit',
         submenu: [
           { label: 'Undo', accelerator: 'CmdOrCtrl+Z', click: send('menu:undo') },
@@ -132,7 +145,7 @@ app.whenReady().then(() => {
       (process.env.OSC_TAP_SPAWN as SpawnMode) ??
       (app.isPackaged && process.platform === 'darwin' ? 'launchd' : 'child')
     // Start on the project's ports right away — no restart dance at boot.
-    const ports = { ...DEFAULT_PORTS, ...readProjectPorts(workdir) }
+    const ports = { ...DEFAULT_PORTS, ...readProjectPorts(join(workdir, PROJECT_FILE)) }
     tap = new TapManager(findTapBinary(), workdir, mode, ports)
     tap.spawnTap()
   } catch (e) {
@@ -150,8 +163,47 @@ app.whenReady().then(() => {
   ipcMain.handle('app:workdir', () => workdir)
   // Raw events; the renderer applies its own (possibly newer) edit overlay.
   ipcMain.handle('clip:events', (_e, path: string) => readClip(path).events)
-  ipcMain.handle('project:load', () => loadProject(workdir))
-  ipcMain.handle('project:save', (_e, project: ProjectFile) => saveProject(workdir, project))
+  // Boot load: the workdir's project.json (if any).
+  ipcMain.handle('project:load', () => {
+    const path = join(workdir, PROJECT_FILE)
+    const project = loadProject(path)
+    if (!project) return null
+    projectDir = dirname(path)
+    return { path, project }
+  })
+  ipcMain.handle('project:loadPath', (_e, path: string) => {
+    const project = loadProject(path)
+    if (!project) throw new Error(`project not found: ${path}`)
+    projectDir = dirname(path)
+    return { path, project }
+  })
+  ipcMain.handle('project:save', (_e, path: string, project: ProjectFile) => {
+    saveProject(path, project)
+    projectDir = dirname(path)
+  })
+  // Hidden (e2e) skips native dialogs; OSC_EDITOR_DIALOG_PATH stands in for
+  // the user's pick (open returns null without it, save falls back to the
+  // suggested path).
+  ipcMain.handle('project:openDialog', async (e) => {
+    if (hidden) return process.env.OSC_EDITOR_DIALOG_PATH ?? null
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const res = await dialog.showOpenDialog(win!, {
+      defaultPath: projectDir,
+      filters: [{ name: 'Project', extensions: ['json'] }],
+      properties: ['openFile']
+    })
+    return res.canceled || res.filePaths.length === 0 ? null : res.filePaths[0]
+  })
+  ipcMain.handle('project:saveDialog', async (e, defaultPath?: string) => {
+    const fallback = defaultPath ?? join(projectDir, PROJECT_FILE)
+    if (hidden) return process.env.OSC_EDITOR_DIALOG_PATH ?? fallback
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const res = await dialog.showSaveDialog(win!, {
+      defaultPath: fallback,
+      filters: [{ name: 'Project', extensions: ['json'] }]
+    })
+    return res.canceled || !res.filePath ? null : res.filePath
+  })
   ipcMain.handle('undo:load', () => loadUndoLog(workdir))
   ipcMain.handle('undo:append', (_e, entry: UndoEntry) => appendUndo(workdir, entry))
   ipcMain.handle('undo:truncateAfter', (_e, seq: number) => truncateUndoAfter(workdir, seq))
@@ -168,12 +220,12 @@ app.whenReady().then(() => {
       if (res.canceled || !res.filePath) return null
       outPath = res.filePath
     }
-    return exportSession(workdir, project, outPath)
+    return exportSession(projectDir, project, outPath)
   })
 
   const preview = new Preview()
   ipcMain.handle('preview:play', (_e, project: ProjectFile, fromSec: number) => {
-    const merged = mergeProject(workdir, project)
+    const merged = mergeProject(projectDir, project)
     preview.play(merged.events, fromSec, tap?.ports.forward ?? DEFAULT_PORTS.forward)
     return { duration: Math.max(merged.duration, project.duration ?? 0) }
   })

@@ -63,6 +63,11 @@ function readProject(workdir: string): { tracks: { clips: Record<string, number>
   return JSON.parse(readFileSync(join(workdir, 'project.json'), 'utf8'))
 }
 
+/** Explicit save (Cmd+S); the app no longer autosaves. */
+function save(page: Page): Promise<void> {
+  return page.keyboard.press('ControlOrMeta+s')
+}
+
 test('record → clip on track → drag → delete → persisted', async () => {
   const { app, page, workdir } = await launchApp()
   const sock = dgram.createSocket('udp4')
@@ -78,10 +83,9 @@ test('record → clip on track → drag → delete → persisted', async () => {
     await expect(clip).toHaveCount(1)
     await expect(page.locator('.clip-meta')).toContainText('15 ev')
 
-    await sleep(600) // autosave debounce
-    const saved = readProject(workdir)
-    expect(saved.tracks).toHaveLength(1)
-    expect(saved.tracks[0].clips[0].offset).toBe(0)
+    await save(page)
+    await expect.poll(() => readProject(workdir).tracks.length).toBe(1)
+    expect(readProject(workdir).tracks[0].clips[0].offset).toBe(0)
 
     // Drag right by 100px = +5s at 20px/s.
     const box = (await clip.boundingBox())!
@@ -89,19 +93,18 @@ test('record → clip on track → drag → delete → persisted', async () => {
     await page.mouse.down()
     await page.mouse.move(box.x + box.width / 2 + 100, box.y + box.height / 2, { steps: 5 })
     await page.mouse.up()
-    await sleep(600)
-    const dragged = readProject(workdir)
-    expect(dragged.tracks[0].clips[0].offset).toBeGreaterThan(4)
-    expect(dragged.tracks[0].clips[0].offset).toBeLessThan(6)
+    await save(page)
+    await expect.poll(() => readProject(workdir).tracks[0].clips[0].offset).toBeGreaterThan(4)
+    expect(readProject(workdir).tracks[0].clips[0].offset).toBeLessThan(6)
 
     // Delete the selected clip; the (now empty) track stays.
     await clip.click()
     await page.keyboard.press('Delete')
     await expect(page.locator('.clip')).toHaveCount(0)
     await expect(page.locator('.track')).toHaveCount(1)
-    await sleep(600)
+    await save(page)
+    await expect.poll(() => readProject(workdir).tracks[0].clips.length).toBe(0)
     expect(readProject(workdir).tracks).toHaveLength(1)
-    expect(readProject(workdir).tracks[0].clips).toHaveLength(0)
   } finally {
     sock.close()
     await app.close()
@@ -147,11 +150,13 @@ test('tracks can be added and deleted without clips', async () => {
     await page.getByRole('button', { name: '+ Track' }).click()
     await page.getByRole('button', { name: '+ Track' }).click()
     await expect(page.locator('.track')).toHaveCount(2)
+    await save(page)
     await expect.poll(() => readProject(workdir).tracks.length).toBe(2)
 
     await page.locator('.track-label').first().hover()
     await page.getByLabel('delete track 1').click()
     await expect(page.locator('.track')).toHaveCount(1)
+    await save(page)
     await expect.poll(() => readProject(workdir).tracks.length).toBe(1)
 
     // Empty tracks survive a relaunch.

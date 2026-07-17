@@ -495,6 +495,7 @@ test('curve panel: drag and delete points, edits persisted to sidecar', async ()
     await page.mouse.down()
     await page.mouse.move(box.x + box.width / 2 + 40, box.y + box.height / 2 - 30, { steps: 5 })
     await page.mouse.up()
+    await page.keyboard.press('ControlOrMeta+s')
 
     const sidecar = join(workdir, `${CLIP}.edits.json`)
     await expect
@@ -519,6 +520,7 @@ test('curve panel: drag and delete points, edits persisted to sidecar', async ()
     await expect(page.locator('circle')).toHaveCount(2)
     // The clip itself must survive (the point owned the Delete key).
     await expect(page.locator('.clip')).toHaveCount(1)
+    await page.keyboard.press('ControlOrMeta+s')
     await expect
       .poll(() => {
         try {
@@ -598,6 +600,7 @@ test('curve panel: transform box moves and scales the selected points', async ()
     await page.mouse.down()
     await page.mouse.move(box1.x + box1.width * 0.6 + 30, box1.y + box1.height * 0.4, { steps: 5 })
     await page.mouse.up()
+    await page.keyboard.press('ControlOrMeta+s')
     await expect.poll(() => Object.keys(readSet()).length).toBe(3)
     const afterMove = readSet()
     expect(afterMove['0'].t).toBeGreaterThan(0.2)
@@ -612,6 +615,7 @@ test('curve panel: transform box moves and scales the selected points', async ()
     await page.mouse.down()
     await page.mouse.move(right.x + right.width / 2 + 40, right.y + right.height / 2, { steps: 5 })
     await page.mouse.up()
+    await page.keyboard.press('ControlOrMeta+s')
     await expect.poll(() => readSet()['2'].t).toBeGreaterThan(afterMove['2'].t)
     const afterScale = readSet()
     expect(Math.abs(afterScale['0'].t - afterMove['0'].t)).toBeLessThan(0.01)
@@ -624,6 +628,7 @@ test('curve panel: transform box moves and scales the selected points', async ()
     await page.mouse.down()
     await page.mouse.move(top.x + top.width / 2, top.y + top.height / 2 - 30, { steps: 5 })
     await page.mouse.up()
+    await page.keyboard.press('ControlOrMeta+s')
     await expect.poll(() => readSet()['2'].args['0']).toBeGreaterThan(afterScale['2'].args['0'])
     expect(readSet()['0'].args['0']).toBeCloseTo(afterScale['0'].args['0'], 5)
 
@@ -685,6 +690,7 @@ test('curve panel: double-click / cmd+click on a curve inserts a point', async (
     await page.mouse.dblclick((c0.x + c1.x) / 2, c0.y)
     await expect(page.locator('circle')).toHaveCount(4)
     await expect(page.locator('circle.selected')).toHaveCount(1)
+    await page.keyboard.press('ControlOrMeta+s')
 
     const sidecar = join(workdir, `${CLIP}.edits.json`)
     await expect
@@ -776,6 +782,7 @@ test('curve header: snap locks drags to the grid, Box toggles the transform box'
     await page.mouse.down()
     await page.mouse.move(mid.x + mid.width / 2 + 50, mid.y + mid.height / 2 - 20, { steps: 5 })
     await page.mouse.up()
+    await page.keyboard.press('ControlOrMeta+s')
 
     const sidecar = join(workdir, `${CLIP}.edits.json`)
     await expect
@@ -866,6 +873,7 @@ test('curve header: pencil clicks add points to the selected curve', async () =>
     await page.mouse.click(editor.x + editor.width / 2, editor.y + editor.height * 0.25)
     await expect(page.locator('circle')).toHaveCount(4)
     await expect(page.locator('circle.selected')).toHaveCount(1)
+    await page.keyboard.press('ControlOrMeta+s')
 
     const sidecar = join(workdir, `${CLIP}.edits.json`)
     await expect
@@ -893,6 +901,7 @@ test('curve header: pencil clicks add points to the selected curve', async () =>
     expect(drawn).toBeGreaterThan(7)
     // The whole stroke is selected and lands in the sidecar.
     await expect(page.locator('circle.selected')).toHaveCount(drawn - 4)
+    await page.keyboard.press('ControlOrMeta+s')
     await expect
       .poll(() => {
         try {
@@ -973,6 +982,7 @@ test('curve panel: marquee selects multiple points, group drag and delete', asyn
       steps: 5
     })
     await page.mouse.up()
+    await page.keyboard.press('ControlOrMeta+s')
     const sidecar = join(workdir, `${CLIP}.edits.json`)
     await expect
       .poll(() => {

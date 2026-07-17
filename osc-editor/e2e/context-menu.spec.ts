@@ -114,7 +114,8 @@ test('clip context menu: mute, copy, paste, duplicate, split at playhead', async
     expect(lefts.length).toBe(4)
     ;[0, 40, 160, 180].forEach((want, i) => expect(Math.abs(lefts[i] - want)).toBeLessThan(2))
 
-    // Muted flag survives in project.json (autosave), none muted now.
+    // Muted flag survives in project.json (explicit save), none muted now.
+    await page.keyboard.press('ControlOrMeta+s')
     await expect
       .poll(() => {
         try {

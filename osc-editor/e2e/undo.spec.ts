@@ -69,14 +69,17 @@ test('undo/redo: one entry per drag, survives restart, linear truncation', async
     await page.mouse.up()
   }
   await dragClip(100)
+  await page.keyboard.press('ControlOrMeta+s')
   await expect.poll(() => savedOffset(workdir)).toBeGreaterThan(4)
   await expect.poll(() => savedSeq(workdir)).toBe(1)
 
   // In-session undo and redo via keyboard.
   await page.keyboard.press(`${MOD}+z`)
+  await page.keyboard.press('ControlOrMeta+s')
   await expect.poll(() => savedOffset(workdir)).toBeLessThan(1)
   await expect.poll(() => savedSeq(workdir)).toBe(0)
   await page.keyboard.press(`${MOD}+Shift+z`)
+  await page.keyboard.press('ControlOrMeta+s')
   await expect.poll(() => savedOffset(workdir)).toBeGreaterThan(4)
   await expect.poll(() => savedSeq(workdir)).toBe(1)
 
@@ -87,14 +90,17 @@ test('undo/redo: one entry per drag, survives restart, linear truncation', async
   await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
   await expect.poll(async () => (await page.locator('.clip').boundingBox())!.x).toBeGreaterThan(100)
   await page.keyboard.press(`${MOD}+z`)
+  await page.keyboard.press('ControlOrMeta+s')
   await expect.poll(() => savedOffset(workdir)).toBeLessThan(1)
 
   // A new edit after undo truncates the redo branch (linear history).
   await dragClip(40)
+  await page.keyboard.press('ControlOrMeta+s')
   await expect.poll(() => savedOffset(workdir)).toBeGreaterThan(1.5)
   const offsetAfter = savedOffset(workdir)
   await page.keyboard.press(`${MOD}+Shift+z`)
-  await page.waitForTimeout(600)
+  await page.keyboard.press('ControlOrMeta+s')
+  await page.waitForTimeout(400)
   expect(savedOffset(workdir)).toBe(offsetAfter)
   const seqs = readFileSync(join(workdir, 'undo.jsonl'), 'utf8')
     .split('\n')

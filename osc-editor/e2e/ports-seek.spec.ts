@@ -124,7 +124,7 @@ test('timeline duration and zoom slider', async () => {
     // Longer timeline persists and widens the ruler.
     await page.getByLabel('timeline duration').fill('120')
     await page.getByLabel('timeline duration').press('Enter')
-    // Autosave is debounced; poll instead of a fixed sleep.
+    await page.keyboard.press('ControlOrMeta+s')
     await expect
       .poll(() => JSON.parse(readFileSync(join(workdir, 'project.json'), 'utf8')).duration)
       .toBe(120)
@@ -171,6 +171,7 @@ test('timeline duration: arithmetic input and label drag', async () => {
     await expect(field).toHaveValue('160')
     await expect(field).not.toBeFocused()
 
+    await page.keyboard.press('ControlOrMeta+s')
     await expect
       .poll(() => JSON.parse(readFileSync(join(workdir, 'project.json'), 'utf8')).duration)
       .toBe(160)
@@ -213,10 +214,11 @@ test('ports editable in header; tap restarts on new ports', async () => {
     await expect(page.locator('.clip-meta').first()).toContainText('5 ev')
     expect(forwarded.length).toBe(5)
 
-    // Persisted to project.json.
-    await sleep(600)
-    const project = JSON.parse(readFileSync(join(workdir, 'project.json'), 'utf8'))
-    expect(project.ports).toEqual({ listen: 11010, forward: 11011, beacon: BEACON_PORT })
+    // Persisted to project.json on Cmd+S.
+    await page.keyboard.press('ControlOrMeta+s')
+    await expect
+      .poll(() => JSON.parse(readFileSync(join(workdir, 'project.json'), 'utf8')).ports)
+      .toEqual({ listen: 11010, forward: 11011, beacon: BEACON_PORT })
   } finally {
     td.close()
     sock.close()

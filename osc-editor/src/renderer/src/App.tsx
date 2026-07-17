@@ -2,8 +2,10 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
   DEFAULT_DURATION,
   DEFAULT_PORTS,
+  type LoadedProject,
   type PortConfig,
-  type TapStatus
+  type TapStatus,
+  type UndoEntry
 } from '../../shared/types'
 import { CurvePanel, PointAdd, PointPatch, PointSel } from './components/CurvePanel'
 import {
@@ -163,6 +165,54 @@ function NumField({
   )
 }
 
+/** Header "File" dropdown, next to the logo. Accelerators live in the app menu. */
+function FileMenu({
+  onOpen,
+  onSave,
+  onSaveAs
+}: {
+  onOpen: () => void
+  onSave: () => void
+  onSaveAs: () => void
+}): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: PointerEvent): void => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false)
+    }
+    window.addEventListener('pointerdown', onDown)
+    return () => window.removeEventListener('pointerdown', onDown)
+  }, [open])
+  const item = (label: string, shortcut: string, fn: () => void): React.JSX.Element => (
+    <button
+      className="file-menu-item"
+      onClick={() => {
+        setOpen(false)
+        fn()
+      }}
+    >
+      <span>{label}</span>
+      <span className="file-menu-shortcut">{shortcut}</span>
+    </button>
+  )
+  return (
+    <div className="file-menu" ref={ref}>
+      <button className="file-menu-trigger" onClick={() => setOpen((o) => !o)}>
+        File
+      </button>
+      {open && (
+        <div className="file-menu-dropdown">
+          {item('Open…', '⌘O', onOpen)}
+          {item('Save', '⌘S', onSave)}
+          {item('Save As…', '⇧⌘S', onSaveAs)}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** True when a keyboard event comes from a text field; global shortcuts must ignore it. */
 function isTextInput(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null
@@ -197,8 +247,15 @@ function App(): React.JSX.Element {
   const [playing, setPlaying] = useState<PlayingState | null>(null)
   const [ports, setPorts] = useState<PortConfig>(DEFAULT_PORTS)
   const nextId = useRef(1)
-  const [loaded, setLoaded] = useState(false)
   const newId = useCallback((): number => nextId.current++, [])
+
+  // Current project file (null = untitled) and the last-saved snapshot.
+  // Dirty = the doc's undo seq or the ports moved off that snapshot.
+  const [projectFile, setProjectFile] = useState<string | null>(null)
+  const [, setSavedState] = useState<{ seq: number; ports: PortConfig }>({
+    seq: 0,
+    ports: DEFAULT_PORTS
+  })
 
   // Undo/redo can reinstall ids from an earlier session; keep the counter
   // ahead of them and drop selections that no longer resolve.
@@ -224,55 +281,130 @@ function App(): React.JSX.Element {
   const { reset, transient, commit, undo, redo } = history
   const { tracks, markers, duration, edits } = history.doc
 
-  // Load project.json and the undo log once at boot.
-  useEffect(() => {
-    Promise.all([window.api.project.load(), window.api.undo.load()])
-      .then(([project, log]) => {
-        let doc: Doc = { tracks: [], markers: [], duration: DEFAULT_DURATION, edits: {} }
-        if (project) {
-          doc = {
-            tracks: tracksFromProject(project, newId),
-            markers: markersFromProject(project, newId),
-            duration: project.duration ?? DEFAULT_DURATION,
-            edits: project.edits
-          }
-          if (project.ports) {
-            // Older project.json may lack the beacon port.
-            const loadedPorts = { ...DEFAULT_PORTS, ...project.ports }
-            setPorts(loadedPorts)
-            window.api.tap.setPorts(loadedPorts).catch((e: Error) => setError(e.message))
-          }
-          if (project.missing.length > 0) {
-            setError(`missing clip files: ${project.missing.join(', ')}`)
-          }
+  // Install a loaded project (boot or File > Open) into the editor.
+  const applyLoaded = useCallback(
+    (path: string | null, project: LoadedProject | null, log: UndoEntry[]): void => {
+      let doc: Doc = { tracks: [], markers: [], duration: DEFAULT_DURATION, edits: {} }
+      let loadedPorts: PortConfig | null = null
+      if (project) {
+        doc = {
+          tracks: tracksFromProject(project, newId),
+          markers: markersFromProject(project, newId),
+          duration: project.duration ?? DEFAULT_DURATION,
+          edits: project.edits
         }
-        // undoSeq is the cursor: entries at or below it are undoable from the
-        // saved state, later ones are redo (incl. crash-recovery tails).
-        const cursor = project?.undoSeq ?? Math.max(0, ...log.map((e) => e.seq))
-        reset(
-          doc,
-          log.filter((e) => e.seq <= cursor),
-          log.filter((e) => e.seq > cursor)
-        )
+        if (project.ports) {
+          // Older project files may lack the beacon port.
+          loadedPorts = { ...DEFAULT_PORTS, ...project.ports }
+          setPorts(loadedPorts)
+          window.api.tap.setPorts(loadedPorts).catch((e: Error) => setError(e.message))
+        }
+        if (project.missing.length > 0) {
+          setError(`missing clip files: ${project.missing.join(', ')}`)
+        }
+      }
+      // undoSeq is the cursor: entries at or below it are undoable from the
+      // saved state, later ones are redo (incl. crash-recovery tails).
+      const cursor = project?.undoSeq ?? Math.max(0, ...log.map((e) => e.seq))
+      const pastLog = log.filter((e) => e.seq <= cursor)
+      reset(
+        doc,
+        pastLog,
+        log.filter((e) => e.seq > cursor)
+      )
+      setProjectFile(path)
+      setSavedState((s) => ({
+        seq: pastLog[pastLog.length - 1]?.seq ?? 0,
+        ports: loadedPorts ?? s.ports
+      }))
+      setSelectedIds([])
+      setSelectedTrackIds([])
+      setSelectedPoints([])
+    },
+    [newId, reset]
+  )
+
+  // Load project.json and the undo log once at boot.
+  const booted = useRef(false)
+  useEffect(() => {
+    if (booted.current) return
+    booted.current = true
+    Promise.all([window.api.project.load(), window.api.undo.load()])
+      .then(([loaded, log]) => {
+        applyLoaded(loaded?.path ?? null, loaded?.project ?? null, log)
       })
       .catch((e: Error) => setError(e.message))
-      .finally(() => {
-        setLoaded(true)
-      })
-  }, [newId, reset])
+  }, [applyLoaded])
 
-  // Autosave (debounced), but never before the initial load finished.
-  // `loaded` is state (not a ref) so an edit made during the load still
-  // gets saved once the load completes.
+  const saveTo = useCallback(
+    async (path: string): Promise<void> => {
+      await window.api.project.save(
+        path,
+        serializeProject(tracks, markers, ports, duration, edits, history.seq)
+      )
+      setProjectFile(path)
+      setSavedState({ seq: history.seq, ports })
+    },
+    [tracks, markers, ports, duration, edits, history.seq]
+  )
+
+  const saveProjectAs = useCallback(async (): Promise<void> => {
+    try {
+      const path = await window.api.project.saveDialog(projectFile ?? undefined)
+      if (path) await saveTo(path)
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }, [projectFile, saveTo])
+
+  const saveProject = useCallback(async (): Promise<void> => {
+    if (!projectFile) return saveProjectAs()
+    try {
+      await saveTo(projectFile)
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }, [projectFile, saveTo, saveProjectAs])
+
+  const openProject = useCallback(async (): Promise<void> => {
+    try {
+      const path = await window.api.project.openDialog()
+      if (!path) return
+      const res = await window.api.project.loadPath(path)
+      // The undo log belongs to the previous project; the new one starts fresh.
+      await window.api.undo.truncateAfter(0)
+      applyLoaded(res.path, res.project, [])
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }, [applyLoaded])
+
+  // File menu actions + a keydown fallback for synthetic input (e2e), same
+  // pattern as undo/redo below.
   useEffect(() => {
-    if (!loaded) return
-    const timer = setTimeout(() => {
-      window.api.project
-        .save(serializeProject(tracks, markers, ports, duration, edits, history.seq))
-        .catch((e: Error) => setError(e.message))
-    }, 400)
-    return () => clearTimeout(timer)
-  }, [loaded, tracks, markers, ports, duration, edits, history.seq])
+    const offOpen = window.api.menu.on('open', openProject)
+    const offSave = window.api.menu.on('save', saveProject)
+    const offSaveAs = window.api.menu.on('saveAs', saveProjectAs)
+    const onKey = (e: KeyboardEvent): void => {
+      if (!(e.metaKey || e.ctrlKey)) return
+      const k = e.key.toLowerCase()
+      if (k === 'o') {
+        e.preventDefault()
+        openProject()
+      } else if (k === 's') {
+        e.preventDefault()
+        if (e.shiftKey) saveProjectAs()
+        else saveProject()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      offOpen()
+      offSave()
+      offSaveAs()
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [openProject, saveProject, saveProjectAs])
 
   const changePorts = useCallback((next: PortConfig) => {
     setPorts(next)
@@ -874,7 +1006,10 @@ function App(): React.JSX.Element {
         {/* Two rows, like the port grid: the logo, then the timeline duration. */}
         <div className="header-left">
           <div className="header-left-grid">
-            <span className="logo">osc-mtr</span>
+            <div className="logo-row">
+              <span className="logo">osc-mtr</span>
+              <FileMenu onOpen={openProject} onSave={saveProject} onSaveAs={saveProjectAs} />
+            </div>
             <div className="header-duration">
               <NumField
                 label="dur"

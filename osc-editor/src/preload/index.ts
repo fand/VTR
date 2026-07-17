@@ -22,8 +22,17 @@ const api = {
     events: (path: string): Promise<OscEvent[]> => ipcRenderer.invoke('clip:events', path)
   },
   project: {
-    load: (): Promise<LoadedProject | null> => ipcRenderer.invoke('project:load'),
-    save: (project: ProjectFile): Promise<void> => ipcRenderer.invoke('project:save', project)
+    /** Boot load: the workdir's project.json (if any). */
+    load: (): Promise<{ path: string; project: LoadedProject } | null> =>
+      ipcRenderer.invoke('project:load'),
+    loadPath: (path: string): Promise<{ path: string; project: LoadedProject }> =>
+      ipcRenderer.invoke('project:loadPath', path),
+    save: (path: string, project: ProjectFile): Promise<void> =>
+      ipcRenderer.invoke('project:save', path, project),
+    /** Resolve null when the user cancels. */
+    openDialog: (): Promise<string | null> => ipcRenderer.invoke('project:openDialog'),
+    saveDialog: (defaultPath?: string): Promise<string | null> =>
+      ipcRenderer.invoke('project:saveDialog', defaultPath)
   },
   session: {
     /** Resolves null when the user cancels the save dialog. */
@@ -42,7 +51,10 @@ const api = {
   },
   menu: {
     /** Subscribe to Edit-menu actions (menu accelerators eat their keydowns). */
-    on: (channel: 'undo' | 'redo' | 'copy' | 'paste', cb: () => void): (() => void) => {
+    on: (
+      channel: 'undo' | 'redo' | 'copy' | 'paste' | 'open' | 'save' | 'saveAs',
+      cb: () => void
+    ): (() => void) => {
       const listener = (): void => cb()
       ipcRenderer.on(`menu:${channel}`, listener)
       return () => ipcRenderer.removeListener(`menu:${channel}`, listener)

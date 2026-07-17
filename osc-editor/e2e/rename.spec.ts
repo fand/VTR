@@ -60,6 +60,7 @@ test('track rename: double-click, persisted, undoable', async () => {
     await page.locator('.rename-input').fill('Drums')
     await page.keyboard.press('Enter')
     await expect(label).toHaveText('Drums')
+    await page.keyboard.press('ControlOrMeta+s')
     await expect.poll(() => savedProject(workdir).tracks[0].name).toBe('Drums')
 
     // Escape cancels.
@@ -71,6 +72,7 @@ test('track rename: double-click, persisted, undoable', async () => {
     // Rename is one undo entry.
     await page.keyboard.press(`${MOD}+z`)
     await expect(label).toHaveText('Track 1')
+    await page.keyboard.press('ControlOrMeta+s')
     await expect.poll(() => savedProject(workdir).tracks[0].name).toBeUndefined()
 
     // Clip rename works the same way and persists per placement.
@@ -80,6 +82,7 @@ test('track rename: double-click, persisted, undoable', async () => {
     await page.locator('.rename-input').fill('Kick')
     await page.keyboard.press('Enter')
     await expect(clipLabel).toHaveText('Kick')
+    await page.keyboard.press('ControlOrMeta+s')
     await expect.poll(() => savedProject(workdir).tracks[0].clips[0].name).toBe('Kick')
     await page.keyboard.press(`${MOD}+z`)
     await expect(clipLabel).toHaveText(CLIP)
