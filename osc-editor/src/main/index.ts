@@ -7,12 +7,11 @@ import { clipSummary, readClip } from './clips'
 import { mergeProject } from './merge'
 import { Preview } from './preview'
 import {
-  collectClips,
+  commitProject,
   loadProject,
   normalizeProjectPath,
   readProjectPorts,
-  resolveClipPath,
-  saveProject
+  resolveClipPath
 } from './project'
 import { SESSION_FILE, exportSession } from './session'
 import { SpawnMode, TapManager } from './tap'
@@ -283,12 +282,12 @@ app.whenReady().then(() => {
     const projectPath = normalizeProjectPath(path)
     const dir = dirname(projectPath)
     mkdirSync(dir, { recursive: true })
-    // Resolve sources with the outgoing projectDir, then adopt the new one.
-    collectClips(dir, stagingDir, project, resolveClip)
+    // Sources resolve with the outgoing projectDir; adopt the new one only
+    // after the transactional commit went through.
+    commitProject(projectPath, project, stagingDir, resolveClip)
     transferUndoLog(undoDir(), dir, projectDir === null)
     projectDir = dir
     savedUndoSeq = project.undoSeq ?? 0
-    saveProject(projectPath, project, stagingDir)
   })
   // Hidden (e2e) skips native dialogs; OSC_EDITOR_DIALOG_PATH stands in for
   // the user's pick (open returns null without it, save falls back to the

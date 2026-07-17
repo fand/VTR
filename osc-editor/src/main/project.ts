@@ -1,11 +1,14 @@
 import {
+  closeSync,
   copyFileSync,
   existsSync,
+  fsyncSync,
   mkdirSync,
+  openSync,
   readFileSync,
   renameSync,
   rmSync,
-  writeFileSync
+  writeSync
 } from 'fs'
 import { dirname, join } from 'path'
 import { editsEmpty } from '../shared/edits'
@@ -39,9 +42,20 @@ function editsPath(clipPath: string): string {
   return `${clipPath}.edits.json`
 }
 
+let tmpSeq = 0
+
 function writeAtomic(path: string, content: string): void {
-  const tmp = path + '.tmp'
-  writeFileSync(tmp, content)
+  // Unique tmp name: a fixed suffix would let two instances clobber each
+  // other's in-flight write. fsync before rename so a crash never publishes
+  // an empty or truncated file.
+  const tmp = `${path}.${process.pid}.${tmpSeq++}.tmp`
+  const fd = openSync(tmp, 'w')
+  try {
+    writeSync(fd, content)
+    fsyncSync(fd)
+  } finally {
+    closeSync(fd)
+  }
   renameSync(tmp, path)
 }
 
@@ -108,60 +122,53 @@ export function loadProject(projectPath: string, stagingDir: string): LoadedProj
   }
 }
 
-/** Move within a volume, copy+delete across volumes. */
-function transfer(src: string, dest: string, deleteSrc: boolean): void {
-  if (deleteSrc) {
-    try {
-      renameSync(src, dest)
-      return
-    } catch {
-      // EXDEV etc; fall through to copy.
-    }
-  }
-  copyFileSync(src, dest)
-  if (deleteSrc) rmSync(src, { force: true })
-}
-
 /**
  * Bring every referenced clip (and its edits sidecar) into <dir>/clips/ so a
- * saved project is self-contained. Staged recordings are moved (the project
- * now owns them); clips owned by another project dir are copied.
+ * saved project is self-contained. COPIES only — never deletes — so a crash
+ * mid-save leaves the sources intact. Returns the staged sources the project
+ * now owns; the caller deletes them after project.json has committed.
  */
 export function collectClips(
   dir: string,
   stagingDir: string,
   project: ProjectFile,
   resolveFrom: (file: string) => string
-): void {
+): string[] {
+  const staged: string[] = []
   for (const track of project.tracks) {
     for (const clip of track.clips) {
       const src = resolveFrom(clip.file)
       const dest = join(dir, 'clips', clip.file)
       if (!existsSync(src) || src === dest || src === join(dir, clip.file)) continue
       mkdirSync(join(dir, 'clips'), { recursive: true })
+      copyFileSync(src, dest)
       const fromStaging = src === join(stagingDir, clip.file)
-      transfer(src, dest, fromStaging)
+      if (fromStaging) staged.push(src)
       if (existsSync(`${src}.edits.json`)) {
-        transfer(`${src}.edits.json`, `${dest}.edits.json`, fromStaging)
+        copyFileSync(`${src}.edits.json`, `${dest}.edits.json`)
+        if (fromStaging) staged.push(`${src}.edits.json`)
       }
     }
   }
+  return staged
 }
 
 export function saveProject(projectPath: string, project: ProjectFile, stagingDir: string): void {
   const dir = dirname(projectPath)
   const { edits = {}, ...rest } = project
-  // Edits travel inline over IPC but live in per-clip sidecar files on disk,
-  // next to the clip they belong to.
+  // Additive first: edits travel inline over IPC but live in per-clip
+  // sidecar files on disk, next to the clip they belong to.
   for (const [file, clipEdits] of Object.entries(edits)) {
     if (!editsEmpty(clipEdits)) {
-      writeAtomic(
-        editsPath(resolveClipPath(dir, stagingDir, file)),
-        JSON.stringify(clipEdits) + '\n'
-      )
+      const sidecar = editsPath(resolveClipPath(dir, stagingDir, file))
+      // A missing-clip sidecar can resolve into a clips/ dir nobody created.
+      mkdirSync(dirname(sidecar), { recursive: true })
+      writeAtomic(sidecar, JSON.stringify(clipEdits) + '\n')
     }
   }
-  // Drop stale sidecars for referenced clips whose edits are gone.
+  // Commit point: everything project.json references now exists on disk.
+  writeAtomic(projectPath, JSON.stringify(rest, null, 2) + '\n')
+  // Deletions after commit are safe to lose: a stale sidecar only lingers.
   for (const track of project.tracks) {
     for (const clip of track.clips) {
       if (editsEmpty(edits[clip.file])) {
@@ -169,5 +176,21 @@ export function saveProject(projectPath: string, project: ProjectFile, stagingDi
       }
     }
   }
-  writeAtomic(projectPath, JSON.stringify(rest, null, 2) + '\n')
+}
+
+/**
+ * Transactional save: ① copy staged clips + write sidecars (additive),
+ * ② commit project.json, ③ only then delete the staged sources. A crash at
+ * any point leaves either the fully-old or fully-new state readable.
+ */
+export function commitProject(
+  projectPath: string,
+  project: ProjectFile,
+  stagingDir: string,
+  resolveFrom: (file: string) => string
+): void {
+  const dir = dirname(projectPath)
+  const staged = collectClips(dir, stagingDir, project, resolveFrom)
+  saveProject(projectPath, project, stagingDir)
+  for (const src of staged) rmSync(src, { force: true })
 }

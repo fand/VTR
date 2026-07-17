@@ -128,3 +128,36 @@ test('bundle: rec into project clips/, Save As collects into .oscproj, reopen + 
     await app2.close()
   }
 })
+
+test('bundle: untitled record → Save As moves staged clips into the bundle', async () => {
+  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const bundle = join(workdir, 'live.oscproj')
+  // No CLI project arg: the session is untitled, recordings stage in userData.
+  const { app, page } = await launch(workdir, '', bundle)
+  const sock = dgram.createSocket('udp4')
+  let staged: string[] = []
+  try {
+    await recordClip(page, sock, 5, 1)
+    staged = clipFiles(join(workdir, 'recordings'))
+    expect(staged).toHaveLength(1)
+
+    // Save As (dialog env supplies the bundle path): the staged clip moves
+    // into the bundle — copied first, source deleted only after commit.
+    await page.keyboard.press('ControlOrMeta+s')
+    await expect.poll(() => existsSync(join(bundle, 'project.json'))).toBe(true)
+    expect(clipFiles(join(bundle, 'clips'))).toEqual(staged)
+    await expect.poll(() => clipFiles(join(workdir, 'recordings'))).toEqual([])
+  } finally {
+    sock.close()
+    await app.close()
+  }
+
+  // Relaunch on the bundle: the clip resolves.
+  const { app: app2, page: page2 } = await launch(workdir, bundle, bundle)
+  try {
+    await expect(page2.locator('.clip')).toHaveCount(1)
+    await expect(page2.locator('.clip.missing')).toHaveCount(0)
+  } finally {
+    await app2.close()
+  }
+})
