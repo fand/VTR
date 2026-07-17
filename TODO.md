@@ -1,10 +1,12 @@
 # TODO
 
-- [x] Curve panelのProperty list, address順番でsortするようにして
-- [x] Property listでpropertyを選択してるとき、選択されていないcurveは薄く表示するようにして (alpha=0.1くらい)
-  - pointの丸も描画しないようにする
-- [x] Curveのpointを複数選択したとき、pointを囲むtransform boxを描画する
-  - transform boxをドラッグすることでpointを丸ごとmoveできる
-  - boxの端をドラッグすると、pointを伸縮できる
-- [x] Curve editorの横軸の目盛りは上部に表示する (timelineのseekbarと同じ表示形式)
-- [x] Curve editorに複数clipのcurveが表示されているとき、Curve editorにclipの範囲を表す薄いbar+fillを表示する
+- Property list上部にfilter inputを追加。名前指定で表示するpropertyを絞り込めるようにする
+  - "block" と入れることで "/s1_block", "/block_speed" などだけ表示するようにできる
+- Curve editor上部にheaderを追加
+  - snap toggleボタン追加
+  - Transform Boxを使用するかどうかtoggle出来るボタン追加
+- curve上をダブルクリックでpoint追加できるようにする
+  - あるいはCmd+Click
+- pointを選択してdelete (backspace) でpoint削除
+- Curve editor headerにPencilボタン追加
+  - 選択中のカーブにpointを追加できる
