@@ -2,11 +2,10 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
   DEFAULT_DURATION,
   DEFAULT_PORTS,
-  type OscEvent,
   type PortConfig,
   type TapStatus
 } from '../../shared/types'
-import { CurvePanel, PointPatch, PointSel } from './components/CurvePanel'
+import { CurvePanel, PointAdd, PointPatch, PointSel } from './components/CurvePanel'
 import {
   ClipAction,
   LABEL_W,
@@ -654,15 +653,22 @@ function App(): React.JSX.Element {
     [commit, transient]
   )
 
-  // A new point appends to the clip's edit overlay and becomes the selection.
+  // New points append to the clips' edit overlays and become the selection.
+  // A pencil stroke streams single adds (transient), then commits the whole
+  // batch on release so the stroke is one undo entry.
   const onPointAdd = useCallback(
-    (sel: PointSel, ev: OscEvent) => {
-      commit('add point', (d) => {
-        ;((d.edits[sel.file] ??= {}).add ??= []).push(ev)
-      })
-      setSelectedPoints([sel])
+    (adds: PointAdd[], isCommit: boolean) => {
+      if (adds.length === 0) return
+      const apply = (d: Doc): void => {
+        for (const { sel, ev } of adds) {
+          ;((d.edits[sel.file] ??= {}).add ??= []).push(ev)
+        }
+      }
+      if (isCommit) commit('add points', apply)
+      else transient(apply)
+      setSelectedPoints(adds.map((a) => a.sel))
     },
-    [commit]
+    [commit, transient]
   )
 
   const deleteSelectedPoints = useCallback(() => {

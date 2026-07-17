@@ -14,6 +14,8 @@ const COLORS = [
   '#f07178'
 ]
 const PAD = 10
+/** Horizontal travel between points added by a pencil-drag stroke. */
+const DRAW_STEP_PX = 4
 
 /** Candidate grid intervals; 0.1 for values, 1s for time at typical scales. */
 const GRID_STEPS = [0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 30, 60, 120]
@@ -137,6 +139,12 @@ function ptSel(pt: CurvePoint): PointSel {
   return { file: pt.clip.file, eventIndex: pt.eventIndex, argIndex: pt.argIndex }
 }
 
+/** One appended point: the overlay event plus its selection identity. */
+export interface PointAdd {
+  sel: PointSel
+  ev: OscEvent
+}
+
 /** One numeric-arg edit: absolute clip-local t and/or value for args[argIndex]. */
 export interface PointPatch {
   file: string
@@ -164,8 +172,9 @@ export function CurvePanel({
   onSelectPoints: (pts: PointSel[]) => void
   /** Streams transient patches while dragging; isCommit on release. */
   onPointEdit: (patches: PointPatch[], isCommit: boolean) => void
-  /** Appends ev to the clip's edit overlay; sel is the new point's identity. */
-  onPointAdd: (sel: PointSel, ev: OscEvent) => void
+  /** Appends events to the clips' edit overlays. A pencil stroke streams
+   *  single adds (transient) and re-sends the whole batch with isCommit. */
+  onPointAdd: (adds: PointAdd[], isCommit: boolean) => void
 }): React.JSX.Element {
   // Events per clip path; the cache never goes stale (files are immutable).
   const [loaded, setLoaded] = useState<Map<string, OscEvent[]>>(new Map())
@@ -547,11 +556,16 @@ export function CurvePanel({
     }
   }
 
-  // Insert a point on p at the clicked position. The nearest existing point
-  // supplies the event template (clip, port, other args); t is clamped to
-  // that clip's span. The new event appends to the clip's edit overlay.
-  const addPointAt = (p: Property, pos: { x: number; y: number }): void => {
-    if (p.points.length === 0) return
+  // Build one point insert on p at the given position. The nearest existing
+  // point supplies the event template (clip, port, other args); t is clamped
+  // to that clip's span. addCount gives the clip overlay's current add count
+  // (base + points added earlier in a stroke), which fixes the event index.
+  const makeAdd = (
+    p: Property,
+    pos: { x: number; y: number },
+    addCount: (file: string) => number
+  ): PointAdd | null => {
+    if (p.points.length === 0) return null
     const t = snapTime(tMin + ((pos.x - PAD) / Math.max(innerW - 2 * PAD, 1)) * tRange)
     const v = snapValue(
       p.max === p.min
@@ -566,18 +580,64 @@ export function CurvePanel({
     }
     const c = tpl.clip
     const events = loaded.get(c.path)
-    if (!events) return
+    if (!events) return null
     const tl = Math.min(Math.max(t, c.offset), c.offset + clipLen(c))
     const args = [...tpl.ev.args]
     args[tpl.argIndex] = v
-    onPointAdd(
-      {
+    return {
+      sel: {
         file: c.file,
-        eventIndex: events.length + (edits[c.file]?.add?.length ?? 0),
+        eventIndex: events.length + addCount(c.file),
         argIndex: tpl.argIndex
       },
-      { t: c.trimIn + (tl - c.offset), port: tpl.ev.port, a: tpl.ev.a, args }
+      ev: { t: c.trimIn + (tl - c.offset), port: tpl.ev.port, a: tpl.ev.a, args }
+    }
+  }
+
+  /** Single insert (double-click / cmd+click): one point, one undo entry. */
+  const addPointAt = (p: Property, pos: { x: number; y: number }): void => {
+    const add = makeAdd(p, pos, (file) => edits[file]?.add?.length ?? 0)
+    if (add) onPointAdd([add], true)
+  }
+
+  // Pencil stroke: pointerdown starts it, every DRAW_STEP_PX of horizontal
+  // travel adds another point, pointerup commits the batch as one undo entry.
+  // The property (value scale + templates) and the pre-stroke edits are
+  // frozen at stroke start: transient adds mutate `edits` mid-stroke, and
+  // the commit replays the whole batch onto the pre-stroke doc.
+  const draw = useRef<{
+    prop: Property
+    edits0: Record<string, ClipEdits>
+    adds: PointAdd[]
+    lastX: number
+  } | null>(null)
+
+  const drawAt = (pos: { x: number; y: number }): void => {
+    const d = draw.current
+    if (!d) return
+    const add = makeAdd(
+      d.prop,
+      pos,
+      (file) =>
+        (d.edits0[file]?.add?.length ?? 0) + d.adds.filter((a) => a.sel.file === file).length
     )
+    if (!add) return
+    // Snap can land two samples on the same grid line; keep the first.
+    if (d.adds.some((a) => a.sel.file === add.sel.file && a.ev.t === add.ev.t)) return
+    d.adds.push(add)
+    d.lastX = pos.x
+    onPointAdd([add], false)
+  }
+
+  const beginDraw = (p: Property, pos: { x: number; y: number }): void => {
+    draw.current = { prop: p, edits0: edits, adds: [], lastX: pos.x }
+    drawAt(pos)
+  }
+
+  const endDraw = (): void => {
+    const d = draw.current
+    draw.current = null
+    if (d && d.adds.length > 0) onPointAdd(d.adds, true)
   }
 
   const onEditorDown = (e: React.PointerEvent<HTMLDivElement>): void => {
@@ -587,13 +647,14 @@ export function CurvePanel({
       return
     }
     const pos = svgPos(e)
-    // Pencil: a click adds a point to the selected curve. With nothing
-    // selected it falls through to the normal marquee behavior.
+    // Pencil: click & drag draws points onto the selected curve. With
+    // nothing selected it falls through to the normal marquee behavior.
     const pencilTarget = pencil
       ? shown.find((p) => selectedProps.has(p.key) && !hidden.has(p.key))
       : undefined
     if (pencilTarget) {
-      addPointAt(pencilTarget, pos)
+      beginDraw(pencilTarget, pos)
+      e.currentTarget.setPointerCapture(e.pointerId)
       return
     }
     // Inside the transform box (with a little slop for degenerate boxes),
@@ -622,6 +683,10 @@ export function CurvePanel({
   const onEditorMove = (e: React.PointerEvent<HTMLDivElement>): void => {
     const pos = svgPos(e)
     setMouse(pos)
+    if (draw.current) {
+      if (Math.abs(pos.x - draw.current.lastX) >= DRAW_STEP_PX) drawAt(pos)
+      return
+    }
     if (xform.current) {
       applyXform(e)
       return
@@ -654,6 +719,10 @@ export function CurvePanel({
   }
 
   const onEditorUp = (): void => {
+    if (draw.current) {
+      endDraw()
+      return
+    }
     if (xform.current) {
       endXform(true)
       return
@@ -830,13 +899,15 @@ export function CurvePanel({
                               addPointAt(p, svgPos(e))
                             } else if (pencil) {
                               // Pencil draws on the selected curve if any,
-                              // else on the curve under the cursor.
-                              addPointAt(
+                              // else on the curve under the cursor. The
+                              // editor div owns the rest of the stroke.
+                              beginDraw(
                                 shown.find(
                                   (sp) => selectedProps.has(sp.key) && !hidden.has(sp.key)
                                 ) ?? p,
                                 svgPos(e)
                               )
+                              editorRef.current?.setPointerCapture(e.pointerId)
                             } else {
                               // Plain click on the line selects the property,
                               // same as clicking its list row.

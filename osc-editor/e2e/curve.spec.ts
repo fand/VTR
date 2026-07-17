@@ -862,6 +862,31 @@ test('curve header: pencil clicks add points to the selected curve', async () =>
     // Clicked in the upper quarter: the value lands in the top of 0.1..0.9.
     expect(added.args[0]).toBeGreaterThan(0.6)
 
+    // Drag: points stream in along the stroke.
+    await page.mouse.move(editor.x + editor.width * 0.2, editor.y + editor.height * 0.6)
+    await page.mouse.down()
+    await page.mouse.move(editor.x + editor.width * 0.7, editor.y + editor.height * 0.4, {
+      steps: 20
+    })
+    await page.mouse.up()
+    const drawn = await page.locator('circle').count()
+    expect(drawn).toBeGreaterThan(7)
+    // The whole stroke is selected and lands in the sidecar.
+    await expect(page.locator('circle.selected')).toHaveCount(drawn - 4)
+    await expect
+      .poll(() => {
+        try {
+          return JSON.parse(readFileSync(sidecar, 'utf8')).add?.length ?? 0
+        } catch {
+          return 0
+        }
+      })
+      .toBe(drawn - 3)
+
+    // One undo removes the whole stroke.
+    await page.keyboard.press('ControlOrMeta+z')
+    await expect(page.locator('circle')).toHaveCount(4)
+
     // Pencil off: an empty-space click goes back to clearing the selection
     // (a spot away from every point and segment).
     await pencilBtn.click()
