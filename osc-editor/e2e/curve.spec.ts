@@ -281,9 +281,10 @@ test('curve panel: multi-select shows every selected clip, timeline time axis', 
     const page = await app.firstWindow()
     await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
 
-    // One clip: its 2 points.
+    // One clip: its 2 points, no clip-range overlay.
     await page.locator('.clip').first().click()
     await expect(page.locator('circle')).toHaveCount(2)
+    await expect(page.locator('.curve-clip-range')).toHaveCount(0)
 
     // Shift-click the second clip: both clips' events merge into /fader.
     await page
@@ -292,6 +293,14 @@ test('curve panel: multi-select shows every selected clip, timeline time axis', 
       .click({ modifiers: ['Shift'] })
     await expect(page.locator('circle')).toHaveCount(3)
     await expect(page.locator('.curve-prop-name')).toHaveText(['/fader'])
+
+    // Each clip gets a faint bar+fill over its timeline span.
+    await expect(page.locator('.curve-clip-range')).toHaveCount(2)
+    const fill0 = (await page.locator('.curve-clip-fill').first().boundingBox())!
+    const fill1 = (await page.locator('.curve-clip-fill').nth(1).boundingBox())!
+    // Clip A spans 0-1s, clip B 2-3s of a 0-3s axis: fills mirror that ratio.
+    expect(fill0.width).toBeLessThan(fill1.x - fill0.x)
+    expect(fill1.width).toBeCloseTo(fill0.width, 0)
 
     // The rightmost point is clip-b's; its tooltip shows timeline time (2 + 0.2).
     const last = (await page.locator('circle').last().boundingBox())!

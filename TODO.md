@@ -7,4 +7,4 @@
   - transform boxをドラッグすることでpointを丸ごとmoveできる
   - boxの端をドラッグすると、pointを伸縮できる
 - [x] Curve editorの横軸の目盛りは上部に表示する (timelineのseekbarと同じ表示形式)
-- Curve editorに複数clipのcurveが表示されているとき、Curve editorにclipの範囲を表す薄いbar+fillを表示する
+- [x] Curve editorに複数clipのcurveが表示されているとき、Curve editorにclipの範囲を表す薄いbar+fillを表示する

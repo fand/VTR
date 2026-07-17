@@ -663,6 +663,17 @@ body {
   pointer-events: none;
 }
 
+/* Per-clip time span, shown when several clips share the editor. */
+.curve-clip-fill {
+  fill: rgba(77, 163, 255, 0.05);
+  pointer-events: none;
+}
+
+.curve-clip-bar {
+  fill: rgba(77, 163, 255, 0.35);
+  pointer-events: none;
+}
+
 .curve-xform-box {
   fill: rgba(77, 163, 255, 0.06);
   stroke: var(--accent);

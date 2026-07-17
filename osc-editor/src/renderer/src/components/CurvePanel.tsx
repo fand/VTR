@@ -666,6 +666,18 @@ export function CurvePanel({
           <div className="curve-scroll" ref={scrollRef}>
             <svg width={innerW} height={h}>
               {renderGrid()}
+              {clips.length > 1 &&
+                clips.map((c) => {
+                  const cx0 = x(c.offset)
+                  const cw = Math.max(x(c.offset + clipLen(c)) - cx0, 1)
+                  return (
+                    // Faint span per clip so curves read against their source clips.
+                    <g key={c.id} className="curve-clip-range">
+                      <rect className="curve-clip-fill" x={cx0} y={0} width={cw} height={h} />
+                      <rect className="curve-clip-bar" x={cx0} y={0} width={cw} height={3} />
+                    </g>
+                  )
+                })}
               {curves
                 .filter((p) => !hidden.has(p.key))
                 .map((p) => (
