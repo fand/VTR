@@ -54,13 +54,17 @@ export function loadProject(projectPath: string, stagingDir: string): LoadedProj
     name: track.name,
     clips: track.clips.flatMap((clip) => {
       const clipPath = resolveClipPath(dir, stagingDir, clip.file)
-      try {
-        const loaded = { ...clip, path: clipPath, summary: clipSummary(clipPath) }
-        const sidecar = editsPath(clipPath)
-        if (!(clip.file in edits) && existsSync(sidecar)) {
+      // A broken sidecar degrades to "no edits", never to "no clip".
+      const sidecar = editsPath(clipPath)
+      if (!(clip.file in edits) && existsSync(sidecar)) {
+        try {
           edits[clip.file] = JSON.parse(readFileSync(sidecar, 'utf8')) as ClipEdits
+        } catch {
+          // ignore; the clip itself is fine
         }
-        return [loaded]
+      }
+      try {
+        return [{ ...clip, path: clipPath, summary: clipSummary(clipPath) }]
       } catch {
         missing.push(clip.file)
         return []
