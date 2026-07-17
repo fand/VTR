@@ -262,6 +262,11 @@ export function Timeline({
     return { x: e.clientX - rect.left, y: e.clientY - rect.top }
   }
 
+  const end = Math.max(duration, contentEnd(tracks))
+
+  /** Seek clamped to the timeline: the tail pad is visual, not seekable. */
+  const clampSeek = (sec: number): void => onSeek(Math.min(Math.max(sec, 0), end))
+
   const onBgPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
     if (e.button !== 0) return
     const pos = contentPos(e)
@@ -310,7 +315,7 @@ export function Timeline({
     onSelect(null)
     const pos = contentPos(e)
     const inLanes = pos.y >= RULER_H && pos.y < RULER_H + tracks.length * TRACK_HEIGHT
-    if (inLanes && pos.x >= LABEL_W) onSeek((pos.x - LABEL_W) / pxPerSec)
+    if (inLanes && pos.x >= LABEL_W) clampSeek((pos.x - LABEL_W) / pxPerSec)
   }
 
   // macOS pinch arrives as ctrl+wheel; preventDefault needs a non-passive
@@ -509,14 +514,16 @@ export function Timeline({
     setMenu(null)
   }
 
-  const end = Math.max(duration, contentEnd(tracks))
-  const widthPx = Math.max(end * pxPerSec, 600) + TAIL_PAD
+  const widthPx = Math.max(end * pxPerSec + TAIL_PAD, 600)
   const step = rulerStep(pxPerSec)
   const marks: number[] = []
-  // A mark's label sticks out ~48px right of its tick; skip marks whose label
-  // would poke past the content edge and stretch scrollWidth (the full
-  // timeline must fit the viewport at min zoom).
-  for (let s = 0; s * pxPerSec + 48 <= widthPx; s += step) marks.push(Math.round(s * 1e6) / 1e6)
+  // Marks stop at the timeline end (the tail pad shows no times). A mark's
+  // label sticks out ~48px right of its tick; skip marks whose label would
+  // poke past the content edge and stretch scrollWidth (the full timeline
+  // must fit the viewport at min zoom).
+  for (let s = 0; s <= end && s * pxPerSec + 48 <= widthPx; s += step) {
+    marks.push(Math.round(s * 1e6) / 1e6)
+  }
 
   return (
     <div className="timeline-panel">
@@ -568,12 +575,12 @@ export function Timeline({
                 if (e.button !== 0) return
                 e.currentTarget.setPointerCapture(e.pointerId)
                 const rect = e.currentTarget.getBoundingClientRect()
-                onSeek(Math.max(0, (e.clientX - rect.left) / pxPerSec))
+                clampSeek((e.clientX - rect.left) / pxPerSec)
               }}
               onPointerMove={(e) => {
                 if ((e.buttons & 1) === 0) return
                 const rect = e.currentTarget.getBoundingClientRect()
-                onSeek(Math.max(0, (e.clientX - rect.left) / pxPerSec))
+                clampSeek((e.clientX - rect.left) / pxPerSec)
               }}
             >
               {marks.map((s) => (
