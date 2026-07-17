@@ -730,7 +730,11 @@ export function CurvePanel({
     const m = marquee.current
     marquee.current = null
     setMarqueeRect(null)
-    if (m && !m.moved && m.clear) onSelectPoints([])
+    // A plain click on empty space clears both selections.
+    if (m && !m.moved && m.clear) {
+      onSelectPoints([])
+      setSelectedProps(new Set())
+    }
   }
 
   // Grid: vertical time lines for the shown range; horizontal value lines on

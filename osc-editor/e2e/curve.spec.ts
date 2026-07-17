@@ -351,6 +351,14 @@ test('curve panel: clicking a curve line selects its property', async () => {
     await page.mouse.click(midX, midY)
     await expect(page.locator('.curve-prop.selected')).toHaveCount(0)
     await expect(page.locator('circle')).toHaveCount(5)
+
+    // Select again, then click empty space: the property deselects too.
+    await page.mouse.click(midX, midY)
+    await expect(page.locator('.curve-prop.selected')).toHaveCount(1)
+    const editor = (await page.locator('.curve-editor').boundingBox())!
+    await page.mouse.click(editor.x + editor.width * 0.15, editor.y + editor.height * 0.3)
+    await expect(page.locator('.curve-prop.selected')).toHaveCount(0)
+    await expect(page.locator('circle')).toHaveCount(5)
   } finally {
     await app.close()
   }
