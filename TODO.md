@@ -5,7 +5,7 @@
   - [x] y軸zoom時は、curve editorで縦スクロールできるようにする
 - [x] play/stop ボタンはplay/pauseに変更
   - [x] pauseした時にpleyheadが元の位置に戻らないように変更
-- timecode, transport controlをheader中央に移動
+- [x] timecode, transport controlをheader中央に移動
 - header左端部分のレイアウトを変更
   - port設定のように2行レイアウトにする
   - osc-mtrを1行目に表示

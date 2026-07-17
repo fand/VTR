@@ -688,7 +688,10 @@ function App(): React.JSX.Element {
   const pausePreview = useCallback(async () => {
     if (playing) {
       setPlayhead(
-        Math.min(playing.startPos + (performance.now() - playing.startedAt) / 1000, playing.duration)
+        Math.min(
+          playing.startPos + (performance.now() - playing.startedAt) / 1000,
+          playing.duration
+        )
       )
     }
     try {
@@ -868,82 +871,88 @@ function App(): React.JSX.Element {
   return (
     <div className="app">
       <header className="header">
-        <span className="logo">osc-mtr</span>
-        <Timecode
-          recStartedAt={recording?.startedAt ?? null}
-          playing={playing}
-          playhead={playhead}
-        />
-        <button
-          className={recording ? 'btn rec active' : 'btn rec'}
-          onClick={toggleRecord}
-          disabled={busy}
-        >
-          {recording ? '■ Stop' : '● Rec'}
-        </button>
-        <button
-          className={playing ? 'btn play active' : 'btn play'}
-          onClick={togglePlay}
-          disabled={busy || !!recording || tracks.length === 0}
-        >
-          {playing ? '⏸ Pause' : '▶ Play'}
-        </button>
-        <button
-          className="btn"
-          onClick={alignAll}
-          disabled={!hasTl}
-          title="place clips at their TD timeline position (tl)"
-        >
-          Align
-        </button>
-        <div className="spacer" />
-        {/* Row 1: tap status + in/out ports. Row 2: clock status + clock port. */}
-        <div className="status-grid">
-          <span className={statusError ? 'chip bad' : status ? 'chip ok' : 'chip'}>
-            tap {statusError ? 'down' : status ? 'up' : '…'}
-          </span>
-          <NumField
-            label="in"
-            ariaLabel="in port"
-            value={ports.listen}
-            disabled={!!recording || !!playing}
-            parse={parsePort}
-            onCommit={(listen) => changePorts({ ...ports, listen })}
-          />
-          <NumField
-            label="out"
-            ariaLabel="out port"
-            value={ports.forward}
-            disabled={!!recording || !!playing}
-            parse={parsePort}
-            onCommit={(forward) => changePorts({ ...ports, forward })}
-          />
-          <span className={status?.beacon_tl != null ? 'chip ok' : 'chip'}>
-            {status?.beacon_tl != null
-              ? `clock tl=${status.beacon_tl.toFixed(2)}s` +
-                (status.beacon_rate === 0
-                  ? ' (paused)'
-                  : status.beacon_rate != null && status.beacon_rate !== 1
-                    ? ` ×${status.beacon_rate}`
-                    : '') +
-                ` (${status.beacon_age?.toFixed(1)}s ago)`
-              : 'no clock'}
-          </span>
-          <NumField
-            label="clock"
-            ariaLabel="clock port"
-            value={ports.beacon}
-            disabled={!!recording || !!playing}
-            parse={parsePort}
-            onCommit={(beacon) => changePorts({ ...ports, beacon })}
-          />
-          {status != null && status.dropped > 0 && (
-            <span className="chip bad">dropped {status.dropped}</span>
-          )}
+        <div className="header-left">
+          <span className="logo">osc-mtr</span>
         </div>
-        <button className="btn" onClick={doExport} disabled={tracks.length === 0 || !!recording}>
-          Export
-        </button>
+        {/* Timecode + transport, centered between the equal-flex side groups. */}
+        <div className="header-center">
+          <Timecode
+            recStartedAt={recording?.startedAt ?? null}
+            playing={playing}
+            playhead={playhead}
+          />
+          <button
+            className={recording ? 'btn rec active' : 'btn rec'}
+            onClick={toggleRecord}
+            disabled={busy}
+          >
+            {recording ? '■ Stop' : '● Rec'}
+          </button>
+          <button
+            className={playing ? 'btn play active' : 'btn play'}
+            onClick={togglePlay}
+            disabled={busy || !!recording || tracks.length === 0}
+          >
+            {playing ? '⏸ Pause' : '▶ Play'}
+          </button>
+        </div>
+        <div className="header-right">
+          {/* Row 1: tap status + in/out ports. Row 2: clock status + clock port. */}
+          <div className="status-grid">
+            <span className={statusError ? 'chip bad' : status ? 'chip ok' : 'chip'}>
+              tap {statusError ? 'down' : status ? 'up' : '…'}
+            </span>
+            <NumField
+              label="in"
+              ariaLabel="in port"
+              value={ports.listen}
+              disabled={!!recording || !!playing}
+              parse={parsePort}
+              onCommit={(listen) => changePorts({ ...ports, listen })}
+            />
+            <NumField
+              label="out"
+              ariaLabel="out port"
+              value={ports.forward}
+              disabled={!!recording || !!playing}
+              parse={parsePort}
+              onCommit={(forward) => changePorts({ ...ports, forward })}
+            />
+            <span className={status?.beacon_tl != null ? 'chip ok' : 'chip'}>
+              {status?.beacon_tl != null
+                ? `clock tl=${status.beacon_tl.toFixed(2)}s` +
+                  (status.beacon_rate === 0
+                    ? ' (paused)'
+                    : status.beacon_rate != null && status.beacon_rate !== 1
+                      ? ` ×${status.beacon_rate}`
+                      : '') +
+                  ` (${status.beacon_age?.toFixed(1)}s ago)`
+                : 'no clock'}
+            </span>
+            <NumField
+              label="clock"
+              ariaLabel="clock port"
+              value={ports.beacon}
+              disabled={!!recording || !!playing}
+              parse={parsePort}
+              onCommit={(beacon) => changePorts({ ...ports, beacon })}
+            />
+            {status != null && status.dropped > 0 && (
+              <span className="chip bad">dropped {status.dropped}</span>
+            )}
+          </div>
+          <button
+            className="btn"
+            onClick={alignAll}
+            disabled={!hasTl}
+            title="place clips at their TD timeline position (tl)"
+          >
+            Align
+          </button>
+          <button className="btn" onClick={doExport} disabled={tracks.length === 0 || !!recording}>
+            Export
+          </button>
+        </div>
       </header>
 
       {error && <div className="error-banner">{error}</div>}
