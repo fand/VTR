@@ -208,10 +208,10 @@ body {
   pointer-events: none;
 }
 
+/* Sits to the right of the marker time: the left edge is the time. */
 .marker-flag {
   position: absolute;
   bottom: 0;
-  transform: translateX(-50%);
   max-width: 120px;
   overflow: hidden;
   text-overflow: ellipsis;
