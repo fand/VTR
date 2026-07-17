@@ -1,12 +1,10 @@
 # TODO
 
-- [x] Timelineにマーカー機能を追加したい
-  - [x] Timeline panelにheaderを追加し、そこにmarker追加ボタンを追加
-    - クリックしたらplayhead位置にmarker追加
-  - [x] Mキーでも追加できる
-  - [x] マーカーはtext labelを持ち、ダブルクリックで編集可能
-  - [x] ドラッグで移動可能
-  - [x] 現在画面右下にあるzoom controlもtimeline headerの右端に移動しよう
-- [x] clipのcopy/paste
-- [x] clipのduplicateはCmd+Dでできるようにする
-- [x] clip複数選択
+- Clip複数選択時は、curve editorには選択中clipsのeventを全て表示する
+- Timeline headerにSnapボタンを追加
+  - クリックでSnapをon/off
+  - Snap on時は、clip move, trimが他のclipの切れ目にsnapする
+- Markerのラベルは中央寄せではなく、marker時刻の右側に表示する
+- Track選択可能にする
+  - 複数選択可能 (Cmd+click or Shift+click)
+  - 選択clipナシ & track選択時は、curve editorにはtrack内のclipのeventを全て表示する
