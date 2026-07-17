@@ -1,5 +1,5 @@
 import { app, shell, BrowserWindow, Menu, dialog, ipcMain } from 'electron'
-import { existsSync, mkdirSync, statSync } from 'fs'
+import { existsSync, mkdirSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { basename, dirname, join, resolve } from 'path'
@@ -16,6 +16,7 @@ import {
 } from './project'
 import { SESSION_FILE, exportSession } from './session'
 import { SpawnMode, TapManager } from './tap'
+import { findTapBinary } from './tapBinary'
 import { appendUndo, clearUndoLog, loadUndoLog, transferUndoLog, truncateUndoAfter } from './undo'
 import {
   DEFAULT_PORTS,
@@ -61,23 +62,6 @@ let savedUndoSeq = 0
 
 let tap: TapManager | null = null
 let tapError: string | null = null
-
-function findTapBinary(): string {
-  if (process.env.OSC_TAP_BIN) {
-    if (existsSync(process.env.OSC_TAP_BIN)) return process.env.OSC_TAP_BIN
-    throw new Error(`OSC_TAP_BIN not found: ${process.env.OSC_TAP_BIN}`)
-  }
-  // Pick the most recently built one so a stale release/debug build never wins.
-  const candidates = [
-    join(app.getAppPath(), '../osc-tap/target/release/osc-tap'),
-    join(app.getAppPath(), '../osc-tap/target/debug/osc-tap')
-  ].filter(existsSync)
-  if (candidates.length === 0) {
-    throw new Error('osc-tap binary not found (build osc-tap or set OSC_TAP_BIN)')
-  }
-  candidates.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)
-  return candidates[0]
-}
 
 function requireTap(): TapManager {
   if (!tap) throw new Error(tapError ?? 'osc-tap not running')
@@ -194,7 +178,13 @@ app.whenReady().then(() => {
       ...DEFAULT_PORTS,
       ...(cliProjectPath ? readProjectPorts(normalizeProjectPath(cliProjectPath)) : undefined)
     }
-    tap = new TapManager(findTapBinary(), dataDir, stagingDir, mode, ports)
+    const bin = findTapBinary({
+      isPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+      appPath: app.getAppPath(),
+      envBin: process.env.OSC_TAP_BIN
+    })
+    tap = new TapManager(bin, dataDir, stagingDir, mode, ports)
     tap.spawnTap()
   } catch (e) {
     tapError = (e as Error).message

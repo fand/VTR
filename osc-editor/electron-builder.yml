@@ -11,6 +11,10 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 asarUnpack:
   - resources/**
+# Ship the Rust tap next to the asar; findTapBinary looks here when packaged.
+extraResources:
+  - from: ../osc-tap/target/release/osc-tap
+    to: bin/osc-tap
 fileAssociations:
   - ext: oscproj
     name: osc-mtr Project
