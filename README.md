@@ -8,6 +8,11 @@ VJs' Timeline Recorder. Record, edit, and replay OSC for VJ performance archival
 ## Dev
 
 ```sh
+./run                         # build tap if needed + launch the editor
+./run path/to/project.oscproj
+```
+
+```sh
 # tap
 cd osc-tap
 cargo test                    # unit + e2e

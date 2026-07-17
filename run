@@ -1,0 +1,19 @@
+#!/bin/sh
+# Launch the VTR editor (dev mode) from the repo root.
+# Usage: ./run [path/to/project.oscproj]
+set -e
+cd "$(dirname "$0")"
+
+# Dev spawns osc-tap from osc-tap/target; build it if there is no binary yet.
+if [ ! -x osc-tap/target/release/osc-tap ] && [ ! -x osc-tap/target/debug/osc-tap ]; then
+  echo "building osc-tap..."
+  (cd osc-tap && cargo build --release)
+fi
+
+if [ ! -d osc-editor/node_modules ]; then
+  echo "installing editor deps..."
+  (cd osc-editor && npm install)
+fi
+
+cd osc-editor
+exec npm run dev -- "$@"
