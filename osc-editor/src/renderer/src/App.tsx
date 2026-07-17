@@ -358,21 +358,27 @@ function App(): React.JSX.Element {
     [tracks, markers, ports, duration, edits, history.seq]
   )
 
-  const saveProjectAs = useCallback(async (): Promise<void> => {
+  /** Resolves true only when the project actually saved (dialog not cancelled). */
+  const saveProjectAs = useCallback(async (): Promise<boolean> => {
     try {
       const path = await window.api.project.saveDialog(projectFile ?? undefined)
-      if (path) await saveTo(path)
+      if (!path) return false
+      await saveTo(path)
+      return true
     } catch (e) {
       setError((e as Error).message)
+      return false
     }
   }, [projectFile, saveTo])
 
-  const saveProject = useCallback(async (): Promise<void> => {
+  const saveProject = useCallback(async (): Promise<boolean> => {
     if (!projectFile) return saveProjectAs()
     try {
       await saveTo(projectFile)
+      return true
     } catch (e) {
       setError((e as Error).message)
+      return false
     }
   }, [projectFile, saveTo, saveProjectAs])
 
@@ -405,6 +411,11 @@ function App(): React.JSX.Element {
     const offOpen = window.api.menu.on('open', openProject)
     const offSave = window.api.menu.on('save', saveProject)
     const offSaveAs = window.api.menu.on('saveAs', saveProjectAs)
+    // Quit prompt chose Save: close only after a successful save, so a
+    // cancelled Save As leaves the app open.
+    const offSaveClose = window.api.menu.on('saveAndClose', async () => {
+      if (await saveProject()) window.api.window.confirmClose()
+    })
     const onKey = (e: KeyboardEvent): void => {
       if (!(e.metaKey || e.ctrlKey)) return
       const k = e.key.toLowerCase()
@@ -422,6 +433,7 @@ function App(): React.JSX.Element {
       offOpen()
       offSave()
       offSaveAs()
+      offSaveClose()
       window.removeEventListener('keydown', onKey)
     }
   }, [openProject, saveProject, saveProjectAs])

@@ -71,6 +71,28 @@ function requireTap(): TapManager {
 // e2e: never show a window or steal focus.
 const hidden = process.env.OSC_EDITOR_HIDDEN === '1'
 
+// Unsaved-changes guard: the renderer reports dirty through window:setFile;
+// closing a dirty window prompts save/discard/cancel. Hidden (e2e) takes the
+// choice from OSC_EDITOR_QUIT_CHOICE instead of a native dialog; the default
+// is discard, matching the documented no-autosave quit.
+let dirtyState = false
+let forceClose = false
+
+function quitChoice(win: BrowserWindow): number {
+  if (hidden) {
+    const byName: Record<string, number> = { save: 0, discard: 1, cancel: 2 }
+    return byName[process.env.OSC_EDITOR_QUIT_CHOICE ?? 'discard'] ?? 1
+  }
+  return dialog.showMessageBoxSync(win, {
+    type: 'warning',
+    buttons: ['Save', "Don't Save", 'Cancel'],
+    defaultId: 0,
+    cancelId: 2,
+    message: 'You have unsaved changes.',
+    detail: 'Your changes will be lost if you close without saving.'
+  })
+}
+
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
     width: 1200,
@@ -89,6 +111,21 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => {
     if (!hidden) mainWindow.show()
+  })
+
+  mainWindow.on('close', (e) => {
+    if (forceClose || !dirtyState) return
+    e.preventDefault()
+    const choice = quitChoice(mainWindow)
+    if (choice === 2) return
+    if (choice === 1) {
+      forceClose = true
+      mainWindow.close()
+      return
+    }
+    // Save first; the renderer confirms via window:confirmClose once the
+    // save succeeds. A cancelled Save As leaves the app open.
+    mainWindow.webContents.send('menu:saveAndClose')
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -205,9 +242,15 @@ app.whenReady().then(() => {
   // macOS: proxy icon in the title bar carries the full path; the edited
   // state shows as a dot on the close button. No-ops on other platforms.
   ipcMain.handle('window:setFile', (e, path: string | null, dirty: boolean) => {
+    dirtyState = dirty
     const win = BrowserWindow.fromWebContents(e.sender)
     win?.setRepresentedFilename(path ?? '')
     win?.setDocumentEdited(dirty)
+  })
+  // The renderer saved after a quit prompt chose Save; finish the close.
+  ipcMain.handle('window:confirmClose', (e) => {
+    forceClose = true
+    BrowserWindow.fromWebContents(e.sender)?.close()
   })
   // Raw events; the renderer applies its own (possibly newer) edit overlay.
   // A stale path (clip collected into a bundle since) re-resolves by name.

@@ -53,7 +53,7 @@ const api = {
   menu: {
     /** Subscribe to Edit-menu actions (menu accelerators eat their keydowns). */
     on: (
-      channel: 'undo' | 'redo' | 'copy' | 'paste' | 'open' | 'save' | 'saveAs',
+      channel: 'undo' | 'redo' | 'copy' | 'paste' | 'open' | 'save' | 'saveAs' | 'saveAndClose',
       cb: () => void
     ): (() => void) => {
       const listener = (): void => cb()
@@ -64,7 +64,9 @@ const api = {
   window: {
     /** macOS proxy icon (full path) + edited dot; a no-op elsewhere. */
     setFile: (path: string | null, dirty: boolean): Promise<void> =>
-      ipcRenderer.invoke('window:setFile', path, dirty)
+      ipcRenderer.invoke('window:setFile', path, dirty),
+    /** Quit prompt chose Save and the save succeeded: finish closing. */
+    confirmClose: (): Promise<void> => ipcRenderer.invoke('window:confirmClose')
   },
   workdir: (): Promise<string> => ipcRenderer.invoke('app:workdir')
 }
