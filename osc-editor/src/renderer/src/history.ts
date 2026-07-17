@@ -126,6 +126,9 @@ export function useHistory(
   }, [install, persistError])
 
   const undo = useCallback((): void => {
+    // Mid-gesture undo would apply patches onto the uncommitted transient
+    // doc (or diverge and wipe the stack); ignore it until the gesture ends.
+    if (base.current) return
     const entry = past.current.pop()
     if (!entry) return
     try {
@@ -138,6 +141,7 @@ export function useHistory(
   }, [restore, dropHistory])
 
   const redo = useCallback((): void => {
+    if (base.current) return
     const entry = future.current.shift()
     if (!entry) return
     try {
