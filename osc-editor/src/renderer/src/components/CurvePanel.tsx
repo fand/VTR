@@ -35,6 +35,15 @@ function fmt(n: number): string {
   return String(Number(n.toFixed(3)))
 }
 
+const MAX_ZOOM = 50
+/** Header sliders run 0..100 and map to 1..MAX_ZOOM exponentially. */
+function zoomToSlider(z: number): number {
+  return (100 * Math.log(z)) / Math.log(MAX_ZOOM)
+}
+function sliderToZoom(v: number): number {
+  return Math.pow(MAX_ZOOM, v / 100)
+}
+
 /** Clip files are immutable, so raw events cache forever. */
 const eventsCache = new Map<string, OscEvent[]>()
 
@@ -191,9 +200,15 @@ export function CurvePanel({
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const { w, h } = useSize(editorRef)
 
-  // Pinch (ctrl+wheel) zooms the time axis; 1 = the time range fits the panel.
+  // Pinch (ctrl+wheel) or the X slider zooms the time axis; 1 = the time
+  // range fits the panel. The Y slider zooms the value axis; past 1 the
+  // editor scrolls vertically.
   const [zoomX, setZoomX] = useState(1)
+  const [zoomY, setZoomY] = useState(1)
   const innerW = w * zoomX
+  const innerH = h * zoomY
+  // Scroll offset of .curve-scroll; pins the axis labels while it scrolls.
+  const [scrollTop, setScrollTop] = useState(0)
   // Normalized time position under the cursor at pinch start; scroll is
   // restored after the zoomed width renders so that point stays put.
   const pinchAnchor = useRef<{ norm: number; viewX: number } | null>(null)
@@ -212,7 +227,7 @@ export function CurvePanel({
         norm: (scroll.scrollLeft + viewX - PAD) / Math.max(scroll.scrollWidth - 2 * PAD, 1),
         viewX
       }
-      setZoomX((z) => Math.min(Math.max(z * Math.exp(-e.deltaY * 0.01), 1), 50))
+      setZoomX((z) => Math.min(Math.max(z * Math.exp(-e.deltaY * 0.01), 1), MAX_ZOOM))
     }
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
@@ -296,7 +311,7 @@ export function CurvePanel({
 
   const x = (t: number): number => PAD + ((t - tMin) / tRange) * (innerW - 2 * PAD)
   const y = (p: Property, v: number): number =>
-    p.max === p.min ? h / 2 : PAD + (1 - (v - p.min) / (p.max - p.min)) * (h - 2 * PAD)
+    p.max === p.min ? innerH / 2 : PAD + (1 - (v - p.min) / (p.max - p.min)) * (innerH - 2 * PAD)
 
   const selKeys = useMemo(() => new Set(selectedPoints.map(selKey)), [selectedPoints])
 
@@ -308,7 +323,7 @@ export function CurvePanel({
   }
   const snapValue = (v: number, min: number, max: number): number => {
     if (!snap || max <= min) return v
-    const step = gridStep(max - min, h - 2 * PAD, 18)
+    const step = gridStep(max - min, innerH - 2 * PAD, 18)
     return Math.round(v / step) * step
   }
 
@@ -366,7 +381,7 @@ export function CurvePanel({
         eventIndex: pt.eventIndex,
         t: c.trimIn + (tl - c.offset),
         argIndex: pt.argIndex,
-        value: snapValue(pt.v + (-dy / Math.max(h - 2 * PAD, 1)) * (max - min || 1), min, max)
+        value: snapValue(pt.v + (-dy / Math.max(innerH - 2 * PAD, 1)) * (max - min || 1), min, max)
       }
     })
     onPointEdit(d.last, false)
@@ -481,7 +496,7 @@ export function CurvePanel({
         t: c.trimIn + (tl - c.offset),
         argIndex: pt.argIndex,
         value: snapValue(
-          pt.v + (-(ny - py0) / Math.max(h - 2 * PAD, 1)) * (max - min || 1),
+          pt.v + (-(ny - py0) / Math.max(innerH - 2 * PAD, 1)) * (max - min || 1),
           min,
           max
         )
@@ -545,12 +560,12 @@ export function CurvePanel({
     h: number
   } | null>(null)
 
-  /** Pointer position in svg coordinates (x follows the horizontal scroll). */
+  /** Pointer position in svg coordinates (follows both scroll axes). */
   const svgPos = (e: { clientX: number; clientY: number }): { x: number; y: number } => {
     const rect = editorRef.current!.getBoundingClientRect()
     return {
       x: e.clientX - rect.left + (scrollRef.current?.scrollLeft ?? 0),
-      y: e.clientY - rect.top
+      y: e.clientY - rect.top + (scrollRef.current?.scrollTop ?? 0)
     }
   }
 
@@ -568,7 +583,7 @@ export function CurvePanel({
     const v = snapValue(
       p.max === p.min
         ? p.min
-        : p.min + (1 - (pos.y - PAD) / Math.max(h - 2 * PAD, 1)) * (p.max - p.min),
+        : p.min + (1 - (pos.y - PAD) / Math.max(innerH - 2 * PAD, 1)) * (p.max - p.min),
       p.min,
       p.max
     )
@@ -743,7 +758,7 @@ export function CurvePanel({
     shown.find((p) => !hidden.has(p.key))
   const yGrid = ((): { py: number; label: string }[] => {
     if (clips.length === 0 || !gridProp || gridProp.max <= gridProp.min) return []
-    const vStep = gridStep(gridProp.max - gridProp.min, h - 2 * PAD, 18)
+    const vStep = gridStep(gridProp.max - gridProp.min, innerH - 2 * PAD, 18)
     const vDec = stepDecimals(vStep)
     const out: { py: number; label: string }[] = []
     for (let i = Math.ceil(gridProp.min / vStep - 1e-6); i * vStep <= gridProp.max + 1e-6; i++) {
@@ -759,9 +774,16 @@ export function CurvePanel({
       const t = i * tStep
       const px = x(t)
       lines.push(
-        <line key={`t${i}`} x1={px} y1={0} x2={px} y2={h} className="curve-grid-line" />,
-        // Top-aligned, ruler-style labels — same format as the timeline seekbar.
-        <text key={`tl${i}`} x={px + 4} y={13} className="curve-grid-label" fill="#8b919c">
+        <line key={`t${i}`} x1={px} y1={0} x2={px} y2={innerH} className="curve-grid-line" />,
+        // Top-aligned, ruler-style labels — same format as the timeline
+        // seekbar. scrollTop pins them to the top while the editor scrolls.
+        <text
+          key={`tl${i}`}
+          x={px + 4}
+          y={scrollTop + 13}
+          className="curve-grid-label"
+          fill="#8b919c"
+        >
           {formatRulerLabel(t)}
         </text>
       )
@@ -813,6 +835,29 @@ export function CurvePanel({
         >
           Pencil
         </button>
+        <div className="spacer" />
+        <span className="curve-zoom-label">X</span>
+        <input
+          className="zoom-slider curve-zoom"
+          type="range"
+          min={0}
+          max={100}
+          step={1}
+          value={zoomToSlider(zoomX)}
+          aria-label="x zoom"
+          onChange={(e) => setZoomX(sliderToZoom(Number(e.target.value)))}
+        />
+        <span className="curve-zoom-label">Y</span>
+        <input
+          className="zoom-slider curve-zoom"
+          type="range"
+          min={0}
+          max={100}
+          step={1}
+          value={zoomToSlider(zoomY)}
+          aria-label="y zoom"
+          onChange={(e) => setZoomY(sliderToZoom(Number(e.target.value)))}
+        />
       </div>
       <div className="curve-body">
         <div className="curve-props">
@@ -857,8 +902,12 @@ export function CurvePanel({
             <div className="curve-empty">Select a clip to see its curves.</div>
           )}
           {clips.length > 0 && w > 0 && (
-            <div className="curve-scroll" ref={scrollRef}>
-              <svg width={innerW} height={h}>
+            <div
+              className="curve-scroll"
+              ref={scrollRef}
+              onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+            >
+              <svg width={innerW} height={innerH}>
                 {renderGrid()}
                 {clips.length > 1 &&
                   clips.map((c) => {
@@ -867,7 +916,7 @@ export function CurvePanel({
                     return (
                       // Faint span per clip so curves read against their source clips.
                       <g key={c.id} className="curve-clip-range">
-                        <rect className="curve-clip-fill" x={cx0} y={0} width={cw} height={h} />
+                        <rect className="curve-clip-fill" x={cx0} y={0} width={cw} height={innerH} />
                         <rect className="curve-clip-bar" x={cx0} y={0} width={cw} height={3} />
                       </g>
                     )
@@ -1028,7 +1077,7 @@ export function CurvePanel({
                 <span
                   key={i}
                   className="curve-grid-label"
-                  style={{ top: py, color: gridProp?.color }}
+                  style={{ top: py - scrollTop, color: gridProp?.color }}
                 >
                   {label}
                 </span>
