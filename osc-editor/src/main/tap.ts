@@ -37,7 +37,8 @@ export class TapManager {
   readonly sockPath: string
   private proc: ChildProcess | null = null
   private sock: net.Socket | null = null
-  private pending: Pending[] = []
+  private pending = new Map<number, Pending>()
+  private nextId = 1
   private buf = ''
   private stopping = false
   private respawnDelay = RESPAWN_DELAY_MS
@@ -52,7 +53,8 @@ export class TapManager {
     /** Default recording dir (staging); start(dir) overrides per clip. */
     readonly outdir: string,
     private mode: SpawnMode = 'child',
-    ports: PortConfig = DEFAULT_PORTS
+    ports: PortConfig = DEFAULT_PORTS,
+    private requestTimeoutMs = REQUEST_TIMEOUT_MS
   ) {
     this.sockPath = join(dataDir, 'osc-tap.sock')
     this._ports = ports
@@ -214,6 +216,7 @@ ${programArgs}
     extra?: Record<string, unknown>
   ): Promise<Record<string, unknown>> {
     const sock = await this.connect()
+    const id = this.nextId++
     return new Promise((resolve, reject) => {
       const entry: Pending = {
         resolve: (v) => {
@@ -226,12 +229,12 @@ ${programArgs}
           reject(e)
         },
         timer: setTimeout(() => {
-          this.pending = this.pending.filter((p) => p !== entry)
+          this.pending.delete(id)
           reject(new Error(`osc-tap ${cmd}: timed out`))
-        }, REQUEST_TIMEOUT_MS)
+        }, this.requestTimeoutMs)
       }
-      this.pending.push(entry)
-      sock.write(JSON.stringify({ cmd, ...extra }) + '\n')
+      this.pending.set(id, entry)
+      sock.write(JSON.stringify({ id, cmd, ...extra }) + '\n')
     })
   }
 
@@ -274,13 +277,18 @@ ${programArgs}
       if (nl < 0) return
       const line = this.buf.slice(0, nl)
       this.buf = this.buf.slice(nl + 1)
-      const entry = this.pending.shift()
-      if (!entry) continue
+      let msg: Record<string, unknown>
       try {
-        entry.resolve(JSON.parse(line))
-      } catch (e) {
-        entry.reject(e as Error)
+        msg = JSON.parse(line)
+      } catch {
+        console.error(`osc-tap: unparseable control reply: ${line}`)
+        continue
       }
+      // Match by id; drop replies to unknown (e.g. timed-out) requests.
+      const entry = typeof msg.id === 'number' ? this.pending.get(msg.id) : undefined
+      if (!entry) continue
+      this.pending.delete(msg.id as number)
+      entry.resolve(msg)
     }
   }
 
@@ -288,8 +296,8 @@ ${programArgs}
     this.sock?.destroy()
     this.sock = null
     this.buf = ''
-    const pending = this.pending
-    this.pending = []
+    const pending = [...this.pending.values()]
+    this.pending.clear()
     for (const p of pending) p.reject(err)
   }
 }
