@@ -11,13 +11,26 @@ const LOOKAHEAD_S = 0.002
  * The final render never uses this path (it is file-driven inside TD).
  */
 export class Preview {
-  private sock = dgram.createSocket('udp4')
   private timer: NodeJS.Timeout | null = null
   private events: OscEvent[] = []
   private idx = 0
   private startPos = 0
   private startedAt = 0
   private targetPort = 10011
+  private sendErrors = 0
+
+  constructor(
+    private sock: dgram.Socket = dgram.createSocket('udp4'),
+    private onError: (message: string) => void = () => {}
+  ) {
+    // An ICMP-surfaced send error arrives as an async 'error' event; without
+    // a listener it would crash the whole main process mid-preview.
+    this.sock.on('error', (e: Error) => {
+      console.error(`preview socket error: ${e.message}`)
+      this.stop()
+      this.onError(`preview socket error: ${e.message}`)
+    })
+  }
 
   get playing(): boolean {
     return this.timer !== null
@@ -30,6 +43,7 @@ export class Preview {
 
   play(events: OscEvent[], fromSec: number, targetPort: number): void {
     this.stop()
+    this.sendErrors = 0
     this.targetPort = targetPort
     this.events = events
     const idx = events.findIndex((e) => e.t >= fromSec)
@@ -55,7 +69,13 @@ export class Preview {
     while (this.idx < this.events.length && this.events[this.idx].t <= pos + LOOKAHEAD_S) {
       const e = this.events[this.idx++]
       try {
-        this.sock.send(encodeOscMessage(e.a, e.args), this.targetPort, TARGET_HOST)
+        this.sock.send(encodeOscMessage(e.a, e.args), this.targetPort, TARGET_HOST, (err) => {
+          // Async failure: count every one, surface the first per playback.
+          if (err && this.sendErrors++ === 0) {
+            console.error(`preview send failed: ${err.message}`)
+            this.onError(`preview send failed: ${err.message}`)
+          }
+        })
       } catch (err) {
         console.error(`preview send error: ${(err as Error).message}`)
       }

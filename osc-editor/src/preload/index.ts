@@ -42,7 +42,13 @@ const api = {
   preview: {
     play: (project: ProjectFile, fromSec: number): Promise<{ duration: number }> =>
       ipcRenderer.invoke('preview:play', project, fromSec),
-    stop: (): Promise<{ position: number }> => ipcRenderer.invoke('preview:stop')
+    stop: (): Promise<{ position: number }> => ipcRenderer.invoke('preview:stop'),
+    /** Async preview socket/send failures, for the error banner. */
+    onError: (cb: (message: string) => void): (() => void) => {
+      const listener = (_e: unknown, message: string): void => cb(message)
+      ipcRenderer.on('preview:error', listener)
+      return () => ipcRenderer.removeListener('preview:error', listener)
+    }
   },
   undo: {
     load: (): Promise<UndoEntry[]> => ipcRenderer.invoke('undo:load'),

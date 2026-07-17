@@ -243,6 +243,8 @@ function App(): React.JSX.Element {
   const [statusError, setStatusError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [info, setInfo] = useState<string | null>(null)
+  // Async preview socket/send failures from main land in the error banner.
+  useEffect(() => window.api.preview.onError(setError), [])
   const [busy, setBusy] = useState(false)
   const [playhead, setPlayhead] = useState(0)
   const [playing, setPlaying] = useState<PlayingState | null>(null)

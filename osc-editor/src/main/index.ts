@@ -363,7 +363,9 @@ app.whenReady().then(() => {
     return exportSession(resolveClip, project, outPath)
   })
 
-  const preview = new Preview()
+  const preview = new Preview(undefined, (message) => {
+    BrowserWindow.getAllWindows()[0]?.webContents.send('preview:error', message)
+  })
   ipcMain.handle('preview:play', (_e, project: ProjectFile, fromSec: number) => {
     const merged = mergeProject(resolveClip, project)
     preview.play(merged.events, fromSec, tap?.ports.forward ?? DEFAULT_PORTS.forward)
