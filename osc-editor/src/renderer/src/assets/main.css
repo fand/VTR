@@ -186,14 +186,26 @@ body {
   color: #fff;
 }
 
+/* Above the sticky ruler (z 20) so the head shows inside it. */
 .playhead {
   position: absolute;
   top: 0;
   bottom: 0;
   width: 1px;
   background: #ffd24d;
-  z-index: 18;
+  z-index: 21;
   pointer-events: none;
+}
+
+/* Triangle head pinned to the ruler while the tracks scroll under it. */
+.playhead-head {
+  position: sticky;
+  top: 0;
+  width: 11px;
+  height: 10px;
+  margin-left: -5px;
+  background: #ffd24d;
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
 }
 
 /* Marker time line through the tracks; the flag in the ruler is the handle. */

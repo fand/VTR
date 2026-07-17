@@ -171,7 +171,11 @@ function PlayheadLine({
   const sec = playing
     ? Math.min(playing.startPos + (performance.now() - playing.startedAt) / 1000, playing.duration)
     : playhead
-  return <div className="playhead" style={{ left: LABEL_W + sec * pxPerSec }} />
+  return (
+    <div className="playhead" style={{ left: LABEL_W + sec * pxPerSec }}>
+      <div className="playhead-head" />
+    </div>
+  )
 }
 
 function rulerStep(pxPerSec: number): number {

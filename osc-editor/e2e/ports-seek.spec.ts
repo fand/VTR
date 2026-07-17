@@ -71,6 +71,12 @@ test('seek: ruler click, lane click, scrub', async () => {
     expect(await playheadLeft(page)).toBeCloseTo(296, 0)
     await expect(page.locator('.timecode')).toHaveText('00:00:10.000')
 
+    // The head triangle sits centered on the line, at the ruler's top.
+    const head = (await page.locator('.playhead-head').boundingBox())!
+    const scroll = (await page.locator('.timeline-scroll').boundingBox())!
+    expect(head.x + head.width / 2 - scroll.x).toBeCloseTo(296.5, 0)
+    expect(head.y).toBeCloseTo(scroll.y, 0)
+
     // Empty lane click at x=300.
     await page.locator('.track-lane').first().click({ position: { x: 300, y: 55 } })
     expect(await playheadLeft(page)).toBeCloseTo(396, 0)
