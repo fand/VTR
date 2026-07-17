@@ -383,7 +383,13 @@ impl Writer {
                     }
                     line.insert("port".into(), json!(self.listen_port));
                     line.insert("a".into(), json!(m.addr));
-                    let args: Vec<Value> = m.args.iter().filter_map(arg_to_json).collect();
+                    let mut types = String::new();
+                    let mut args: Vec<Value> = Vec::with_capacity(m.args.len());
+                    for (tag, v) in m.args.iter().filter_map(arg_to_json_tagged) {
+                        types.push(tag);
+                        args.push(v);
+                    }
+                    line.insert("types".into(), json!(types));
                     line.insert("args".into(), Value::Array(args));
                     let before = self.write_errors;
                     self.write(&mut rec.file, &Value::Object(line));
@@ -507,28 +513,38 @@ fn flatten(packet: OscPacket, out: &mut Vec<OscMessage>) {
     }
 }
 
-fn arg_to_json(arg: &OscType) -> Option<Value> {
+/// int64s beyond ±2^53 don't survive a JS JSON.parse (f64 rounding).
+const JS_SAFE_INT: u64 = 1 << 53;
+
+/// JSON value plus its OSC type tag. `types` in the JSONL line is these tags
+/// concatenated, so a skipped arg (blob) must skip its tag too.
+fn arg_to_json_tagged(arg: &OscType) -> Option<(char, Value)> {
     match arg {
         // Shortest f32 repr, reparsed as f64, so 0.42f32 logs as 0.42.
-        OscType::Float(f) => Some(json!(f.to_string().parse::<f64>().unwrap_or(*f as f64))),
-        OscType::Double(d) => Some(json!(d)),
-        OscType::Int(i) => Some(json!(i)),
-        OscType::Long(i) => Some(json!(i)),
-        OscType::String(s) => Some(json!(s)),
-        OscType::Bool(b) => Some(json!(b)),
-        OscType::Color(c) => Some(json!(format!(
-            "#{:02x}{:02x}{:02x}{:02x}",
-            c.red, c.green, c.blue, c.alpha
-        ))),
-        OscType::Inf => Some(json!("<impulse>")),
-        OscType::Nil => Some(Value::Null),
+        OscType::Float(f) => Some(('f', json!(f.to_string().parse::<f64>().unwrap_or(*f as f64)))),
+        OscType::Double(d) => Some(('d', json!(d))),
+        OscType::Int(i) => Some(('i', json!(i))),
+        OscType::Long(i) if i.unsigned_abs() > JS_SAFE_INT => Some(('h', json!(i.to_string()))),
+        OscType::Long(i) => Some(('h', json!(i))),
+        OscType::String(s) => Some(('s', json!(s))),
+        OscType::Bool(true) => Some(('T', json!(true))),
+        OscType::Bool(false) => Some(('F', json!(false))),
+        OscType::Color(c) => Some((
+            'r',
+            json!(format!(
+                "#{:02x}{:02x}{:02x}{:02x}",
+                c.red, c.green, c.blue, c.alpha
+            )),
+        )),
+        OscType::Inf => Some(('I', json!("<impulse>"))),
+        OscType::Nil => Some(('N', Value::Null)),
         OscType::Blob(b) => {
             eprintln!("osc-tap: warn: blob arg skipped ({} bytes)", b.len());
             None
         }
         other => {
             eprintln!("osc-tap: warn: unsupported arg {other:?}, stringified");
-            Some(json!(format!("{other:?}")))
+            Some(('s', json!(format!("{other:?}"))))
         }
     }
 }
@@ -638,6 +654,100 @@ mod tests {
         w.handle(Msg::Stop { reply: tx });
         rx.recv().unwrap().unwrap();
         assert!(status_of(&mut w).write_error.is_some());
+    }
+
+    #[test]
+    fn tags_cover_every_serialized_type() {
+        let cases = [
+            (OscType::Float(0.42), 'f', json!(0.42)),
+            (OscType::Double(0.5), 'd', json!(0.5)),
+            (OscType::Int(3), 'i', json!(3)),
+            (OscType::Long(3), 'h', json!(3)),
+            (OscType::String("hi".into()), 's', json!("hi")),
+            (OscType::Bool(true), 'T', json!(true)),
+            (OscType::Bool(false), 'F', json!(false)),
+            (
+                OscType::Color(rosc::OscColor {
+                    red: 255,
+                    green: 0,
+                    blue: 16,
+                    alpha: 32,
+                }),
+                'r',
+                json!("#ff001020"),
+            ),
+            (OscType::Inf, 'I', json!("<impulse>")),
+            (OscType::Nil, 'N', Value::Null),
+        ];
+        for (arg, tag, value) in cases {
+            let (t, v) = arg_to_json_tagged(&arg).unwrap();
+            assert_eq!((t, v), (tag, value), "arg {arg:?}");
+        }
+    }
+
+    #[test]
+    fn big_long_becomes_string_small_stays_number() {
+        let big = (1i64 << 53) + 1;
+        assert_eq!(
+            arg_to_json_tagged(&OscType::Long(big)).unwrap(),
+            ('h', json!(big.to_string()))
+        );
+        assert_eq!(
+            arg_to_json_tagged(&OscType::Long(-big)).unwrap(),
+            ('h', json!((-big).to_string()))
+        );
+        assert_eq!(
+            arg_to_json_tagged(&OscType::Long(i64::MIN)).unwrap(),
+            ('h', json!(i64::MIN.to_string()))
+        );
+        // Exactly ±2^53 is representable in f64: stays a number.
+        assert_eq!(
+            arg_to_json_tagged(&OscType::Long(1 << 53)).unwrap(),
+            ('h', json!(1i64 << 53))
+        );
+    }
+
+    #[test]
+    fn blob_skips_value_and_tag() {
+        assert!(arg_to_json_tagged(&OscType::Blob(vec![1, 2, 3])).is_none());
+    }
+
+    #[test]
+    fn written_line_has_aligned_types_and_args() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut w = test_writer(tmp.path());
+        let path = start_clip(&mut w);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+
+        // Blob in the middle: its tag must vanish with its value.
+        let buf = rosc::encoder::encode(&OscPacket::Message(OscMessage {
+            addr: "/mixed".into(),
+            args: vec![
+                OscType::Float(1.5),
+                OscType::Blob(vec![9]),
+                OscType::Int(2),
+            ],
+        }))
+        .unwrap();
+        w.handle(Msg::Packet {
+            buf,
+            t: Instant::now(),
+            beacon: None,
+        });
+
+        let (tx, rx) = mpsc::channel();
+        w.handle(Msg::Stop { reply: tx });
+        rx.recv().unwrap().unwrap();
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        let line: Value = serde_json::from_str(
+            text.lines()
+                .find(|l| l.contains("/mixed"))
+                .expect("event line"),
+        )
+        .unwrap();
+        assert_eq!(line["types"], json!("fi"));
+        assert_eq!(line["args"], json!([1.5, 2]));
     }
 
     #[test]
