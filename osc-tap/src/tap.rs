@@ -19,7 +19,39 @@ const MAX_DATAGRAM: usize = 65_507;
 /// Kernel receive buffer for the listen socket (best effort).
 const RECV_BUF_BYTES: usize = 4 * 1024 * 1024;
 /// Max packets queued to the writer before we drop (and count) instead of blocking.
+/// Bounds packet COUNT, not bytes: worst case ~4 GB of heap at max datagram
+/// size. Fine for a trusted LAN; don't shrink it without a real need.
 const CHANNEL_CAP: usize = 65_536;
+
+/// Logs at most once per second; counts what it swallowed in between.
+struct RateLimitedLog {
+    last: Option<Instant>,
+    suppressed: u64,
+}
+
+impl RateLimitedLog {
+    fn new() -> Self {
+        Self {
+            last: None,
+            suppressed: 0,
+        }
+    }
+
+    fn log(&mut self, msg: &str) {
+        let now = Instant::now();
+        if self.last.is_none_or(|l| (now - l).as_secs_f64() >= 1.0) {
+            if self.suppressed > 0 {
+                eprintln!("osc-tap: {msg} ({} similar suppressed)", self.suppressed);
+            } else {
+                eprintln!("osc-tap: {msg}");
+            }
+            self.suppressed = 0;
+            self.last = Some(now);
+        } else {
+            self.suppressed += 1;
+        }
+    }
+}
 
 /// Latest `/clock` beacon.
 #[derive(Debug, Clone, Copy)]
@@ -142,17 +174,20 @@ impl Tap {
             let dropped = dropped.clone();
             thread::Builder::new().name("recv".into()).spawn(move || {
                 let mut buf = [0u8; MAX_DATAGRAM];
+                // TD down turns every forward into an error (~120/s); throttle.
+                let mut recv_log = RateLimitedLog::new();
+                let mut fwd_log = RateLimitedLog::new();
                 loop {
                     let n = match listen.recv(&mut buf) {
                         Ok(n) => n,
                         Err(e) => {
-                            eprintln!("osc-tap: recv error: {e}");
+                            recv_log.log(&format!("recv error: {e}"));
                             continue;
                         }
                     };
                     let t = Instant::now();
                     if let Err(e) = forward.send(&buf[..n]) {
-                        eprintln!("osc-tap: forward error: {e}");
+                        fwd_log.log(&format!("forward error: {e}"));
                     }
                     let snapshot = *beacon.lock().unwrap();
                     match tx.try_send(Msg::Packet {
@@ -178,11 +213,13 @@ impl Tap {
             let beacon = beacon.clone();
             thread::Builder::new().name("beacon".into()).spawn(move || {
                 let mut buf = [0u8; MAX_DATAGRAM];
+                let mut recv_log = RateLimitedLog::new();
+                let mut arg_log = RateLimitedLog::new();
                 loop {
                     let n = match beacon_sock.recv(&mut buf) {
                         Ok(n) => n,
                         Err(e) => {
-                            eprintln!("osc-tap: beacon recv error: {e}");
+                            recv_log.log(&format!("beacon recv error: {e}"));
                             continue;
                         }
                     };
@@ -196,7 +233,13 @@ impl Tap {
                         if m.addr != "/clock" {
                             continue;
                         }
+                        // Silently dropping these left all clips without tl
+                        // and no hint why; say what arrived instead.
                         let Some(t) = arg_as_f64(m.args.first()) else {
+                            arg_log.log(&format!(
+                                "warn: /clock arg not numeric ({:?}), beacon ignored",
+                                m.args.first()
+                            ));
                             continue;
                         };
                         let rate = arg_as_f64(m.args.get(1)).unwrap_or(1.0);
@@ -511,6 +554,9 @@ fn arg_as_f64(arg: Option<&OscType>) -> Option<f64> {
     match arg {
         Some(OscType::Float(f)) => Some(*f as f64),
         Some(OscType::Double(d)) => Some(*d),
+        // Some senders beacon ints (e.g. a paused rate of 0); accept them.
+        Some(OscType::Int(i)) => Some(*i as f64),
+        Some(OscType::Long(i)) => Some(*i as f64),
         _ => None,
     }
 }
