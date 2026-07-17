@@ -1,8 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { applyEditsIndexed } from '../../../shared/edits'
 import type { ClipEdits, OscEvent } from '../../../shared/types'
-import { ClipInst, clipLen } from '../timeline/model'
-import { formatRulerLabel } from './Timeline'
+import { ClipInst, clipLen, formatRulerLabel } from '../timeline/model'
 
 const COLORS = [
   '#4da3ff',
