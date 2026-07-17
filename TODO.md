@@ -1,10 +1,7 @@
 # TODO
 
-- [x] Clip複数選択時は、curve editorには選択中clipsのeventを全て表示する
-- [x] Timeline headerにSnapボタンを追加
-  - クリックでSnapをon/off
-  - Snap on時は、clip move, trimが他のclipの切れ目にsnapする
-- [x] Markerのラベルは中央寄せではなく、marker時刻の右側に表示する
-- [x] Track選択可能にする
-  - 複数選択可能 (Cmd+click or Shift+click)
-  - 選択clipナシ & track選択時は、curve editorにはtrack内のclipのeventを全て表示する
+- timelineが長い時 (40minなど)、timelineのzoomを最小にしても全体が表示できない。これを修正して
+- playheadの上端に、playheadのheadを描画して
+- curve editorには選択clip (or clips) のcurveが表示されるが、選択解除してもcurve editorでは表示を続けて
+  - 例: clip1を選択 -> timelineで何もないところをクリックし、clip1の選択を解除 -> curve editorにはclip1のcurveを表示しつづける
+  - その後clip2,clip3を選択したらcurve editorの表示をclip2,clip3に更新する
