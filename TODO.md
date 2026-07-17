@@ -1,11 +1,15 @@
 # TODO
 
-From full-app review (2026-07-17). Each task: Problem → Failure → Fix → Test.
-Tasks marked **TDD** go red-green: write the failing test first, then fix.
-File refs are `osc-editor/src/...` unless prefixed `osc-tap/`.
-
-## Low
-
-- [ ] Clip JSONL drops OSC type tags — record them in osc-tap and use them in
-  `main/osc.ts`. NOT preview-only: exported session.jsonl inherits the loss,
-  and TD-side replay scripts must guess too. See `docs/tasks/schema/task.md`.
+- repo名を `VTR` に統一
+  - desc: `VJs' Timeline Recorder`
+- File MenuにOpen Recentを追加
+- repo rootからアプリ起動するスクリプトを追加して
+  - `./run` とか？あるいはjustfileでも良いね
+- VJアプリ側からrecordのstart, stopもコントロール出来るようにしたい
+  - clock用のportでclock以外も受け取れるようにする (`/rec/start`, `/rec/stop` など？もっと良いアイデアあれば教えて)
+  - これらのイベントにclock情報も含めるようにすることで、rec開始時からsyncできそう
+- GitHub Actionsでビルド/テストしたい
+- README更新
+- TouchDesignerで使用するスクリプト/tox作成
+  - 再生用と記録用が必要？
+- osc-tapの本番相当の計測方法(現状: soakテストで 120Hz gap中央値 8.333ms / p99 8.371ms / ロス0)
