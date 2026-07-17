@@ -18,7 +18,12 @@ export function readClip(path: string): ClipData {
   let end: number | null = null
   const events: OscEvent[] = []
   for (const line of lines) {
-    const v = JSON.parse(line)
+    let v
+    try {
+      v = JSON.parse(line)
+    } catch {
+      continue // torn tail from a crash mid-append, or stray corruption
+    }
     if (v.type === 'session_start') wall = v.wall ?? null
     else if (v.type === 'session_end') end = v.t
     else events.push(v as OscEvent)
