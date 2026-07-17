@@ -1,12 +1,14 @@
 # TODO
 
-- [x] Curve Editorの縦軸はデフォルトで0.0~1.0を表示するようにしてほしい
-- [x] Curve Editorのheader右端に、x軸/y軸それぞれのzoom sliderを追加したい
-  - [x] y軸zoom時は、curve editorで縦スクロールできるようにする
-- [x] play/stop ボタンはplay/pauseに変更
-  - [x] pauseした時にpleyheadが元の位置に戻らないように変更
-- [x] timecode, transport controlをheader中央に移動
-- [x] header左端部分のレイアウトを変更
-  - [x] port設定のように2行レイアウトにする
-  - [x] osc-mtrを1行目に表示
-  - [x] timeline durationをここの2行目に移動
+- Play/Pauseボタン、RECボタンはアイコンだけにする
+  - borderもBGもlabelも不要 (hover時だけbgをハイライト)
+- "osc-mtr" の横に file メニューを追加
+  - Open (Cmd+O) を押したらFileダイアログを開き、projectファイルをロードできる
+  - Save (Cmd+S) を押したらFileダイアログを開き、projectを保存
+  - Save as (Shift+Cmd+S) で別名保存
+- アプリ起動時、デフォルトでは空のprojectを開くようにする
+  - cli引数で第一引数としてファイルパスがわたってたらprojectとして開く
+  - ファイルのパースなどに失敗したらエラーメッセージを表示しつつ空のprojectを開く
+- window titleをosc-mtrに変更
+  - projectファイルを開いているとき、window titleを "osc-mtr - project.jsonl" とかにする
+  - 未保存の変更がある時は "(edited)" みたいなsuffixをつける
