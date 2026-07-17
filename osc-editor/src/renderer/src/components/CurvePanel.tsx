@@ -161,6 +161,9 @@ export function CurvePanel({
   const [hidden, setHidden] = useState<Set<string>>(new Set())
   // Name filter: narrows the property list and the drawn curves.
   const [filter, setFilter] = useState('')
+  // Header toggles: snap point edits to the grid; show the transform box.
+  const [snap, setSnap] = useState(false)
+  const [useBox, setUseBox] = useState(true)
   // Selected properties: their curves draw thicker and win the hover tooltip.
   const [selectedProps, setSelectedProps] = useState<Set<string>>(new Set())
   const editorRef = useRef<HTMLDivElement | null>(null)
@@ -276,6 +279,18 @@ export function CurvePanel({
 
   const selKeys = useMemo(() => new Set(selectedPoints.map(selKey)), [selectedPoints])
 
+  // Snap on: dragged times/values lock onto the same grid the editor draws.
+  const snapTime = (t: number): number => {
+    if (!snap) return t
+    const step = gridStep(tRange, innerW - 2 * PAD, 50)
+    return Math.round(t / step) * step
+  }
+  const snapValue = (v: number, min: number, max: number): number => {
+    if (!snap || max <= min) return v
+    const step = gridStep(max - min, h - 2 * PAD, 18)
+    return Math.round(v / step) * step
+  }
+
   // Point drag moves every selected point by the same Δt / Δvalue (value in
   // each property's own scale). Horizontal = t (clamped to the point's own
   // clip span), vertical = value. Scales are frozen at drag start so the
@@ -324,13 +339,13 @@ export function CurvePanel({
     const dt = (dx / Math.max(innerW - 2 * PAD, 1)) * tRange
     d.last = d.targets.map(({ pt, min, max }) => {
       const c = pt.clip
-      const tl = Math.min(Math.max(pt.t + dt, c.offset), c.offset + clipLen(c))
+      const tl = Math.min(Math.max(snapTime(pt.t + dt), c.offset), c.offset + clipLen(c))
       return {
         file: c.file,
         eventIndex: pt.eventIndex,
         t: c.trimIn + (tl - c.offset),
         argIndex: pt.argIndex,
-        value: pt.v + (-dy / Math.max(h - 2 * PAD, 1)) * (max - min || 1)
+        value: snapValue(pt.v + (-dy / Math.max(h - 2 * PAD, 1)) * (max - min || 1), min, max)
       }
     })
     onPointEdit(d.last, false)
@@ -358,7 +373,7 @@ export function CurvePanel({
 
   // Bounding box of the drawn selected points (hidden/dimmed curves excluded).
   const selBox = ((): Box | null => {
-    if (selectedPoints.length < 2 || clips.length === 0) return null
+    if (!useBox || selectedPoints.length < 2 || clips.length === 0) return null
     let x0 = Infinity
     let y0 = Infinity
     let x1 = -Infinity
@@ -438,13 +453,17 @@ export function CurvePanel({
       const { nx, ny } = map(px0, py0)
       const c = pt.clip
       const t = tMin + ((nx - PAD) / Math.max(innerW - 2 * PAD, 1)) * tRange
-      const tl = Math.min(Math.max(t, c.offset), c.offset + clipLen(c))
+      const tl = Math.min(Math.max(snapTime(t), c.offset), c.offset + clipLen(c))
       return {
         file: c.file,
         eventIndex: pt.eventIndex,
         t: c.trimIn + (tl - c.offset),
         argIndex: pt.argIndex,
-        value: pt.v + (-(ny - py0) / Math.max(h - 2 * PAD, 1)) * (max - min || 1)
+        value: snapValue(
+          pt.v + (-(ny - py0) / Math.max(h - 2 * PAD, 1)) * (max - min || 1),
+          min,
+          max
+        )
       }
     })
     onPointEdit(d.last, false)
@@ -639,174 +658,208 @@ export function CurvePanel({
 
   return (
     <div className="curve-panel" style={{ height }}>
-      <div className="curve-props">
-        <input
-          className="curve-filter"
-          type="search"
-          placeholder="filter"
-          aria-label="filter properties"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-        />
-        {shown.map((p) => (
-          <div
-            className={selectedProps.has(p.key) ? 'curve-prop selected' : 'curve-prop'}
-            key={p.key}
-            onClick={(e) => selectProp(p.key, e.shiftKey)}
-          >
-            <input
-              type="checkbox"
-              checked={!hidden.has(p.key)}
-              aria-label={`toggle ${p.label}`}
-              onClick={(e) => e.stopPropagation()}
-              onChange={() => toggle(p.key)}
-            />
-            <span className="curve-swatch" style={{ background: p.color }} />
-            <span className="curve-prop-name">{p.label}</span>
-          </div>
-        ))}
-        {clips.length > 0 && curves.length === 0 && anyLoaded && (
-          <div className="curve-note">no numeric args</div>
-        )}
+      <div className="curve-header">
+        <button
+          className={snap ? 'btn small snap active' : 'btn small snap'}
+          title="snap point edits to the grid"
+          aria-pressed={snap}
+          onClick={() => setSnap((s) => !s)}
+        >
+          Snap
+        </button>
+        <button
+          className={useBox ? 'btn small snap active' : 'btn small snap'}
+          title="show a transform box around multi-selected points"
+          aria-pressed={useBox}
+          onClick={() => setUseBox((b) => !b)}
+        >
+          Box
+        </button>
       </div>
-      <div
-        className="curve-editor"
-        ref={editorRef}
-        onPointerDown={onEditorDown}
-        onPointerMove={onEditorMove}
-        onPointerUp={onEditorUp}
-        onPointerLeave={() => setMouse(null)}
-      >
-        {clips.length === 0 && <div className="curve-empty">Select a clip to see its curves.</div>}
-        {clips.length > 0 && w > 0 && (
-          <div className="curve-scroll" ref={scrollRef}>
-            <svg width={innerW} height={h}>
-              {renderGrid()}
-              {clips.length > 1 &&
-                clips.map((c) => {
-                  const cx0 = x(c.offset)
-                  const cw = Math.max(x(c.offset + clipLen(c)) - cx0, 1)
-                  return (
-                    // Faint span per clip so curves read against their source clips.
-                    <g key={c.id} className="curve-clip-range">
-                      <rect className="curve-clip-fill" x={cx0} y={0} width={cw} height={h} />
-                      <rect className="curve-clip-bar" x={cx0} y={0} width={cw} height={3} />
+      <div className="curve-body">
+        <div className="curve-props">
+          <input
+            className="curve-filter"
+            type="search"
+            placeholder="filter"
+            aria-label="filter properties"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
+          {shown.map((p) => (
+            <div
+              className={selectedProps.has(p.key) ? 'curve-prop selected' : 'curve-prop'}
+              key={p.key}
+              onClick={(e) => selectProp(p.key, e.shiftKey)}
+            >
+              <input
+                type="checkbox"
+                checked={!hidden.has(p.key)}
+                aria-label={`toggle ${p.label}`}
+                onClick={(e) => e.stopPropagation()}
+                onChange={() => toggle(p.key)}
+              />
+              <span className="curve-swatch" style={{ background: p.color }} />
+              <span className="curve-prop-name">{p.label}</span>
+            </div>
+          ))}
+          {clips.length > 0 && curves.length === 0 && anyLoaded && (
+            <div className="curve-note">no numeric args</div>
+          )}
+        </div>
+        <div
+          className="curve-editor"
+          ref={editorRef}
+          onPointerDown={onEditorDown}
+          onPointerMove={onEditorMove}
+          onPointerUp={onEditorUp}
+          onPointerLeave={() => setMouse(null)}
+        >
+          {clips.length === 0 && (
+            <div className="curve-empty">Select a clip to see its curves.</div>
+          )}
+          {clips.length > 0 && w > 0 && (
+            <div className="curve-scroll" ref={scrollRef}>
+              <svg width={innerW} height={h}>
+                {renderGrid()}
+                {clips.length > 1 &&
+                  clips.map((c) => {
+                    const cx0 = x(c.offset)
+                    const cw = Math.max(x(c.offset + clipLen(c)) - cx0, 1)
+                    return (
+                      // Faint span per clip so curves read against their source clips.
+                      <g key={c.id} className="curve-clip-range">
+                        <rect className="curve-clip-fill" x={cx0} y={0} width={cw} height={h} />
+                        <rect className="curve-clip-bar" x={cx0} y={0} width={cw} height={3} />
+                      </g>
+                    )
+                  })}
+                {shown
+                  .filter((p) => !hidden.has(p.key))
+                  .map((p) => (
+                    <g key={p.key} data-prop={p.label} opacity={dimmed(p.key) ? 0.1 : 1}>
+                      <polyline
+                        data-prop={p.label}
+                        points={stepPoints(p)}
+                        fill="none"
+                        stroke={p.color}
+                        strokeWidth={selectedProps.has(p.key) ? 3 : 1.5}
+                      />
+                      {!dimmed(p.key) &&
+                        p.points.map((pt) => {
+                          const selected = selKeys.has(selKey(ptSel(pt)))
+                          return (
+                            <circle
+                              key={`${pt.clip.id}:${pt.eventIndex}:${pt.argIndex}`}
+                              className={selected ? 'curve-point selected' : 'curve-point'}
+                              cx={x(pt.t)}
+                              cy={y(p, pt.v)}
+                              r={selected ? 5 : 3}
+                              fill={p.color}
+                              stroke={selected ? '#fff' : 'none'}
+                              strokeWidth={selected ? 1.5 : 0}
+                              onPointerDown={(e) => onPointDown(e, pt)}
+                              onPointerMove={onPointMove}
+                              onPointerUp={onPointUp}
+                            />
+                          )
+                        })}
                     </g>
-                  )
-                })}
-              {shown
-                .filter((p) => !hidden.has(p.key))
-                .map((p) => (
-                  <g key={p.key} data-prop={p.label} opacity={dimmed(p.key) ? 0.1 : 1}>
-                    <polyline
-                      data-prop={p.label}
-                      points={stepPoints(p)}
-                      fill="none"
-                      stroke={p.color}
-                      strokeWidth={selectedProps.has(p.key) ? 3 : 1.5}
+                  ))}
+                {selBox && (
+                  <g className="curve-xform">
+                    <rect
+                      className="curve-xform-box"
+                      x={selBox.x}
+                      y={selBox.y}
+                      width={selBox.w}
+                      height={selBox.h}
                     />
-                    {!dimmed(p.key) &&
-                      p.points.map((pt) => {
-                        const selected = selKeys.has(selKey(ptSel(pt)))
-                        return (
-                          <circle
-                            key={`${pt.clip.id}:${pt.eventIndex}:${pt.argIndex}`}
-                            className={selected ? 'curve-point selected' : 'curve-point'}
-                            cx={x(pt.t)}
-                            cy={y(p, pt.v)}
-                            r={selected ? 5 : 3}
-                            fill={p.color}
-                            stroke={selected ? '#fff' : 'none'}
-                            strokeWidth={selected ? 1.5 : 0}
-                            onPointerDown={(e) => onPointDown(e, pt)}
-                            onPointerMove={onPointMove}
-                            onPointerUp={onPointUp}
-                          />
-                        )
-                      })}
+                    {(
+                      [
+                        { mode: 'left', x: selBox.x - 3, y: selBox.y, w: 6, h: selBox.h },
+                        {
+                          mode: 'right',
+                          x: selBox.x + selBox.w - 3,
+                          y: selBox.y,
+                          w: 6,
+                          h: selBox.h
+                        },
+                        { mode: 'top', x: selBox.x, y: selBox.y - 3, w: selBox.w, h: 6 },
+                        {
+                          mode: 'bottom',
+                          x: selBox.x,
+                          y: selBox.y + selBox.h - 3,
+                          w: selBox.w,
+                          h: 6
+                        }
+                      ] as const
+                    ).map((s) => (
+                      <rect
+                        key={s.mode}
+                        className={`curve-xform-edge ${s.mode}`}
+                        x={s.x}
+                        y={s.y}
+                        width={s.w}
+                        height={s.h}
+                        onPointerDown={(e) => onEdgeDown(e, s.mode)}
+                      />
+                    ))}
+                    {(
+                      [
+                        { k: 'l', x: selBox.x, y: selBox.y + selBox.h / 2 },
+                        { k: 'r', x: selBox.x + selBox.w, y: selBox.y + selBox.h / 2 },
+                        { k: 't', x: selBox.x + selBox.w / 2, y: selBox.y },
+                        { k: 'b', x: selBox.x + selBox.w / 2, y: selBox.y + selBox.h }
+                      ] as const
+                    ).map((s) => (
+                      <rect
+                        key={s.k}
+                        className="curve-xform-handle"
+                        x={s.x - 3}
+                        y={s.y - 3}
+                        width={6}
+                        height={6}
+                      />
+                    ))}
                   </g>
-                ))}
-              {selBox && (
-                <g className="curve-xform">
+                )}
+                {hoverInfo && (
+                  <text
+                    className="curve-tooltip"
+                    x={hoverInfo.px + 8}
+                    y={hoverInfo.py - 8}
+                    textAnchor={hoverInfo.px > innerW - 120 ? 'end' : 'start'}
+                  >
+                    {hoverInfo.text}
+                  </text>
+                )}
+                {marqueeRect && (
                   <rect
-                    className="curve-xform-box"
-                    x={selBox.x}
-                    y={selBox.y}
-                    width={selBox.w}
-                    height={selBox.h}
+                    className="curve-marquee"
+                    x={marqueeRect.x}
+                    y={marqueeRect.y}
+                    width={marqueeRect.w}
+                    height={marqueeRect.h}
                   />
-                  {(
-                    [
-                      { mode: 'left', x: selBox.x - 3, y: selBox.y, w: 6, h: selBox.h },
-                      { mode: 'right', x: selBox.x + selBox.w - 3, y: selBox.y, w: 6, h: selBox.h },
-                      { mode: 'top', x: selBox.x, y: selBox.y - 3, w: selBox.w, h: 6 },
-                      { mode: 'bottom', x: selBox.x, y: selBox.y + selBox.h - 3, w: selBox.w, h: 6 }
-                    ] as const
-                  ).map((s) => (
-                    <rect
-                      key={s.mode}
-                      className={`curve-xform-edge ${s.mode}`}
-                      x={s.x}
-                      y={s.y}
-                      width={s.w}
-                      height={s.h}
-                      onPointerDown={(e) => onEdgeDown(e, s.mode)}
-                    />
-                  ))}
-                  {(
-                    [
-                      { k: 'l', x: selBox.x, y: selBox.y + selBox.h / 2 },
-                      { k: 'r', x: selBox.x + selBox.w, y: selBox.y + selBox.h / 2 },
-                      { k: 't', x: selBox.x + selBox.w / 2, y: selBox.y },
-                      { k: 'b', x: selBox.x + selBox.w / 2, y: selBox.y + selBox.h }
-                    ] as const
-                  ).map((s) => (
-                    <rect
-                      key={s.k}
-                      className="curve-xform-handle"
-                      x={s.x - 3}
-                      y={s.y - 3}
-                      width={6}
-                      height={6}
-                    />
-                  ))}
-                </g>
-              )}
-              {hoverInfo && (
-                <text
-                  className="curve-tooltip"
-                  x={hoverInfo.px + 8}
-                  y={hoverInfo.py - 8}
-                  textAnchor={hoverInfo.px > innerW - 120 ? 'end' : 'start'}
+                )}
+              </svg>
+            </div>
+          )}
+          {clips.length > 0 && w > 0 && yGrid.length > 0 && (
+            <div className="curve-ylabels">
+              {yGrid.map(({ py, label }, i) => (
+                <span
+                  key={i}
+                  className="curve-grid-label"
+                  style={{ top: py, color: gridProp?.color }}
                 >
-                  {hoverInfo.text}
-                </text>
-              )}
-              {marqueeRect && (
-                <rect
-                  className="curve-marquee"
-                  x={marqueeRect.x}
-                  y={marqueeRect.y}
-                  width={marqueeRect.w}
-                  height={marqueeRect.h}
-                />
-              )}
-            </svg>
-          </div>
-        )}
-        {clips.length > 0 && w > 0 && yGrid.length > 0 && (
-          <div className="curve-ylabels">
-            {yGrid.map(({ py, label }, i) => (
-              <span
-                key={i}
-                className="curve-grid-label"
-                style={{ top: py, color: gridProp?.color }}
-              >
-                {label}
-              </span>
-            ))}
-          </div>
-        )}
+                  {label}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )

@@ -554,6 +554,92 @@ test('curve panel: transform box moves and scales the selected points', async ()
   }
 })
 
+test('curve header: snap locks drags to the grid, Box toggles the transform box', async () => {
+  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  writeFileSync(
+    join(workdir, CLIP),
+    jsonl([
+      { type: 'session_start', t: 0, wall: '2026-07-16T00:00:00Z' },
+      { t: 0.2, port: LISTEN_PORT, a: '/fader', args: [0.2] },
+      { t: 0.8, port: LISTEN_PORT, a: '/fader', args: [0.5] },
+      { t: 1.4, port: LISTEN_PORT, a: '/fader', args: [0.8] },
+      { type: 'session_end', t: 3 }
+    ])
+  )
+  writeFileSync(
+    join(workdir, 'project.json'),
+    JSON.stringify({
+      version: 1,
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT, beacon: BEACON_PORT },
+      duration: 10,
+      tracks: [{ clips: [{ file: CLIP, offset: 0, trimIn: 0, trimOut: 3 }] }]
+    })
+  )
+
+  const app = await electron.launch({
+    args: [join(__dirname, '../out/main/index.js')],
+    cwd: workdir,
+    env: {
+      ...process.env,
+      OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
+      OSC_EDITOR_HIDDEN: '1'
+    }
+  })
+  try {
+    const page = await app.firstWindow()
+    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await page.locator('.clip').click()
+    await expect(page.locator('circle')).toHaveCount(3)
+
+    // Snap on: a free drag of the middle point lands on the grid
+    // (0.2s time step, 0.1 value step at this scale).
+    const snapBtn = page.locator('.curve-header').getByRole('button', { name: 'Snap' })
+    await snapBtn.click()
+    await expect(snapBtn).toHaveAttribute('aria-pressed', 'true')
+    const mid = (await page.locator('circle').nth(1).boundingBox())!
+    await page.mouse.move(mid.x + mid.width / 2, mid.y + mid.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(mid.x + mid.width / 2 + 50, mid.y + mid.height / 2 - 20, { steps: 5 })
+    await page.mouse.up()
+
+    const sidecar = join(workdir, `${CLIP}.edits.json`)
+    await expect
+      .poll(() => {
+        try {
+          return JSON.parse(readFileSync(sidecar, 'utf8')).set?.['1'] ?? null
+        } catch {
+          return null
+        }
+      })
+      .not.toBeNull()
+    const set1 = JSON.parse(readFileSync(sidecar, 'utf8')).set['1']
+    expect(set1.t).toBeCloseTo(1.0, 5)
+    expect(set1.args['0']).toBeCloseTo(0.6, 5)
+
+    // Box off: multi-selecting no longer shows the transform box.
+    const editor = (await page.locator('.curve-editor').boundingBox())!
+    await page.mouse.move(editor.x + 4, editor.y + 4)
+    await page.mouse.down()
+    await page.mouse.move(editor.x + editor.width - 4, editor.y + editor.height - 4, { steps: 5 })
+    await page.mouse.up()
+    await expect(page.locator('circle.selected')).toHaveCount(3)
+    await expect(page.locator('.curve-xform-box')).toHaveCount(1)
+
+    const boxBtn = page.locator('.curve-header').getByRole('button', { name: 'Box' })
+    await boxBtn.click()
+    await expect(boxBtn).toHaveAttribute('aria-pressed', 'false')
+    await expect(page.locator('.curve-xform-box')).toHaveCount(0)
+    // The selection itself survives the toggle.
+    await expect(page.locator('circle.selected')).toHaveCount(3)
+
+    // Back on: the box returns around the still-selected points.
+    await boxBtn.click()
+    await expect(page.locator('.curve-xform-box')).toHaveCount(1)
+  } finally {
+    await app.close()
+  }
+})
+
 test('curve panel: marquee selects multiple points, group drag and delete', async () => {
   const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
   writeFileSync(

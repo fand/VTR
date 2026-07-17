@@ -76,17 +76,16 @@ test("snap toggle: clip move and trim snap to other clips' edges", async () => {
     expect(await left(1)).toBeCloseTo(45, 0)
 
     // Snap on: the same 5px gap locks B's head onto A's tail (2s → 40px).
-    await page.getByRole('button', { name: 'Snap' }).click()
-    await expect(page.getByRole('button', { name: 'Snap' })).toHaveAttribute('aria-pressed', 'true')
+    // Scoped to the timeline header: the curve editor has its own Snap button.
+    const snapBtn = page.locator('.tl-header').getByRole('button', { name: 'Snap' })
+    await snapBtn.click()
+    await expect(snapBtn).toHaveAttribute('aria-pressed', 'true')
     await dragClipB(-4)
     expect(await left(1)).toBe(40)
 
     // Toggle off: the same near-miss drag no longer snaps.
-    await page.getByRole('button', { name: 'Snap' }).click()
-    await expect(page.getByRole('button', { name: 'Snap' })).toHaveAttribute(
-      'aria-pressed',
-      'false'
-    )
+    await snapBtn.click()
+    await expect(snapBtn).toHaveAttribute('aria-pressed', 'false')
     await dragClipB(35)
     expect(await left(1)).toBeCloseTo(75, 0)
   } finally {

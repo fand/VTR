@@ -555,8 +555,24 @@ body {
 
 .curve-panel {
   display: flex;
+  flex-direction: column;
   height: 220px;
   flex: 0 0 auto;
+}
+
+.curve-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+}
+
+.curve-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
 }
 
 .curve-props {
