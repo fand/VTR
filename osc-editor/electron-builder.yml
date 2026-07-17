@@ -1,4 +1,5 @@
-appId: com.electron.app
+# Must match the AppUserModelId set in src/main/index.ts (Windows taskbar grouping).
+appId: com.osc-mtr.editor
 productName: osc-editor
 directories:
   buildResources: build
@@ -48,6 +49,5 @@ linux:
 appImage:
   artifactName: ${name}-${version}.${ext}
 npmRebuild: false
-publish:
-  provider: generic
-  url: https://example.com/auto-updates
+# No `publish` block: there is no updater yet, and the template URL was a
+# dead placeholder. Add one when an update server exists.
