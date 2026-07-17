@@ -16,13 +16,16 @@ cargo test --release -- --ignored   # 120Hz soak
 # editor (spawns tap from ../osc-tap/target)
 cd osc-editor
 npm install
-npm run dev                   # workdir = cwd
+npm run dev                   # optionally: -- path/to/project.oscproj
 npm run test:e2e              # playwright e2e
 RUN_LAUNCHD=1 npx playwright test e2e/launchd.spec.ts   # launchd agent test
 ```
 
-The editor uses its cwd as the working directory: clips (`clip-*.jsonl`),
-`project.json`, and `session.jsonl` all live there.
+Projects are `.oscproj` bundle dirs (`project.json` + `clips/*.jsonl`).
+Recordings go into the open project's `clips/`; untitled recordings stage in
+userData (`~/Library/Application Support/osc-editor/recordings/`) and move
+into the bundle on save. The control socket and undo log live in userData
+too — the editor writes nothing to its cwd.
 
 osc-tap runs as a child process in dev. Packaged builds on macOS run it as a
 launchd user agent (`com.osc-mtr.osc-tap`): crash → auto-restart, editor quit →

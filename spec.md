@@ -68,8 +68,11 @@ TouchOSC ──► osc-tap (:10010) ──生UDP──► TD (:10011)
   - clipは手動でmove/trim/削除が可能
 - 自動align: 任意のタイミングで実行できるコマンド。`tl` を持つclipをTDタイムライン上の位置に配置する。`tl` の無いclipは対象外
 - プレビュー: timelineに沿ってeditorがOSCをTDへリアルタイム送信し、編集結果を確認する(最終レンダーには使わない)
-- プロジェクト(track/clip配置)はJSONで保存し、editor起動時にロードする
-- 作業ディレクトリ = CLI起動時のcwd。clip.jsonl、プロジェクトJSON、session.jsonl はここに置く
+- プロジェクトは `.oscproj` バンドルディレクトリ(`project.json` + `clips/*.jsonl`)。CLI引数か File > Open でロードする(旧来のフラットな project.json も開ける)
+- 録音先: プロジェクトを開いていれば `<bundle>/clips/` に直接、未保存(untitled)なら userData(`~/Library/Application Support/osc-editor/recordings/`)に staging。保存時に staging の参照clipをバンドルへ収集(move)する
+- clipのファイル名は常にベア名で参照し、`<bundle>/clips/` → `<bundle>直下` → staging の順に解決する(edits/undoがファイル名参照のためrenameしない)
+- タイムラインから消したclipもバンドル内に残す(再起動をまたぐundoが壊れるため自動削除しない)
+- control socket / undo.jsonl も userData に置く。cwd には何も書かない。session.jsonl のデフォルト書き出し先はバンドルの親ディレクトリ
 
 ## ログ形式(JSONL)— アプリ↔TD の契約
 

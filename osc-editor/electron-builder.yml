@@ -11,6 +11,12 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 asarUnpack:
   - resources/**
+fileAssociations:
+  - ext: oscproj
+    name: osc-mtr Project
+    role: Editor
+    # .oscproj is a directory bundle; Finder shows it as a single file.
+    isPackage: true
 win:
   executableName: osc-editor
 nsis:
