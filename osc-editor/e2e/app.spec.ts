@@ -83,7 +83,10 @@ test('record → clip on track → drag → delete → persisted', async () => {
     await expect(clip).toHaveCount(1)
     await expect(page.locator('.clip-meta')).toContainText('15 ev')
 
+    // The new clip marks the project edited; save clears the suffix.
+    await expect.poll(() => page.title()).toBe('osc-mtr - project.json (edited)')
     await save(page)
+    await expect.poll(() => page.title()).toBe('osc-mtr - project.json')
     await expect.poll(() => readProject(workdir).tracks.length).toBe(1)
     expect(readProject(workdir).tracks[0].clips[0].offset).toBe(0)
 
@@ -168,6 +171,7 @@ test('boot: no CLI arg → empty project; broken arg → error + empty project',
   const page = await app.firstWindow()
   await expect(page.locator('.timeline-panel')).toBeVisible()
   await expect(page.locator('.track')).toHaveCount(0)
+  await expect.poll(() => page.title()).toBe('osc-mtr')
   await app.close()
 
   // Unparsable project file: error banner, still an empty usable project.
@@ -182,6 +186,7 @@ test('boot: no CLI arg → empty project; broken arg → error + empty project',
   await expect(page2.locator('.track')).toHaveCount(0)
   await page2.getByRole('button', { name: '+ Track' }).click()
   await expect(page2.locator('.track')).toHaveCount(1)
+  await expect.poll(() => page2.title()).toBe('osc-mtr (edited)')
   await app2.close()
 })
 

@@ -252,7 +252,7 @@ function App(): React.JSX.Element {
   // Current project file (null = untitled) and the last-saved snapshot.
   // Dirty = the doc's undo seq or the ports moved off that snapshot.
   const [projectFile, setProjectFile] = useState<string | null>(null)
-  const [, setSavedState] = useState<{ seq: number; ports: PortConfig }>({
+  const [savedState, setSavedState] = useState<{ seq: number; ports: PortConfig }>({
     seq: 0,
     ports: DEFAULT_PORTS
   })
@@ -386,6 +386,14 @@ function App(): React.JSX.Element {
       setError((e as Error).message)
     }
   }, [applyLoaded])
+
+  // Window title: "osc-mtr - <file> (edited)"; parts drop off when there is
+  // no open file / no unsaved change.
+  const dirty = history.seq !== savedState.seq || ports !== savedState.ports
+  useEffect(() => {
+    const name = projectFile?.split(/[\\/]/).pop()
+    document.title = `osc-mtr${name ? ` - ${name}` : ''}${dirty ? ' (edited)' : ''}`
+  }, [projectFile, dirty])
 
   // File menu actions + a keydown fallback for synthetic input (e2e), same
   // pattern as undo/redo below.
