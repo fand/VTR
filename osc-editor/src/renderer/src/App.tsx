@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
   DEFAULT_DURATION,
   DEFAULT_PORTS,
+  type OscEvent,
   type PortConfig,
   type TapStatus
 } from '../../shared/types'
@@ -653,6 +654,17 @@ function App(): React.JSX.Element {
     [commit, transient]
   )
 
+  // A new point appends to the clip's edit overlay and becomes the selection.
+  const onPointAdd = useCallback(
+    (sel: PointSel, ev: OscEvent) => {
+      commit('add point', (d) => {
+        ;((d.edits[sel.file] ??= {}).add ??= []).push(ev)
+      })
+      setSelectedPoints([sel])
+    },
+    [commit]
+  )
+
   const deleteSelectedPoints = useCallback(() => {
     if (selectedPoints.length === 0) return
     commit('delete points', (d) => {
@@ -962,6 +974,7 @@ function App(): React.JSX.Element {
         selectedPoints={selectedPoints}
         onSelectPoints={setSelectedPoints}
         onPointEdit={onPointEdit}
+        onPointAdd={onPointAdd}
       />
 
       <div className="tl-toolbar">

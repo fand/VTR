@@ -4,7 +4,8 @@ export function editsEmpty(edits?: ClipEdits): boolean {
   return (
     !edits ||
     ((!edits.set || Object.keys(edits.set).length === 0) &&
-      (!edits.del || Object.keys(edits.del).length === 0))
+      (!edits.del || Object.keys(edits.del).length === 0) &&
+      (!edits.add || edits.add.length === 0))
   )
 }
 
@@ -20,14 +21,17 @@ export interface IndexedEvent {
  */
 export function applyEditsIndexed(events: OscEvent[], edits?: ClipEdits): IndexedEvent[] {
   const out: IndexedEvent[] = []
-  for (let i = 0; i < events.length; i++) {
+  // Added events take the keys past the original count (add is append-only),
+  // so set/del apply to them the same way.
+  const all = edits?.add && edits.add.length > 0 ? [...events, ...edits.add] : events
+  for (let i = 0; i < all.length; i++) {
     if (edits?.del?.[i]) continue
     const patch = edits?.set?.[i]
     if (!patch) {
-      out.push({ ev: events[i], idx: i })
+      out.push({ ev: all[i], idx: i })
       continue
     }
-    const e = { ...events[i] }
+    const e = { ...all[i] }
     if (patch.t != null) e.t = patch.t
     if (patch.args) {
       const args = [...e.args]

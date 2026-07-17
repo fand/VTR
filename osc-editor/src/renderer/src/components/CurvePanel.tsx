@@ -48,6 +48,8 @@ interface CurvePoint {
   argIndex: number
   /** The clip instance this point came from (drives clamping + patches). */
   clip: ClipInst
+  /** The edited event itself (template for added points). */
+  ev: OscEvent
 }
 
 interface Property {
@@ -75,7 +77,14 @@ function buildProperties(
         const key = `${ev.a} ${argIndex}`
         let pts = byKey.get(key)
         if (!pts) byKey.set(key, (pts = []))
-        pts.push({ t: clip.offset + (ev.t - clip.trimIn), v: arg, eventIndex: idx, argIndex, clip })
+        pts.push({
+          t: clip.offset + (ev.t - clip.trimIn),
+          v: arg,
+          eventIndex: idx,
+          argIndex,
+          clip,
+          ev
+        })
       })
     }
   }
@@ -143,7 +152,8 @@ export function CurvePanel({
   height,
   selectedPoints,
   onSelectPoints,
-  onPointEdit
+  onPointEdit,
+  onPointAdd
 }: {
   /** Every clip whose events are shown; empty shows the placeholder. */
   clips: ClipInst[]
@@ -154,6 +164,8 @@ export function CurvePanel({
   onSelectPoints: (pts: PointSel[]) => void
   /** Streams transient patches while dragging; isCommit on release. */
   onPointEdit: (patches: PointPatch[], isCommit: boolean) => void
+  /** Appends ev to the clip's edit overlay; sel is the new point's identity. */
+  onPointAdd: (sel: PointSel, ev: OscEvent) => void
 }): React.JSX.Element {
   // Events per clip path; the cache never goes stale (files are immutable).
   const [loaded, setLoaded] = useState<Map<string, OscEvent[]>>(new Map())
@@ -525,12 +537,45 @@ export function CurvePanel({
   } | null>(null)
 
   /** Pointer position in svg coordinates (x follows the horizontal scroll). */
-  const svgPos = (e: React.PointerEvent): { x: number; y: number } => {
+  const svgPos = (e: { clientX: number; clientY: number }): { x: number; y: number } => {
     const rect = editorRef.current!.getBoundingClientRect()
     return {
       x: e.clientX - rect.left + (scrollRef.current?.scrollLeft ?? 0),
       y: e.clientY - rect.top
     }
+  }
+
+  // Insert a point on p at the clicked position. The nearest existing point
+  // supplies the event template (clip, port, other args); t is clamped to
+  // that clip's span. The new event appends to the clip's edit overlay.
+  const addPointAt = (p: Property, pos: { x: number; y: number }): void => {
+    if (p.points.length === 0) return
+    const t = snapTime(tMin + ((pos.x - PAD) / Math.max(innerW - 2 * PAD, 1)) * tRange)
+    const v = snapValue(
+      p.max === p.min
+        ? p.min
+        : p.min + (1 - (pos.y - PAD) / Math.max(h - 2 * PAD, 1)) * (p.max - p.min),
+      p.min,
+      p.max
+    )
+    let tpl = p.points[0]
+    for (const pt of p.points) {
+      if (Math.abs(pt.t - t) < Math.abs(tpl.t - t)) tpl = pt
+    }
+    const c = tpl.clip
+    const events = loaded.get(c.path)
+    if (!events) return
+    const tl = Math.min(Math.max(t, c.offset), c.offset + clipLen(c))
+    const args = [...tpl.ev.args]
+    args[tpl.argIndex] = v
+    onPointAdd(
+      {
+        file: c.file,
+        eventIndex: events.length + (edits[c.file]?.add?.length ?? 0),
+        argIndex: tpl.argIndex
+      },
+      { t: c.trimIn + (tl - c.offset), port: tpl.ev.port, a: tpl.ev.a, args }
+    )
   }
 
   const onEditorDown = (e: React.PointerEvent<HTMLDivElement>): void => {
@@ -745,6 +790,27 @@ export function CurvePanel({
                         stroke={p.color}
                         strokeWidth={selectedProps.has(p.key) ? 3 : 1.5}
                       />
+                      {!dimmed(p.key) && (
+                        // Fat invisible twin of the curve (a path, so tests
+                        // counting polylines see one per curve): double-click
+                        // or cmd+click on the line inserts a point there.
+                        <path
+                          className="curve-hit"
+                          d={`M ${stepPoints(p).replace(' ', ' L ')}`}
+                          fill="none"
+                          stroke="transparent"
+                          strokeWidth={10}
+                          onDoubleClick={(e) => addPointAt(p, svgPos(e))}
+                          onPointerDown={(e) => {
+                            if (e.button !== 0) return
+                            // Keep the editor's marquee (and its pointer
+                            // capture, which would swallow the dblclick)
+                            // out of clicks that land on the curve.
+                            e.stopPropagation()
+                            if (e.metaKey || e.ctrlKey) addPointAt(p, svgPos(e))
+                          }}
+                        />
+                      )}
                       {!dimmed(p.key) &&
                         p.points.map((pt) => {
                           const selected = selKeys.has(selKey(ptSel(pt)))

@@ -57,6 +57,11 @@ export interface ClipEdits {
   set?: Record<number, { t?: number; args?: Record<number, number> }>
   /** eventIndex → deleted. Wins over set. */
   del?: Record<number, true>
+  /**
+   * Events added by the editor (clip-local t). Append-only: their edit keys
+   * start at the original event count and never shift.
+   */
+  add?: OscEvent[]
 }
 
 /** Structural mirror of immer's Patch (kept immer-free for the main process). */

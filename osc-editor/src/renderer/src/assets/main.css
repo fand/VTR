@@ -667,6 +667,13 @@ body {
   touch-action: none;
 }
 
+/* Invisible fat stroke over each curve; clicks on it insert points. */
+.curve-hit {
+  pointer-events: stroke;
+  cursor: copy;
+  touch-action: none;
+}
+
 .curve-tooltip {
   font-family: var(--mono);
   font-size: 10px;
