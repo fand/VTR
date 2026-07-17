@@ -519,14 +519,15 @@ export function Timeline({
   const applyMarkerDrag = (e: React.PointerEvent, commit: boolean): void => {
     const d = markerDrag.current
     if (!d) return
-    const time = Math.max(0, d.origTime + (e.clientX - d.startX) / pxPerSec)
+    // Clamp to the timeline so the marker can't push the playhead past end.
+    const time = Math.min(Math.max(d.origTime + (e.clientX - d.startX) / pxPerSec, 0), end)
     onMarkersChange(
       markers.map((m) => (m.id === d.id ? { ...m, time } : m)),
       commit
     )
     // The playhead tracks the marker's own time, not the cursor (the grab
     // point sits somewhere inside the flag).
-    onSeek(time)
+    clampSeek(time)
   }
 
   useEffect(() => {
