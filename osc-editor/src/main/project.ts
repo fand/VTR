@@ -75,11 +75,37 @@ export function readProjectPorts(projectPath: string): PortConfig | undefined {
   }
 }
 
+/** version check + minimal shape check: fail with a clear message instead of
+ *  exploding deep in the renderer on a v2 or hand-mangled file. */
+function validateProject(raw: unknown): ProjectFile {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new Error('project.json is not an object')
+  }
+  const p = raw as Partial<ProjectFile>
+  if (p.version !== 1) {
+    throw new Error(`unsupported project version ${JSON.stringify(p.version)} (expected 1)`)
+  }
+  if (!Array.isArray(p.tracks)) {
+    throw new Error('project.json: "tracks" must be an array')
+  }
+  for (const t of p.tracks) {
+    if (typeof t !== 'object' || t === null || !Array.isArray(t.clips)) {
+      throw new Error('project.json: each track needs a "clips" array')
+    }
+    for (const c of t.clips) {
+      if (typeof c !== 'object' || c === null || typeof c.file !== 'string') {
+        throw new Error('project.json: each clip needs a string "file"')
+      }
+    }
+  }
+  return p as ProjectFile
+}
+
 /** Clip files and edit sidecars resolve via resolveClipPath. */
 export function loadProject(projectPath: string, stagingDir: string): LoadedProject | null {
   if (!existsSync(projectPath)) return null
   const dir = dirname(projectPath)
-  const project = JSON.parse(readFileSync(projectPath, 'utf8')) as ProjectFile
+  const project = validateProject(JSON.parse(readFileSync(projectPath, 'utf8')))
   const missing: string[] = []
   const edits: Record<string, ClipEdits> = {}
   const tracks = project.tracks.map((track) => ({

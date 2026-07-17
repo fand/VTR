@@ -55,3 +55,31 @@ test('valid sidecar still loads', () => {
   const loaded = loadProject(projectPath, staging)!
   expect(loaded.edits['a.jsonl']).toEqual({ set: { 0: { args: [9] } } })
 })
+
+test('version/shape check: clear errors instead of deep renderer explosions', () => {
+  const { dir, staging, projectPath } = makeBundle()
+  const load = (): unknown => loadProject(projectPath, staging)
+
+  writeFileSync(projectPath, JSON.stringify({ version: 2, tracks: [] }))
+  expect(load).toThrow(/unsupported project version 2/)
+
+  writeFileSync(projectPath, JSON.stringify({ version: 1, tracks: {} }))
+  expect(load).toThrow(/"tracks" must be an array/)
+
+  writeFileSync(projectPath, JSON.stringify({ version: 1, tracks: [{ clips: [{ offset: 0 }] }] }))
+  expect(load).toThrow(/string "file"/)
+
+  writeFileSync(projectPath, JSON.stringify({ tracks: [] }))
+  expect(load).toThrow(/unsupported project version undefined/)
+
+  // The valid bundle still loads.
+  writeFileSync(
+    projectPath,
+    JSON.stringify({
+      version: 1,
+      tracks: [{ clips: [{ file: 'a.jsonl', offset: 0, trimIn: 0, trimOut: 2 }] }]
+    })
+  )
+  expect(loadProject(projectPath, staging)!.tracks[0].clips[0].file).toBe('a.jsonl')
+  void dir
+})
