@@ -294,6 +294,68 @@ test('curve panel: selecting a property dims other curves and hides their points
   }
 })
 
+test('curve panel: clicking a curve line selects its property', async () => {
+  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  writeFileSync(
+    join(workdir, CLIP),
+    jsonl([
+      { type: 'session_start', t: 0, wall: '2026-07-16T00:00:00Z' },
+      { t: 0.2, port: LISTEN_PORT, a: '/fader', args: [0.1] },
+      { t: 0.5, port: LISTEN_PORT, a: '/xy', args: [0.1, 0.2] },
+      { t: 0.8, port: LISTEN_PORT, a: '/fader', args: [0.5] },
+      { t: 1.4, port: LISTEN_PORT, a: '/fader', args: [0.9] },
+      { type: 'session_end', t: 2 }
+    ])
+  )
+  writeFileSync(
+    join(workdir, 'project.json'),
+    JSON.stringify({
+      version: 1,
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT, beacon: BEACON_PORT },
+      duration: 10,
+      tracks: [{ clips: [{ file: CLIP, offset: 0, trimIn: 0, trimOut: 2 }] }]
+    })
+  )
+
+  const app = await electron.launch({
+    args: [join(__dirname, '../out/main/index.js')],
+    cwd: workdir,
+    env: {
+      ...process.env,
+      OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
+      OSC_EDITOR_HIDDEN: '1'
+    }
+  })
+  try {
+    const page = await app.firstWindow()
+    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await page.locator('.clip').click()
+    // 3 fader + 2 xy points.
+    await expect(page.locator('circle')).toHaveCount(5)
+
+    // Click the flat /fader segment between its first two points (step-after:
+    // it sits at the first point's value) — away from any point circle.
+    const faderPoints = page.locator('g[data-prop="/fader"] circle')
+    const b0 = (await faderPoints.nth(0).boundingBox())!
+    const b1 = (await faderPoints.nth(1).boundingBox())!
+    const midX = (b0.x + b1.x) / 2 + b0.width / 2
+    const midY = b0.y + b0.height / 2
+    await page.mouse.click(midX, midY)
+
+    // /fader is selected: its row highlights, other curves dim and lose points.
+    await expect(page.locator('.curve-prop.selected')).toHaveText(/\/fader/)
+    expect(await page.locator('g[data-prop="/xy[0]"]').getAttribute('opacity')).toBe('0.1')
+    await expect(page.locator('circle')).toHaveCount(3)
+
+    // Clicking the selected curve again deselects it.
+    await page.mouse.click(midX, midY)
+    await expect(page.locator('.curve-prop.selected')).toHaveCount(0)
+    await expect(page.locator('circle')).toHaveCount(5)
+  } finally {
+    await app.close()
+  }
+})
+
 test('curve panel: multi-select shows every selected clip, timeline time axis', async () => {
   const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
   writeFileSync(

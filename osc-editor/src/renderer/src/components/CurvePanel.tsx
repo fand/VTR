@@ -837,6 +837,10 @@ export function CurvePanel({
                                 ) ?? p,
                                 svgPos(e)
                               )
+                            } else {
+                              // Plain click on the line selects the property,
+                              // same as clicking its list row.
+                              selectProp(p.key, e.shiftKey)
                             }
                           }}
                         />
