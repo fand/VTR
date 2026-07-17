@@ -11,4 +11,7 @@ pub struct Config {
     pub beacon: SocketAddr,
     /// Directory clip files are written to.
     pub outdir: PathBuf,
+    /// Omit `tl` when the last beacon is older than this (seconds). A stale
+    /// extrapolation looks plausible but poisons the editor's auto-align.
+    pub beacon_max_age_s: f64,
 }

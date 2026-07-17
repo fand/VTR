@@ -41,6 +41,7 @@ fn main() -> anyhow::Result<()> {
         forward: cli.forward,
         beacon: SocketAddr::from(([0, 0, 0, 0], cli.beacon)),
         outdir: cli.outdir,
+        beacon_max_age_s: 5.0,
     };
     if cli.exit_on_stdin_close {
         std::thread::spawn(|| {

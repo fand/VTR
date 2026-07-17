@@ -17,6 +17,7 @@ fn start_tap(outdir: &std::path::Path) -> (Tap, UdpSocket) {
         forward: td.local_addr().unwrap(),
         beacon: "127.0.0.1:0".parse().unwrap(),
         outdir: outdir.to_path_buf(),
+        beacon_max_age_s: 5.0,
     })
     .unwrap();
     (tap, td)
@@ -291,4 +292,73 @@ fn start_with_dir_records_into_it() {
 
     let lines = read_lines(&clip);
     assert_eq!(lines[1]["a"], "/x");
+}
+
+#[test]
+fn stale_beacon_omits_tl() {
+    let tmp = tempfile::tempdir().unwrap();
+    let td = UdpSocket::bind("127.0.0.1:0").unwrap();
+    td.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    // Short cutoff so the test doesn't sleep for seconds.
+    let tap = Tap::start(Config {
+        listen: "127.0.0.1:0".parse().unwrap(),
+        forward: td.local_addr().unwrap(),
+        beacon: "127.0.0.1:0".parse().unwrap(),
+        outdir: tmp.path().to_path_buf(),
+        beacon_max_age_s: 0.3,
+    })
+    .unwrap();
+    let handle = tap.handle();
+    let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
+
+    // Playing beacon (rate 1) that then goes silent (TD quit mid-recording).
+    tx.send_to(
+        &encode_msg("/clock", vec![OscType::Float(42.0)]),
+        tap.beacon_addr,
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while handle.status().unwrap().beacon_tl.is_none() {
+        assert!(Instant::now() < deadline, "beacon not received");
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    let clip = handle.start_clip(None).unwrap();
+    // Let the beacon go stale (well past the 0.3s cutoff).
+    thread::sleep(Duration::from_millis(600));
+    tx.send_to(&encode_msg("/x", vec![OscType::Int(1)]), tap.listen_addr)
+        .unwrap();
+    wait_events(&handle, 1);
+    handle.stop_clip().unwrap();
+
+    // "omit when unknown": a stale extrapolation must not be stamped.
+    let lines = read_lines(&clip);
+    assert!(lines[1].get("tl").is_none(), "line = {}", lines[1]);
+}
+
+#[test]
+fn non_finite_beacon_is_rejected() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (tap, _td) = start_tap(tmp.path());
+    let handle = tap.handle();
+    let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
+
+    tx.send_to(
+        &encode_msg("/clock", vec![OscType::Float(f32::NAN)]),
+        tap.beacon_addr,
+    )
+    .unwrap();
+    thread::sleep(Duration::from_millis(200));
+    // The NaN beacon must not be accepted at all.
+    assert!(handle.status().unwrap().beacon_tl.is_none());
+
+    let clip = handle.start_clip(None).unwrap();
+    tx.send_to(&encode_msg("/x", vec![OscType::Int(1)]), tap.listen_addr)
+        .unwrap();
+    wait_events(&handle, 1);
+    handle.stop_clip().unwrap();
+
+    // No "tl": null artifacts either.
+    let lines = read_lines(&clip);
+    assert!(lines[1].get("tl").is_none(), "line = {}", lines[1]);
 }

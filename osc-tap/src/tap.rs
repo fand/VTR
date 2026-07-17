@@ -195,6 +195,11 @@ impl Tap {
                             continue;
                         };
                         let rate = arg_as_f64(m.args.get(1)).unwrap_or(1.0);
+                        // NaN/inf would serialize tl as null and poison
+                        // every later extrapolation; drop the beacon.
+                        if !t.is_finite() || !rate.is_finite() {
+                            continue;
+                        }
                         *beacon.lock().unwrap() = Some(Beacon { t, rate, at: now });
                     }
                 }
@@ -208,9 +213,18 @@ impl Tap {
             let dropped = dropped.clone();
             let listen_port = listen_addr.port();
             let forward_addr = config.forward;
-            thread::Builder::new()
-                .name("writer".into())
-                .spawn(move || writer_loop(rx, outdir, listen_port, forward_addr, beacon, dropped))?;
+            let beacon_max_age_s = config.beacon_max_age_s;
+            thread::Builder::new().name("writer".into()).spawn(move || {
+                writer_loop(
+                    rx,
+                    outdir,
+                    listen_port,
+                    forward_addr,
+                    beacon,
+                    dropped,
+                    beacon_max_age_s,
+                )
+            })?;
         }
 
         Ok(Tap {
@@ -239,6 +253,7 @@ fn writer_loop(
     forward_addr: SocketAddr,
     beacon: BeaconState,
     dropped: Arc<AtomicU64>,
+    beacon_max_age_s: f64,
 ) {
     let mut rec: Option<Recording> = None;
 
@@ -256,7 +271,14 @@ fn writer_loop(
                     continue;
                 };
                 let ts = round6(dt.as_secs_f64());
-                let tl = beacon.map(|b| round6(b.tl_at(t)));
+                // A beacon older than the cutoff means TD stopped talking
+                // (quit, network); its extrapolation would be plausible but
+                // wrong — omit tl per the "omit when unknown" contract. A
+                // rate-0 pause keeps beaconing, so its age stays low.
+                let tl = beacon
+                    .filter(|b| signed_secs_since(t, b.at) <= beacon_max_age_s)
+                    .map(|b| round6(b.tl_at(t)))
+                    .filter(|v| v.is_finite());
                 let mut msgs = Vec::new();
                 flatten(packet, &mut msgs);
                 for m in msgs {
