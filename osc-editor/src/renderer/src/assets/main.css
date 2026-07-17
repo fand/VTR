@@ -180,6 +180,12 @@ body {
   color: #fff;
 }
 
+.btn.snap.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
 .playhead {
   position: absolute;
   top: 0;

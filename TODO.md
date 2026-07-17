@@ -1,7 +1,7 @@
 # TODO
 
 - [x] Clip複数選択時は、curve editorには選択中clipsのeventを全て表示する
-- Timeline headerにSnapボタンを追加
+- [x] Timeline headerにSnapボタンを追加
   - クリックでSnapをon/off
   - Snap on時は、clip move, trimが他のclipの切れ目にsnapする
 - Markerのラベルは中央寄せではなく、marker時刻の右側に表示する

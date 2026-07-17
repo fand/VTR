@@ -82,6 +82,8 @@ interface TimelineProps {
 }
 
 const LABEL_W = 96
+/** Snap radius, px: clip edges closer than this lock together. */
+const SNAP_PX = 8
 
 /**
  * Double-click to edit. Enter/blur commits, Escape cancels, empty resets.
@@ -209,6 +211,8 @@ export function Timeline({
   onPxPerSecChange
 }: TimelineProps): React.JSX.Element {
   const drag = useRef<Drag | null>(null)
+  // Snap on: clip move/trim locks onto other clips' edges.
+  const [snap, setSnap] = useState(false)
   // Vertical move preview: the clips stay in their DOM parents during the
   // drag (re-parenting would kill pointer capture), shifted with translateY.
   const [dragRow, setDragRow] = useState<{ clipIds: number[]; delta: number } | null>(null)
@@ -254,6 +258,26 @@ export function Timeline({
     el.scrollLeft = LABEL_W + a.t * pxPerSec - a.viewX
   }, [pxPerSec])
 
+  /** Smallest correction that lands t on another clip's edge, or 0. */
+  const snapAdjust = (t: number, excludeIds: Set<number>): number => {
+    if (!snap) return 0
+    let best = 0
+    let bestAbs = SNAP_PX / pxPerSec
+    for (const track of tracks) {
+      for (const c of track.clips) {
+        if (excludeIds.has(c.id)) continue
+        for (const edge of [c.offset, c.offset + clipLen(c)]) {
+          const diff = edge - t
+          if (Math.abs(diff) <= bestAbs) {
+            bestAbs = Math.abs(diff)
+            best = diff
+          }
+        }
+      }
+    }
+    return best
+  }
+
   const applyDrag = (e: React.PointerEvent, commit: boolean): void => {
     const d = drag.current
     if (!d) return
@@ -265,7 +289,16 @@ export function Timeline({
       // The whole selection moves together: dx clamps so the earliest clip
       // stays at 0+, the row delta so every clip stays on an existing track.
       const minOffset = Math.min(...d.origs.map((o) => o.clip.offset))
-      const dxc = Math.max(dx, -minOffset)
+      let dxc = Math.max(dx, -minOffset)
+      // Snap the grabbed clip's edges to other clips' edges.
+      const ids = new Set(d.origs.map((o) => o.clip.id))
+      const startAdj = snapAdjust(orig.offset + dxc, ids)
+      const endAdj = snapAdjust(orig.offset + clipLen(orig) + dxc, ids)
+      const adj =
+        startAdj !== 0 && (endAdj === 0 || Math.abs(startAdj) <= Math.abs(endAdj))
+          ? startAdj
+          : endAdj
+      dxc = Math.max(dxc + adj, -minOffset)
       const minTrack = Math.min(...d.origs.map((o) => o.trackIdx))
       const maxTrack = Math.max(...d.origs.map((o) => o.trackIdx))
       const rowDelta = Math.min(
@@ -273,7 +306,6 @@ export function Timeline({
         tracks.length - 1 - maxTrack
       )
       setDragRow(commit ? null : { clipIds: d.origs.map((o) => o.clip.id), delta: rowDelta })
-      const ids = new Set(d.origs.map((o) => o.clip.id))
       // Re-parent to the target tracks only on commit.
       const next = tracks.map((track, i) => {
         const without = track.clips.filter((c) => !ids.has(c.id))
@@ -287,19 +319,22 @@ export function Timeline({
     }
 
     const updated: ClipInst = { ...orig }
+    const self = new Set([d.clipId])
     if (d.mode === 'trim-in') {
-      const delta = Math.min(
-        Math.max(dx, -Math.min(orig.trimIn, orig.offset)),
-        clipLen(orig) - MIN_CLIP_LEN
-      )
+      const lo = -Math.min(orig.trimIn, orig.offset)
+      const hi = clipLen(orig) - MIN_CLIP_LEN
+      let delta = Math.min(Math.max(dx, lo), hi)
+      delta = Math.min(Math.max(delta + snapAdjust(orig.offset + delta, self), lo), hi)
       updated.trimIn = orig.trimIn + delta
       updated.offset = orig.offset + delta
     }
     if (d.mode === 'trim-out') {
-      updated.trimOut = Math.min(
-        Math.max(orig.trimOut + dx, orig.trimIn + MIN_CLIP_LEN),
-        orig.summary.duration
-      )
+      const lo = orig.trimIn + MIN_CLIP_LEN
+      const hi = orig.summary.duration
+      let out = Math.min(Math.max(orig.trimOut + dx, lo), hi)
+      // The clip's right edge sits at offset + (trimOut - trimIn).
+      out = Math.min(Math.max(out + snapAdjust(orig.offset + (out - orig.trimIn), self), lo), hi)
+      updated.trimOut = out
     }
 
     const next = tracks.map((track) => ({
@@ -403,6 +438,14 @@ export function Timeline({
       <div className="tl-header">
         <button className="btn small" title="add marker at playhead" onClick={onAddMarker}>
           + Marker
+        </button>
+        <button
+          className={snap ? 'btn small snap active' : 'btn small snap'}
+          title="snap clip move/trim to other clips' edges"
+          aria-pressed={snap}
+          onClick={() => setSnap((s) => !s)}
+        >
+          Snap
         </button>
         <div className="spacer" />
         <button className="btn small" onClick={() => onZoom(1 / 1.5)} title="zoom out">
