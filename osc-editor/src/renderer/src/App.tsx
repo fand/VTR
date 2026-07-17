@@ -890,7 +890,11 @@ function App(): React.JSX.Element {
           Align
         </button>
         <div className="spacer" />
-        <div className="ports-group">
+        {/* Row 1: tap status + in/out ports. Row 2: clock status + clock port. */}
+        <div className="status-grid">
+          <span className={statusError ? 'chip bad' : status ? 'chip ok' : 'chip'}>
+            tap {statusError ? 'down' : status ? 'up' : '…'}
+          </span>
           <NumField
             label="in"
             ariaLabel="in port"
@@ -907,6 +911,17 @@ function App(): React.JSX.Element {
             parse={parsePort}
             onCommit={(forward) => changePorts({ ...ports, forward })}
           />
+          <span className={status?.beacon_tl != null ? 'chip ok' : 'chip'}>
+            {status?.beacon_tl != null
+              ? `clock tl=${status.beacon_tl.toFixed(2)}s` +
+                (status.beacon_rate === 0
+                  ? ' (paused)'
+                  : status.beacon_rate != null && status.beacon_rate !== 1
+                    ? ` ×${status.beacon_rate}`
+                    : '') +
+                ` (${status.beacon_age?.toFixed(1)}s ago)`
+              : 'no clock'}
+          </span>
           <NumField
             label="clock"
             ariaLabel="clock port"
@@ -915,6 +930,9 @@ function App(): React.JSX.Element {
             parse={parsePort}
             onCommit={(beacon) => changePorts({ ...ports, beacon })}
           />
+          {status != null && status.dropped > 0 && (
+            <span className="chip bad">dropped {status.dropped}</span>
+          )}
         </div>
         <button className="btn" onClick={doExport} disabled={tracks.length === 0 || !!recording}>
           Export
@@ -1003,26 +1021,6 @@ function App(): React.JSX.Element {
         />
         <span className="toolbar-unit">s</span>
       </div>
-
-      <footer className="statusbar">
-        <span className={statusError ? 'chip bad' : status ? 'chip ok' : 'chip'}>
-          tap {statusError ? 'down' : status ? 'up' : '…'}
-        </span>
-        <span className={status?.beacon_tl != null ? 'chip ok' : 'chip'}>
-          {status?.beacon_tl != null
-            ? `clock tl=${status.beacon_tl.toFixed(2)}s` +
-              (status.beacon_rate === 0
-                ? ' (paused)'
-                : status.beacon_rate != null && status.beacon_rate !== 1
-                  ? ` ×${status.beacon_rate}`
-                  : '') +
-              ` (${status.beacon_age?.toFixed(1)}s ago)`
-            : 'no clock'}
-        </span>
-        {status != null && status.dropped > 0 && (
-          <span className="chip bad">dropped {status.dropped}</span>
-        )}
-      </footer>
     </div>
   )
 }

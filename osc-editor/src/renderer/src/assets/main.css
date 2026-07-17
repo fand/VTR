@@ -133,21 +133,29 @@ body {
   touch-action: none;
 }
 
-/* Labels on top, inputs below, one column per port. */
-.ports-group {
+/* Header status area, two rows:
+   tap chip    in    [10010]  out [10011]
+   clock chip  clock [10012]  (dropped) */
+.status-grid {
   display: grid;
-  grid-auto-flow: column;
-  grid-template-rows: auto auto;
+  grid-template-columns: repeat(5, auto);
   column-gap: 8px;
-  row-gap: 2px;
+  row-gap: 4px;
+  align-items: center;
+  font-family: var(--mono);
+  font-size: 11px;
 }
 
-.ports-group .port-field {
+.status-grid .port-field {
   display: contents;
 }
 
-.ports-group .port-field input {
+.status-grid .port-field input {
   padding: 1px 6px;
+}
+
+.status-grid .chip {
+  justify-self: start;
 }
 
 .tl-toolbar {
@@ -755,16 +763,6 @@ body {
   padding: 16px;
   color: var(--text-dim);
   font-size: 12px;
-}
-
-.statusbar {
-  display: flex;
-  gap: 8px;
-  padding: 6px 12px;
-  background: var(--bg-raised);
-  border-top: 1px solid var(--border);
-  font-family: var(--mono);
-  font-size: 11px;
 }
 
 .chip {
