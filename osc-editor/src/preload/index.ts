@@ -19,7 +19,8 @@ const api = {
     setPorts: (ports: PortConfig): Promise<void> => ipcRenderer.invoke('tap:setPorts', ports)
   },
   clip: {
-    events: (path: string): Promise<OscEvent[]> => ipcRenderer.invoke('clip:events', path)
+    events: (path: string): Promise<OscEvent[]> => ipcRenderer.invoke('clip:events', path),
+    reveal: (file: string): Promise<void> => ipcRenderer.invoke('clip:reveal', file)
   },
   project: {
     /** Boot load: the workdir's project.json (if any). */

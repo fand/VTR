@@ -691,6 +691,9 @@ function App(): React.JSX.Element {
           })
           break
         }
+        case 'reveal':
+          window.api.clip.reveal(clip.file)
+          break
       }
     },
     [tracks, selectedIds, playhead, commit, newId, copyClips, pasteClips, duplicateClips]

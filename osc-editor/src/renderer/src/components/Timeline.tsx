@@ -34,7 +34,7 @@ function sliderToZoom(v: number, min: number): number {
 
 type DragMode = 'move' | 'trim-in' | 'trim-out'
 
-export type ClipAction = 'mute' | 'copy' | 'paste' | 'duplicate' | 'split'
+export type ClipAction = 'mute' | 'copy' | 'paste' | 'duplicate' | 'split' | 'reveal'
 
 interface Drag {
   mode: DragMode
@@ -804,6 +804,9 @@ export function Timeline({
                 onClick={() => menuAction('split')}
               >
                 Split at playhead
+              </button>
+              <button role="menuitem" onClick={() => menuAction('reveal')}>
+                Reveal in Finder
               </button>
             </div>
           </div>

@@ -208,6 +208,9 @@ app.whenReady().then(() => {
       return readClip(resolveClip(basename(path))).events
     }
   })
+  ipcMain.handle('clip:reveal', (_e, file: string) => {
+    shell.showItemInFolder(resolveClip(basename(file)))
+  })
   // Boot load: the CLI-arg project (if any); the default is an empty project.
   // Load/save accept a .oscproj bundle or a flat project.json path; the
   // renderer keeps the path as given (window title, save target).
