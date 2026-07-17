@@ -43,7 +43,7 @@ async function launchApp(): Promise<Launched> {
     })
   )
   const app = await electron.launch({
-    args: [join(__dirname, '../out/main/index.js')],
+    args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
     cwd: workdir,
     env: {
       ...process.env,
@@ -144,6 +144,47 @@ test('beacon → tl recorded → clip auto-aligned at record stop', async () => 
   }
 })
 
+test('boot: no CLI arg → empty project; broken arg → error + empty project', async () => {
+  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  // A project.json in the cwd is NOT auto-loaded anymore.
+  writeFileSync(
+    join(workdir, 'project.json'),
+    JSON.stringify({
+      version: 1,
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT, beacon: BEACON_PORT },
+      tracks: [{ clips: [] }]
+    })
+  )
+  const env = {
+    ...process.env,
+    OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
+    OSC_EDITOR_HIDDEN: '1'
+  }
+  const app = await electron.launch({
+    args: [join(__dirname, '../out/main/index.js')],
+    cwd: workdir,
+    env
+  })
+  const page = await app.firstWindow()
+  await expect(page.locator('.timeline-panel')).toBeVisible()
+  await expect(page.locator('.track')).toHaveCount(0)
+  await app.close()
+
+  // Unparsable project file: error banner, still an empty usable project.
+  writeFileSync(join(workdir, 'bad.json'), '{not json')
+  const app2 = await electron.launch({
+    args: [join(__dirname, '../out/main/index.js'), join(workdir, 'bad.json')],
+    cwd: workdir,
+    env
+  })
+  const page2 = await app2.firstWindow()
+  await expect(page2.locator('.error-banner')).toContainText('failed to open project')
+  await expect(page2.locator('.track')).toHaveCount(0)
+  await page2.getByRole('button', { name: '+ Track' }).click()
+  await expect(page2.locator('.track')).toHaveCount(1)
+  await app2.close()
+})
+
 test('tracks can be added and deleted without clips', async () => {
   const { app, page, workdir } = await launchApp()
   try {
@@ -162,7 +203,7 @@ test('tracks can be added and deleted without clips', async () => {
     // Empty tracks survive a relaunch.
     await app.close()
     const relaunch = await electron.launch({
-      args: [join(__dirname, '../out/main/index.js')],
+      args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
       cwd: workdir,
       env: {
         ...process.env,

@@ -1,6 +1,6 @@
 import { app, shell, BrowserWindow, Menu, dialog, ipcMain } from 'electron'
 import { existsSync, statSync } from 'fs'
-import { dirname, join } from 'path'
+import { dirname, join, resolve } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { clipSummary, readClip } from './clips'
@@ -14,6 +14,10 @@ import { DEFAULT_PORTS, type PortConfig, type ProjectFile, type UndoEntry } from
 
 // Working directory: cwd when launched from the CLI (per spec).
 const workdir = process.cwd()
+
+// First CLI arg = project file to open at boot (packaged apps have no script arg).
+const cliArg = process.argv[app.isPackaged ? 1 : 2]
+const cliProjectPath = cliArg ? resolve(workdir, cliArg) : null
 
 // Dir the current project file lives in; clip files resolve against it.
 // Defaults to the workdir until a project is opened or saved elsewhere.
@@ -145,7 +149,10 @@ app.whenReady().then(() => {
       (process.env.OSC_TAP_SPAWN as SpawnMode) ??
       (app.isPackaged && process.platform === 'darwin' ? 'launchd' : 'child')
     // Start on the project's ports right away — no restart dance at boot.
-    const ports = { ...DEFAULT_PORTS, ...readProjectPorts(join(workdir, PROJECT_FILE)) }
+    const ports = {
+      ...DEFAULT_PORTS,
+      ...(cliProjectPath ? readProjectPorts(cliProjectPath) : undefined)
+    }
     tap = new TapManager(findTapBinary(), workdir, mode, ports)
     tap.spawnTap()
   } catch (e) {
@@ -163,13 +170,13 @@ app.whenReady().then(() => {
   ipcMain.handle('app:workdir', () => workdir)
   // Raw events; the renderer applies its own (possibly newer) edit overlay.
   ipcMain.handle('clip:events', (_e, path: string) => readClip(path).events)
-  // Boot load: the workdir's project.json (if any).
+  // Boot load: the CLI-arg project (if any); the default is an empty project.
   ipcMain.handle('project:load', () => {
-    const path = join(workdir, PROJECT_FILE)
-    const project = loadProject(path)
-    if (!project) return null
-    projectDir = dirname(path)
-    return { path, project }
+    if (!cliProjectPath) return null
+    const project = loadProject(cliProjectPath)
+    if (!project) throw new Error(`project not found: ${cliProjectPath}`)
+    projectDir = dirname(cliProjectPath)
+    return { path: cliProjectPath, project }
   })
   ipcMain.handle('project:loadPath', (_e, path: string) => {
     const project = loadProject(path)

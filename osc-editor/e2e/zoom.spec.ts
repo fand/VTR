@@ -35,7 +35,7 @@ test('timeline pinch zoom (ctrl+wheel) scales around the cursor', async () => {
   )
 
   const app = await electron.launch({
-    args: [join(__dirname, '../out/main/index.js')],
+    args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
     cwd: workdir,
     env: {
       ...process.env,
@@ -132,7 +132,7 @@ test('curve editor x/y zoom sliders scale the axes; y zoom scrolls vertically', 
   )
 
   const app = await electron.launch({
-    args: [join(__dirname, '../out/main/index.js')],
+    args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
     cwd: workdir,
     env: {
       ...process.env,
@@ -190,7 +190,7 @@ test('min zoom fits a long timeline in the window', async () => {
   )
 
   const app = await electron.launch({
-    args: [join(__dirname, '../out/main/index.js')],
+    args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
     cwd: workdir,
     env: {
       ...process.env,

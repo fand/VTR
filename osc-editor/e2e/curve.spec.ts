@@ -40,7 +40,7 @@ test('curve panel: properties per address/arg, visibility toggle', async () => {
   )
 
   const app = await electron.launch({
-    args: [join(__dirname, '../out/main/index.js')],
+    args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
     cwd: workdir,
     env: {
       ...process.env,
@@ -163,7 +163,7 @@ test('curve panel: filter input narrows the property list and drawn curves', asy
   )
 
   const app = await electron.launch({
-    args: [join(__dirname, '../out/main/index.js')],
+    args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
     cwd: workdir,
     env: {
       ...process.env,
@@ -222,7 +222,7 @@ test('curve panel: property list sorted by address', async () => {
   )
 
   const app = await electron.launch({
-    args: [join(__dirname, '../out/main/index.js')],
+    args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
     cwd: workdir,
     env: {
       ...process.env,
@@ -269,7 +269,7 @@ test('curve panel: selecting a property dims other curves and hides their points
   )
 
   const app = await electron.launch({
-    args: [join(__dirname, '../out/main/index.js')],
+    args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
     cwd: workdir,
     env: {
       ...process.env,
@@ -329,7 +329,7 @@ test('curve panel: clicking a curve line selects its property', async () => {
   )
 
   const app = await electron.launch({
-    args: [join(__dirname, '../out/main/index.js')],
+    args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
     cwd: workdir,
     env: {
       ...process.env,
@@ -409,7 +409,7 @@ test('curve panel: multi-select shows every selected clip, timeline time axis', 
   )
 
   const app = await electron.launch({
-    args: [join(__dirname, '../out/main/index.js')],
+    args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
     cwd: workdir,
     env: {
       ...process.env,
@@ -474,7 +474,7 @@ test('curve panel: drag and delete points, edits persisted to sidecar', async ()
   )
 
   const app = await electron.launch({
-    args: [join(__dirname, '../out/main/index.js')],
+    args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
     cwd: workdir,
     env: {
       ...process.env,
@@ -558,7 +558,7 @@ test('curve panel: transform box moves and scales the selected points', async ()
   )
 
   const app = await electron.launch({
-    args: [join(__dirname, '../out/main/index.js')],
+    args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
     cwd: workdir,
     env: {
       ...process.env,
@@ -664,7 +664,7 @@ test('curve panel: double-click / cmd+click on a curve inserts a point', async (
   )
 
   const app = await electron.launch({
-    args: [join(__dirname, '../out/main/index.js')],
+    args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
     cwd: workdir,
     env: {
       ...process.env,
@@ -758,7 +758,7 @@ test('curve header: snap locks drags to the grid, Box toggles the transform box'
   )
 
   const app = await electron.launch({
-    args: [join(__dirname, '../out/main/index.js')],
+    args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
     cwd: workdir,
     env: {
       ...process.env,
@@ -845,7 +845,7 @@ test('curve header: pencil clicks add points to the selected curve', async () =>
   )
 
   const app = await electron.launch({
-    args: [join(__dirname, '../out/main/index.js')],
+    args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
     cwd: workdir,
     env: {
       ...process.env,
@@ -950,7 +950,7 @@ test('curve panel: marquee selects multiple points, group drag and delete', asyn
   )
 
   const app = await electron.launch({
-    args: [join(__dirname, '../out/main/index.js')],
+    args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
     cwd: workdir,
     env: {
       ...process.env,

@@ -324,16 +324,24 @@ function App(): React.JSX.Element {
     [newId, reset]
   )
 
-  // Load project.json and the undo log once at boot.
+  // Boot: open the CLI-arg project if one was given, otherwise an empty
+  // project. A broken project file reports the error and falls back to empty.
+  // The undo log only applies to the loaded project.
   const booted = useRef(false)
   useEffect(() => {
     if (booted.current) return
     booted.current = true
-    Promise.all([window.api.project.load(), window.api.undo.load()])
-      .then(([loaded, log]) => {
-        applyLoaded(loaded?.path ?? null, loaded?.project ?? null, log)
-      })
-      .catch((e: Error) => setError(e.message))
+    const boot = async (): Promise<void> => {
+      let loaded: { path: string; project: LoadedProject } | null = null
+      try {
+        loaded = await window.api.project.load()
+      } catch (e) {
+        setError(`failed to open project: ${(e as Error).message}`)
+      }
+      const log = loaded ? await window.api.undo.load() : []
+      applyLoaded(loaded?.path ?? null, loaded?.project ?? null, log)
+    }
+    boot().catch((e: Error) => setError(e.message))
   }, [applyLoaded])
 
   const saveTo = useCallback(

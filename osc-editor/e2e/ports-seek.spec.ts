@@ -36,7 +36,7 @@ async function launchApp(): Promise<{ app: ElectronApplication; page: Page; work
     })
   )
   const app = await electron.launch({
-    args: [join(__dirname, '../out/main/index.js')],
+    args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
     cwd: workdir,
     env: {
       ...process.env,

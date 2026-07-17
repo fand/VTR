@@ -43,7 +43,7 @@ test("snap toggle: clip move and trim snap to other clips' edges", async () => {
   )
 
   const app = await electron.launch({
-    args: [join(__dirname, '../out/main/index.js')],
+    args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
     cwd: workdir,
     env: {
       ...process.env,
