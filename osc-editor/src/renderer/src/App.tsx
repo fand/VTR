@@ -691,8 +691,10 @@ function App(): React.JSX.Element {
           })
           break
         }
+        // Reveal only the clicked clip, even inside a multi-selection: one
+        // Finder window, not one per selected clip.
         case 'reveal':
-          window.api.clip.reveal(clip.file)
+          window.api.clip.reveal(clip.file).catch((e) => setError((e as Error).message))
           break
       }
     },

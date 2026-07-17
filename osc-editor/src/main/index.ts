@@ -209,7 +209,9 @@ app.whenReady().then(() => {
     }
   })
   ipcMain.handle('clip:reveal', (_e, file: string) => {
-    shell.showItemInFolder(resolveClip(basename(file)))
+    const path = resolveClip(basename(file))
+    if (!existsSync(path)) throw new Error(`clip file not found: ${basename(file)}`)
+    shell.showItemInFolder(path)
   })
   // Boot load: the CLI-arg project (if any); the default is an empty project.
   // Load/save accept a .oscproj bundle or a flat project.json path; the

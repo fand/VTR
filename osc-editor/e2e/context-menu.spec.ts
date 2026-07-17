@@ -71,6 +71,18 @@ test('clip context menu: mute, copy, paste, duplicate, split at playhead', async
     await page.keyboard.press('Escape')
     await expect(page.getByRole('menuitem')).toHaveCount(0)
 
+    // Reveal in Finder: the stubbed showItemInFolder gets the resolved path.
+    await app.evaluate(({ shell }) => {
+      shell.showItemInFolder = (p: string): void => {
+        ;(globalThis as Record<string, unknown>).__revealed = p
+      }
+    })
+    await page.locator('.clip').click({ button: 'right' })
+    await page.getByRole('menuitem', { name: 'Reveal in Finder' }).click()
+    await expect
+      .poll(() => app.evaluate(() => (globalThis as Record<string, unknown>).__revealed))
+      .toBe(join(workdir, CLIP))
+
     // Mute: clip dims, export carries no events.
     await page.locator('.clip').click({ button: 'right' })
     await page.getByRole('menuitem', { name: 'Mute' }).click()
