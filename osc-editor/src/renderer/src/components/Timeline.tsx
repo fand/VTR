@@ -21,12 +21,12 @@ export const MAX_PX_PER_SEC = 400
 const TRIM_HANDLE_PX = 8
 const RULER_STEPS = [0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300]
 
-function zoomToSlider(px: number): number {
-  return (100 * Math.log(px / MIN_PX_PER_SEC)) / Math.log(MAX_PX_PER_SEC / MIN_PX_PER_SEC)
+function zoomToSlider(px: number, min: number): number {
+  return (100 * Math.log(px / min)) / Math.log(MAX_PX_PER_SEC / min)
 }
 
-function sliderToZoom(v: number): number {
-  return MIN_PX_PER_SEC * Math.pow(MAX_PX_PER_SEC / MIN_PX_PER_SEC, v / 100)
+function sliderToZoom(v: number, min: number): number {
+  return min * Math.pow(MAX_PX_PER_SEC / min, v / 100)
 }
 
 type DragMode = 'move' | 'trim-in' | 'trim-out'
@@ -52,6 +52,8 @@ interface TimelineProps {
   tracks: TrackState[]
   markers: MarkerState[]
   pxPerSec: number
+  /** Zoom floor; shrinks below MIN_PX_PER_SEC so a long timeline still fits. */
+  minPxPerSec: number
   /** Timeline length, seconds (the view extends to at least this). */
   duration: number
   selectedIds: number[]
@@ -84,7 +86,7 @@ interface TimelineProps {
   onPxPerSecChange: (px: number) => void
 }
 
-const LABEL_W = 96
+export const LABEL_W = 96
 /** Snap radius, px: clip edges closer than this lock together. */
 const SNAP_PX = 8
 
@@ -192,6 +194,7 @@ export function Timeline({
   tracks,
   markers,
   pxPerSec,
+  minPxPerSec,
   duration,
   selectedIds,
   selectedTrackIds,
@@ -439,7 +442,10 @@ export function Timeline({
   const widthPx = Math.max(end * pxPerSec, 600)
   const step = rulerStep(pxPerSec)
   const marks: number[] = []
-  for (let s = 0; s <= end; s += step) marks.push(Math.round(s * 1e6) / 1e6)
+  // A mark's label sticks out ~48px right of its tick; skip marks whose label
+  // would poke past the content edge and stretch scrollWidth (the full
+  // timeline must fit the viewport at min zoom).
+  for (let s = 0; s * pxPerSec + 48 <= widthPx; s += step) marks.push(Math.round(s * 1e6) / 1e6)
 
   return (
     <div className="timeline-panel">
@@ -465,9 +471,9 @@ export function Timeline({
           min={0}
           max={100}
           step={1}
-          value={zoomToSlider(pxPerSec)}
+          value={zoomToSlider(pxPerSec, minPxPerSec)}
           aria-label="zoom"
-          onChange={(e) => onPxPerSecChange(sliderToZoom(Number(e.target.value)))}
+          onChange={(e) => onPxPerSecChange(sliderToZoom(Number(e.target.value), minPxPerSec))}
         />
         <button className="btn small" onClick={() => onZoom(1.5)} title="zoom in">
           +

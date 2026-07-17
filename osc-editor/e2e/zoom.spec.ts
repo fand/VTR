@@ -109,3 +109,50 @@ test('timeline pinch zoom (ctrl+wheel) scales around the cursor', async () => {
     await app.close()
   }
 })
+
+test('min zoom fits a long timeline in the window', async () => {
+  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  writeFileSync(
+    join(workdir, CLIP),
+    jsonl([
+      { type: 'session_start', t: 0, wall: '2026-07-16T00:00:00Z' },
+      { t: 0.5, port: LISTEN_PORT, a: '/a', args: [0.1] },
+      { type: 'session_end', t: 2 }
+    ])
+  )
+  writeFileSync(
+    join(workdir, 'project.json'),
+    JSON.stringify({
+      version: 1,
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT, beacon: BEACON_PORT },
+      duration: 2400, // 40 min: 2px/s alone can't fit this in the window
+      tracks: [{ clips: [{ file: CLIP, offset: 0, trimIn: 0, trimOut: 2 }] }]
+    })
+  )
+
+  const app = await electron.launch({
+    args: [join(__dirname, '../out/main/index.js')],
+    cwd: workdir,
+    env: {
+      ...process.env,
+      OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
+      OSC_EDITOR_HIDDEN: '1'
+    }
+  })
+  try {
+    const page = await app.firstWindow()
+    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+
+    // Slider to minimum → the whole 40-min timeline fits, no horizontal scroll.
+    await page.getByLabel('zoom').fill('0')
+    await expect
+      .poll(() =>
+        page
+          .locator('.timeline-scroll')
+          .evaluate((el) => el.scrollWidth - el.clientWidth)
+      )
+      .toBeLessThanOrEqual(1)
+  } finally {
+    await app.close()
+  }
+})

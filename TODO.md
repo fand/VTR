@@ -1,6 +1,5 @@
 # TODO
 
-- timelineが長い時 (40minなど)、timelineのzoomを最小にしても全体が表示できない。これを修正して
 - playheadの上端に、playheadのheadを描画して
 - curve editorには選択clip (or clips) のcurveが表示されるが、選択解除してもcurve editorでは表示を続けて
   - 例: clip1を選択 -> timelineで何もないところをクリックし、clip1の選択を解除 -> curve editorにはclip1のcurveを表示しつづける

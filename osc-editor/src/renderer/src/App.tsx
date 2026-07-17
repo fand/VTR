@@ -8,6 +8,7 @@ import {
 import { CurvePanel, PointPatch, PointSel } from './components/CurvePanel'
 import {
   ClipAction,
+  LABEL_W,
   MAX_PX_PER_SEC,
   MIN_PX_PER_SEC,
   PlayingState,
@@ -22,6 +23,7 @@ import {
   TrackState,
   alignClip,
   clipLen,
+  contentEnd,
   markersFromProject,
   serializeProject,
   tracksFromProject
@@ -791,13 +793,39 @@ function App(): React.JSX.Element {
     }
   }, [undo, redo])
 
-  const zoom = useCallback((factor: number) => {
-    setPxPerSec((z) => Math.min(Math.max(z * factor, MIN_PX_PER_SEC), MAX_PX_PER_SEC))
+  // The zoom floor drops below MIN_PX_PER_SEC when the timeline is too long
+  // to fit the window at 2px/s, so zooming all the way out always shows it all.
+  const [winW, setWinW] = useState(window.innerWidth)
+  useEffect(() => {
+    const onResize = (): void => setWinW(window.innerWidth)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
   }, [])
+  const timelineEnd = Math.max(duration, contentEnd(tracks))
+  const minPxPerSec = Math.min(
+    MIN_PX_PER_SEC,
+    Math.max((winW - LABEL_W) / timelineEnd, MIN_PX_PER_SEC / 1000)
+  )
 
-  const setZoom = useCallback((px: number) => {
-    setPxPerSec(Math.min(Math.max(px, MIN_PX_PER_SEC), MAX_PX_PER_SEC))
-  }, [])
+  const zoom = useCallback(
+    (factor: number) => {
+      setPxPerSec((z) => Math.min(Math.max(z * factor, minPxPerSec), MAX_PX_PER_SEC))
+    },
+    [minPxPerSec]
+  )
+
+  const setZoom = useCallback(
+    (px: number) => {
+      setPxPerSec(Math.min(Math.max(px, minPxPerSec), MAX_PX_PER_SEC))
+    },
+    [minPxPerSec]
+  )
+
+  // A shrinking timeline or widening window can raise the floor above the
+  // current zoom; pull the zoom back up to it.
+  useEffect(() => {
+    setPxPerSec((z) => Math.max(z, minPxPerSec))
+  }, [minPxPerSec])
 
   const hasTl = tracks.some((t) => t.clips.some((c) => c.summary.tlOffset != null))
 
@@ -871,6 +899,7 @@ function App(): React.JSX.Element {
         tracks={tracks}
         markers={markers}
         pxPerSec={pxPerSec}
+        minPxPerSec={minPxPerSec}
         duration={duration}
         selectedIds={selectedIds}
         selectedTrackIds={selectedTrackIds}
