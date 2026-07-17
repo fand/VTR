@@ -871,8 +871,31 @@ function App(): React.JSX.Element {
   return (
     <div className="app">
       <header className="header">
+        {/* Two rows, like the port grid: the logo, then the timeline duration. */}
         <div className="header-left">
-          <span className="logo">osc-mtr</span>
+          <div className="header-left-grid">
+            <span className="logo">osc-mtr</span>
+            <div className="header-duration">
+              <NumField
+                label="dur"
+                ariaLabel="timeline duration"
+                value={duration}
+                parse={parseDuration}
+                onInput={(n) =>
+                  transient((d) => {
+                    d.duration = n
+                  })
+                }
+                onCommit={(n) =>
+                  commit('duration', (d) => {
+                    d.duration = n
+                  })
+                }
+                dragStep={1}
+              />
+              <span className="toolbar-unit">s</span>
+            </div>
+          </div>
         </div>
         {/* Timecode + transport, centered between the equal-flex side groups. */}
         <div className="header-center">
@@ -1016,27 +1039,6 @@ function App(): React.JSX.Element {
         onPointEdit={onPointEdit}
         onPointAdd={onPointAdd}
       />
-
-      <div className="tl-toolbar">
-        <NumField
-          label="Timeline Duration"
-          ariaLabel="timeline duration"
-          value={duration}
-          parse={parseDuration}
-          onInput={(n) =>
-            transient((d) => {
-              d.duration = n
-            })
-          }
-          onCommit={(n) =>
-            commit('duration', (d) => {
-              d.duration = n
-            })
-          }
-          dragStep={1}
-        />
-        <span className="toolbar-unit">s</span>
-      </div>
     </div>
   )
 }

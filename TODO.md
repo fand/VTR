@@ -6,7 +6,7 @@
 - [x] play/stop ボタンはplay/pauseに変更
   - [x] pauseした時にpleyheadが元の位置に戻らないように変更
 - [x] timecode, transport controlをheader中央に移動
-- header左端部分のレイアウトを変更
-  - port設定のように2行レイアウトにする
-  - osc-mtrを1行目に表示
-  - timeline durationをここの2行目に移動
+- [x] header左端部分のレイアウトを変更
+  - [x] port設定のように2行レイアウトにする
+  - [x] osc-mtrを1行目に表示
+  - [x] timeline durationをここの2行目に移動

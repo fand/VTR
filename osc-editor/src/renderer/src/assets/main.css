@@ -67,6 +67,25 @@ body {
   gap: 12px;
 }
 
+/* Two rows at the header's left edge: logo, then the timeline duration. */
+.header-left-grid {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  row-gap: 4px;
+}
+
+.header-duration {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.header-duration .port-field input {
+  padding: 1px 6px;
+  width: 64px;
+}
+
 .logo {
   font-family: var(--mono);
   font-weight: 700;
@@ -175,15 +194,6 @@ body {
 
 .status-grid .chip {
   justify-self: start;
-}
-
-.tl-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 12px;
-  background: var(--bg-raised);
-  border-top: 1px solid var(--border);
 }
 
 .toolbar-unit {
