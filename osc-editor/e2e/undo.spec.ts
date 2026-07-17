@@ -1,5 +1,5 @@
 import { _electron as electron, ElectronApplication, expect, test } from '@playwright/test'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -15,9 +15,9 @@ function jsonl(lines: object[]): string {
   return lines.map((l) => JSON.stringify(l)).join('\n') + '\n'
 }
 
-function launch(workdir: string): Promise<ElectronApplication> {
+function launch(workdir: string, projectPath?: string): Promise<ElectronApplication> {
   return electron.launch({
-    args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
+    args: [join(__dirname, '../out/main/index.js'), projectPath ?? join(workdir, 'project.json')],
     cwd: workdir,
     env: {
       ...process.env,
@@ -108,6 +108,61 @@ test('undo/redo: one entry per drag, survives restart, linear truncation', async
     .filter(Boolean)
     .map((l) => JSON.parse(l).seq)
   expect(seqs).toEqual([2])
+
+  await app.close()
+})
+
+test('undo log stays with its project: opening A never replays B', async () => {
+  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  // Two projects in separate dirs, one shared data dir (workdir).
+  const project = (offset: number): string =>
+    JSON.stringify({
+      version: 1,
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT, beacon: BEACON_PORT },
+      duration: 10,
+      tracks: [{ clips: [{ file: CLIP, offset, trimIn: 0, trimOut: 2 }] }]
+    })
+  for (const [name, offset] of [
+    ['a', 2],
+    ['b', 0]
+  ] as const) {
+    mkdirSync(join(workdir, name))
+    writeFileSync(
+      join(workdir, name, CLIP),
+      jsonl([
+        { type: 'session_start', t: 0, wall: '2026-07-16T00:00:00Z' },
+        { t: 0.5, port: LISTEN_PORT, a: '/a', args: [0.1] },
+        { type: 'session_end', t: 2 }
+      ])
+    )
+    writeFileSync(join(workdir, name, 'project.json'), project(offset))
+  }
+
+  // Edit and save B → one undo entry in B's log.
+  let app = await launch(workdir, join(workdir, 'b', 'project.json'))
+  let page = await app.firstWindow()
+  await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+  const box = (await page.locator('.clip').boundingBox())!
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(box.x + box.width / 2 + 100, box.y + box.height / 2, { steps: 5 })
+  await page.mouse.up()
+  await page.keyboard.press('ControlOrMeta+s')
+  await expect.poll(() => savedSeq(join(workdir, 'b'))).toBe(1)
+  await app.close()
+
+  // The log lives in B's dir, not the shared data dir.
+  expect(existsSync(join(workdir, 'b', 'undo.jsonl'))).toBe(true)
+  expect(existsSync(join(workdir, 'undo.jsonl'))).toBe(false)
+
+  // Open A: Cmd+Z must be a no-op, not apply B's inverse patches to A.
+  app = await launch(workdir, join(workdir, 'a', 'project.json'))
+  page = await app.firstWindow()
+  await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+  await page.keyboard.press(`${MOD}+z`)
+  await page.keyboard.press('ControlOrMeta+s')
+  await expect.poll(() => savedSeq(join(workdir, 'a'))).toBe(0)
+  expect(savedOffset(join(workdir, 'a'))).toBe(2)
 
   await app.close()
 })

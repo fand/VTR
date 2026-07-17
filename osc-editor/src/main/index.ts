@@ -16,7 +16,7 @@ import {
 } from './project'
 import { SESSION_FILE, exportSession } from './session'
 import { SpawnMode, TapManager } from './tap'
-import { appendUndo, loadUndoLog, truncateUndoAfter } from './undo'
+import { appendUndo, clearUndoLog, loadUndoLog, transferUndoLog, truncateUndoAfter } from './undo'
 import {
   DEFAULT_PORTS,
   type LoadedProject,
@@ -50,6 +50,10 @@ let projectDir: string | null = null
 // Clip files resolve against the project bundle, then staging.
 const resolveClip = (file: string): string =>
   resolveClipPath(projectDir ?? workdir, stagingDir, file)
+
+// The undo log lives in the project bundle; untitled sessions stage it in
+// userData and it moves into the bundle on Save As.
+const undoDir = (): string => projectDir ?? dataDir
 
 let tap: TapManager | null = null
 let tapError: string | null = null
@@ -168,6 +172,11 @@ app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.osc-mtr.editor')
   installMenu()
 
+  // A stale staged log (abandoned untitled session) must not leak into this
+  // one. Keep it only when the boot project itself lives in the data dir.
+  const bootProjectDir = cliProjectPath ? dirname(normalizeProjectPath(cliProjectPath)) : null
+  if (bootProjectDir !== dataDir) clearUndoLog(dataDir)
+
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
   })
@@ -238,6 +247,7 @@ app.whenReady().then(() => {
     mkdirSync(dir, { recursive: true })
     // Resolve sources with the outgoing projectDir, then adopt the new one.
     collectClips(dir, stagingDir, project, resolveClip)
+    transferUndoLog(undoDir(), dir, projectDir === null)
     projectDir = dir
     saveProject(projectPath, project, stagingDir)
   })
@@ -266,9 +276,9 @@ app.whenReady().then(() => {
     })
     return res.canceled || !res.filePath ? null : res.filePath
   })
-  ipcMain.handle('undo:load', () => loadUndoLog(dataDir))
-  ipcMain.handle('undo:append', (_e, entry: UndoEntry) => appendUndo(dataDir, entry))
-  ipcMain.handle('undo:truncateAfter', (_e, seq: number) => truncateUndoAfter(dataDir, seq))
+  ipcMain.handle('undo:load', () => loadUndoLog(undoDir()))
+  ipcMain.handle('undo:append', (_e, entry: UndoEntry) => appendUndo(undoDir(), entry))
+  ipcMain.handle('undo:truncateAfter', (_e, seq: number) => truncateUndoAfter(undoDir(), seq))
   // Ask where to save; null = user cancelled. Hidden (e2e) skips the native
   // dialog — it would hang the test — and writes the default session.jsonl.
   ipcMain.handle('session:export', async (e, project: ProjectFile) => {

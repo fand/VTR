@@ -380,9 +380,9 @@ function App(): React.JSX.Element {
       const path = await window.api.project.openDialog()
       if (!path) return
       const res = await window.api.project.loadPath(path)
-      // The undo log belongs to the previous project; the new one starts fresh.
-      await window.api.undo.truncateAfter(0)
-      applyLoaded(res.path, res.project, [])
+      // The bundle carries its own undo log; restore it like boot does.
+      const log = await window.api.undo.load()
+      applyLoaded(res.path, res.project, log)
     } catch (e) {
       setError((e as Error).message)
     }
