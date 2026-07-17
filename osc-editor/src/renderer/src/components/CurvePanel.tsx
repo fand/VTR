@@ -3,16 +3,13 @@ import { applyEditsIndexed } from '../../../shared/edits'
 import type { ClipEdits, OscEvent } from '../../../shared/types'
 import { ClipInst, clipLen, formatRulerLabel } from '../timeline/model'
 
-const COLORS = [
-  '#4da3ff',
-  '#6fcf97',
-  '#ffd24d',
-  '#e5484d',
-  '#c792ea',
-  '#f78c6c',
-  '#89ddff',
-  '#f07178'
-]
+/** Distinct color per property: golden-angle hues stay spread out at any
+ *  count; lightness cycles so neighboring hues still read apart. */
+function propColor(i: number): string {
+  const hue = (210 + i * 137.508) % 360
+  const light = [65, 55, 75][i % 3]
+  return `hsl(${hue.toFixed(1)}, 75%, ${light}%)`
+}
 const PAD = 10
 /** Horizontal travel between points added by a pencil-drag stroke. */
 const DRAW_STEP_PX = 4
@@ -106,7 +103,7 @@ function buildProperties(
       min = Math.min(min, p.v)
       max = Math.max(max, p.v)
     }
-    return { key, label, color: COLORS[i % COLORS.length], points, min, max }
+    return { key, label, color: propColor(i), points, min, max }
   })
 }
 
