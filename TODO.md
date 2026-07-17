@@ -6,37 +6,6 @@ File refs are `osc-editor/src/...` unless prefixed `osc-tap/`.
 
 ## High — data loss / corruption
 
-### 1. Move undo log into the project bundle — decided: bundle, not userData
-
-- Problem: `undo.jsonl` is one global file in userData (`main/undo.ts:11-13`), but the
-  cursor `undoSeq` is stored per project in project.json (`shared/types.ts:120-123`).
-  On boot, `App.tsx:309` splits the log at `project.undoSeq` into undo/redo stacks —
-  it has no way to know which project wrote which entry.
-- Failure: edit project B (log now holds B's patches), then open project A → boot
-  splits B's log at A's `undoSeq`; Cmd+Z applies B's immer patches to A's doc.
-  Generic paths like `tracks/0/clips/0/offset` apply without error → A is silently
-  corrupted, and Cmd+S persists it. Second variant: untitled boot skips loading the
-  log but appends from `nextSeq = 1` (`App.tsx:342`) → duplicate seq numbers in a
-  log that still holds the previous project's entries.
-- Fix (decided): store the log at `<bundle>.oscproj/undo.jsonl`. Untitled sessions
-  stage it in userData and move it into the bundle on Save As — same
-  staging-then-collect pattern as clips (`main/project.ts:100-119`). Main process
-  needs a per-project undo path instead of the single `dataDir` path.
-- Fold these related defects into the same change:
-  - Renderer `undo.append`/`truncateAfter` are fire-and-forget with
-    `.catch(() => {})` (`renderer/src/history.ts:91,96,115`) — on IPC/disk failure
-    memory and disk silently diverge. Surface the error (banner) or retry.
-  - Compaction keeps the last 1000 entries regardless of `undoSeq`
-    (`main/undo.ts:39-45`) — after >2000 uncommitted-to-save commits, the entries
-    bridging `undoSeq` → tail are gone and boot builds a redo stack whose first
-    patch doesn't apply to the saved doc, undetected. Compact relative to
-    `undoSeq`, or store a base-seq check and refuse to replay across a gap.
-  - In-memory `past` caps at 1000 via `shift()` (`history.ts:95`) while disk holds
-    2000 — `canUndo` reflects memory only. Align the two caps.
-- Test (TDD): e2e red test first — edit project B, relaunch into project A, Cmd+Z,
-  assert A unchanged. Plus unit tests for the log split/compaction logic once it
-  takes a project identity.
-
 ### 2. **TDD** Fix tap control-socket reply matching
 
 - Context: TapManager (main process) talks to osc-tap over a unix socket with
@@ -320,8 +289,8 @@ File refs are `osc-editor/src/...` unless prefixed `osc-tap/`.
 - Problem: `version: 1` is written but never read — `loadProject` blind-casts
   `JSON.parse` (`main/project.ts:50`). A future v2 file, or a hand-edited file
   with `tracks` in the wrong shape, either explodes deep in the renderer or
-  silently misloads. The undo log has no version/project stamp either (covered by
-  task 1's redesign).
+  silently misloads. The undo log has no version stamp either (it lives in the
+  bundle now, so project identity is positional).
 - Fix: validate `version === 1` (clear error dialog otherwise) plus a minimal
   shape check (tracks is array, clips have string `file`). Keep it cheap — no
   schema library needed.
@@ -388,9 +357,8 @@ File refs are `osc-editor/src/...` unless prefixed `osc-tap/`.
 
 ## Tests
 
-- [ ] Add a vitest unit layer — `osc-editor/package.json` has no unit runner; 17
-  Playwright specs are the only tests and they exercise pure functions
-  indirectly. First targets (all currently untested):
+- [ ] Grow the vitest unit layer (runner exists: `npm run test:unit`; covers
+  undo.ts only). Next targets (all currently untested):
   - `mergeProject` trim boundaries: a `t`-edit that moves an event across
     trimIn/trimOut; edits on `add`ed events (`shared/edits.ts` `applyEditsIndexed`
     set/del-on-add paths).
@@ -401,14 +369,12 @@ File refs are `osc-editor/src/...` unless prefixed `osc-tap/`.
 - [ ] E2E gaps (each is a designed-for scenario with zero coverage):
   - Redo after relaunch — log entries with seq > `undoSeq` become the redo stack
     (crash-recovery path). Planned in `docs/tasks/persistency/plan.md:153`, never
-    written. `e2e/undo.spec.ts` covers only undo-after-restart and truncation.
-  - Cross-project undo contamination (task 1's red test).
+    written. `e2e/undo.spec.ts` covers undo-after-restart, truncation, and
+    cross-project isolation.
   - Missing/corrupt clip → open → save keeps the reference (task 3's red test).
   - Untitled → record → Save As collects staged clips by MOVE — only the
     with-project copy path is tested (`e2e/bundle.spec.ts`); the EXDEV
     copy-fallback in `transfer` (`main/project.ts:82-93`) is fully untested.
-  - Undo-log compaction past 2000 entries (task 1).
-  - Torn undo.jsonl tail (crash mid-append → parse-drop at `main/undo.ts:24`).
-  - `applyPatches` divergence → `dropHistory` (`history.ts:112-117`) — currently
-    unobservable to users when it fires; assert a banner once task 1 adds one.
+  - `applyPatches` divergence → `dropHistory` — now surfaces in the error
+    banner; assert it in e2e.
   - Multi-instance launch (task 17), save-dialog cancel, export write failure.
