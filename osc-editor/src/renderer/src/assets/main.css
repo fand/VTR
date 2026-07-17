@@ -648,6 +648,14 @@ body {
   pointer-events: none;
 }
 
+.tl-marquee {
+  position: absolute;
+  background: rgba(77, 163, 255, 0.15);
+  border: 1px dashed var(--accent);
+  pointer-events: none;
+  z-index: 12;
+}
+
 .curve-marquee {
   fill: rgba(77, 163, 255, 0.15);
   stroke: var(--accent);

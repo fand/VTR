@@ -599,6 +599,13 @@ function App(): React.JSX.Element {
     })
   }, [])
 
+  // Marquee select: replaces the clip selection with the given set.
+  const selectClips = useCallback((ids: number[]) => {
+    setSelectedPoints([])
+    setSelectedTrackIds([])
+    setSelectedIds(ids)
+  }, [])
+
   const selectTrack = useCallback((id: number, additive: boolean) => {
     setSelectedPoints([])
     setSelectedIds([])
@@ -912,6 +919,7 @@ function App(): React.JSX.Element {
         playing={playing}
         onSeek={onSeek}
         onSelect={selectClip}
+        onSelectMany={selectClips}
         onSelectTrack={selectTrack}
         onTracksChange={onTracksChange}
         onAddTrack={addTrack}

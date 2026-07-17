@@ -16,6 +16,8 @@ export interface PlayingState {
 }
 
 export const TRACK_HEIGHT = 64
+/** .ruler-row height in main.css; tracks stack right below it. */
+const RULER_H = 22
 export const MIN_PX_PER_SEC = 2
 export const MAX_PX_PER_SEC = 400
 const TRIM_HANDLE_PX = 8
@@ -64,6 +66,8 @@ interface TimelineProps {
   onSeek: (sec: number) => void
   /** Additive select (shift/cmd-click) toggles membership. */
   onSelect: (id: number | null, additive?: boolean) => void
+  /** Marquee select: replaces the clip selection with the given set. */
+  onSelectMany: (ids: number[]) => void
   /** Track label click; additive (shift/cmd) toggles membership. */
   onSelectTrack: (trackId: number, additive: boolean) => void
   onTracksChange: (tracks: TrackState[], commit: boolean) => void
@@ -207,6 +211,7 @@ export function Timeline({
   playing,
   onSeek,
   onSelect,
+  onSelectMany,
   onSelectTrack,
   onTracksChange,
   onAddTrack,
@@ -242,9 +247,77 @@ export function Timeline({
     moved: boolean
   } | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  const contentRef = useRef<HTMLDivElement | null>(null)
   // Time + viewport x under the cursor at pinch start; scroll is restored
   // after the zoomed width renders so that point stays put.
   const pinchAnchor = useRef<{ t: number; viewX: number } | null>(null)
+
+  // Marquee: drag on empty timeline space rubber-bands a clip selection.
+  // A plain click (< 3px) deselects and seeks, like before.
+  const marquee = useRef<{ x0: number; y0: number; base: number[]; moved: boolean } | null>(null)
+  const [marqueeRect, setMarqueeRect] = useState<{
+    x: number
+    y: number
+    w: number
+    h: number
+  } | null>(null)
+
+  /** Pointer position in .tl-content coordinates (follows the scroll). */
+  const contentPos = (e: React.PointerEvent): { x: number; y: number } => {
+    const rect = contentRef.current!.getBoundingClientRect()
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top }
+  }
+
+  const onBgPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
+    if (e.button !== 0) return
+    const pos = contentPos(e)
+    marquee.current = {
+      x0: pos.x,
+      y0: pos.y,
+      base: e.shiftKey || e.metaKey || e.ctrlKey ? selectedIds : [],
+      moved: false
+    }
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+
+  const onBgPointerMove = (e: React.PointerEvent<HTMLDivElement>): void => {
+    const m = marquee.current
+    if (!m) return
+    const pos = contentPos(e)
+    if (!m.moved && Math.abs(pos.x - m.x0) < 3 && Math.abs(pos.y - m.y0) < 3) return
+    m.moved = true
+    const rect = {
+      x: Math.min(m.x0, pos.x),
+      y: Math.min(m.y0, pos.y),
+      w: Math.abs(pos.x - m.x0),
+      h: Math.abs(pos.y - m.y0)
+    }
+    setMarqueeRect(rect)
+    const hits = [...m.base]
+    tracks.forEach((track, trackIdx) => {
+      const top = RULER_H + trackIdx * TRACK_HEIGHT
+      if (top + TRACK_HEIGHT < rect.y || top > rect.y + rect.h) return
+      for (const c of track.clips) {
+        const left = LABEL_W + c.offset * pxPerSec
+        const width = Math.max(clipLen(c) * pxPerSec, 12)
+        if (left + width < rect.x || left > rect.x + rect.w) continue
+        if (!hits.includes(c.id)) hits.push(c.id)
+      }
+    })
+    onSelectMany(hits)
+  }
+
+  const onBgPointerUp = (e: React.PointerEvent<HTMLDivElement>): void => {
+    const m = marquee.current
+    marquee.current = null
+    setMarqueeRect(null)
+    if (!m || m.moved) return
+    // Plain click on empty space: deselect, and seek when it lands in a lane.
+    onSelect(null)
+    const pos = contentPos(e)
+    const inLanes = pos.y >= RULER_H && pos.y < RULER_H + tracks.length * TRACK_HEIGHT
+    if (inLanes && pos.x >= LABEL_W) onSeek((pos.x - LABEL_W) / pxPerSec)
+  }
 
   // macOS pinch arrives as ctrl+wheel; preventDefault needs a non-passive
   // listener, which React's onWheel doesn't provide.
@@ -483,8 +556,14 @@ export function Timeline({
           +
         </button>
       </div>
-      <div className="timeline-scroll" ref={scrollRef} onPointerDown={() => onSelect(null)}>
-        <div className="tl-content" style={{ width: widthPx + 96 }}>
+      <div
+        className="timeline-scroll"
+        ref={scrollRef}
+        onPointerDown={onBgPointerDown}
+        onPointerMove={onBgPointerMove}
+        onPointerUp={onBgPointerUp}
+      >
+        <div className="tl-content" ref={contentRef} style={{ width: widthPx + 96 }}>
           <div className="ruler-row">
             <div className="track-label ruler-corner" />
             <div
@@ -600,18 +679,9 @@ export function Timeline({
                   ×
                 </button>
               </div>
-              <div
-                className="track-lane"
-                style={{ width: widthPx }}
-                onPointerDown={(e) => {
-                  // Clip drags call stopPropagation, so this is an empty-lane
-                  // click — or a right-click on a clip bubbling up; seek on
-                  // the primary button only.
-                  if (e.button !== 0) return
-                  const rect = e.currentTarget.getBoundingClientRect()
-                  onSeek(Math.max(0, (e.clientX - rect.left) / pxPerSec))
-                }}
-              >
+              {/* Empty-lane pointerdowns bubble to the scroll area: a drag
+                  marquee-selects, a plain click seeks on pointer-up. */}
+              <div className="track-lane" style={{ width: widthPx }}>
                 {track.clips.map((clip) => (
                   <div
                     key={clip.id}
@@ -688,6 +758,18 @@ export function Timeline({
 
           {tracks.length === 0 && !recordingRow && (
             <div className="empty">No clips. Hit ● Rec to record incoming OSC.</div>
+          )}
+
+          {marqueeRect && (
+            <div
+              className="tl-marquee"
+              style={{
+                left: marqueeRect.x,
+                top: marqueeRect.y,
+                width: marqueeRect.w,
+                height: marqueeRect.h
+              }}
+            />
           )}
         </div>
 
