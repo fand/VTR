@@ -58,12 +58,12 @@ test('seek: ruler click, lane click, scrub', async () => {
   const sock = dgram.createSocket('udp4')
   try {
     // Need one clip so there is a track lane to click.
-    await page.getByRole('button', { name: '● Rec' }).click()
+    await page.getByRole('button', { name: 'Rec' }).click()
     for (let i = 0; i < 5; i++) {
       sock.send(oscMessage('/x', [i]), LISTEN_PORT, '127.0.0.1')
       await sleep(100)
     }
-    await page.getByRole('button', { name: '■ Stop' }).click()
+    await page.getByRole('button', { name: 'Stop' }).click()
     await expect(page.locator('.clip:not(.recording)')).toHaveCount(1)
 
     // Ruler click at x=200 → playhead at 96 + 200.
@@ -203,12 +203,12 @@ test('ports editable in header; tap restarts on new ports', async () => {
     await sleep(2500)
     await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
 
-    await page.getByRole('button', { name: '● Rec' }).click()
+    await page.getByRole('button', { name: 'Rec' }).click()
     for (let i = 0; i < 5; i++) {
       sock.send(oscMessage('/y', [i]), 11010, '127.0.0.1')
       await sleep(100)
     }
-    await page.getByRole('button', { name: '■ Stop' }).click()
+    await page.getByRole('button', { name: 'Stop' }).click()
     await expect(page.locator('.clip:not(.recording)')).toHaveCount(1)
     await expect(page.locator('.clip-meta').first()).toContainText('5 ev')
     expect(forwarded.length).toBe(5)

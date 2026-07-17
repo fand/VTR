@@ -67,12 +67,12 @@ test('record → clip on track → drag → delete → persisted', async () => {
   const { app, page, workdir } = await launchApp()
   const sock = dgram.createSocket('udp4')
   try {
-    await page.getByRole('button', { name: '● Rec' }).click()
+    await page.getByRole('button', { name: 'Rec' }).click()
     for (let i = 0; i < 15; i++) {
       sock.send(oscMessage('/fader', [i / 15]), LISTEN_PORT, '127.0.0.1')
       await sleep(150)
     }
-    await page.getByRole('button', { name: '■ Stop' }).click()
+    await page.getByRole('button', { name: 'Stop' }).click()
 
     const clip = page.locator('.clip:not(.recording)')
     await expect(clip).toHaveCount(1)
@@ -121,12 +121,12 @@ test('beacon → tl recorded → clip auto-aligned at record stop', async () => 
     await expect(page.locator('.chip', { hasText: 'clock tl=' })).toBeVisible({
       timeout: 5000
     })
-    await page.getByRole('button', { name: '● Rec' }).click()
+    await page.getByRole('button', { name: 'Rec' }).click()
     for (let i = 0; i < 5; i++) {
       sock.send(oscMessage('/x', [i]), LISTEN_PORT, '127.0.0.1')
       await sleep(100)
     }
-    await page.getByRole('button', { name: '■ Stop' }).click()
+    await page.getByRole('button', { name: 'Stop' }).click()
 
     const clip = page.locator('.clip:not(.recording)')
     await expect(clip).toHaveCount(1)

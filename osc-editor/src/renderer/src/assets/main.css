@@ -126,15 +126,34 @@ body {
   cursor: default;
 }
 
-.btn.rec {
-  color: var(--rec);
-  font-weight: 600;
+/* Icon-only transport buttons: no border/bg/label, hover highlights bg. */
+.btn-icon {
+  font: inherit;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--text);
+  background: none;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 8px;
+  cursor: pointer;
 }
 
-.btn.rec.active {
-  background: var(--rec);
-  color: #fff;
-  border-color: var(--rec);
+.btn-icon:hover:not(:disabled) {
+  background: #2e333d;
+}
+
+.btn-icon:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.btn-icon.rec {
+  color: var(--rec);
+}
+
+.btn-icon.play.active {
+  color: var(--accent);
 }
 
 .spacer {
@@ -219,12 +238,6 @@ body {
   color: var(--text-dim);
   font-family: var(--mono);
   font-size: 11px;
-}
-
-.btn.play.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
 }
 
 .btn.snap.active {

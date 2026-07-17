@@ -50,12 +50,12 @@ async function launchApp(): Promise<{ app: ElectronApplication; page: Page; work
 }
 
 async function recordClip(page: Page, sock: dgram.Socket, n: number): Promise<void> {
-  await page.getByRole('button', { name: '● Rec' }).click()
+  await page.getByRole('button', { name: 'Rec' }).click()
   for (let i = 0; i < n; i++) {
     sock.send(oscMessage('/fader', [i / n]), LISTEN_PORT, '127.0.0.1')
     await sleep(100)
   }
-  await page.getByRole('button', { name: '■ Stop' }).click()
+  await page.getByRole('button', { name: 'Stop' }).click()
   await expect(page.locator('.clip:not(.recording)')).toHaveCount(1)
 }
 
@@ -98,10 +98,10 @@ test('pause keeps the playhead where playback stopped; play resumes from it', as
     const playheadLeft = (): Promise<number> =>
       page.locator('.playhead').evaluate((el) => parseFloat((el as HTMLElement).style.left))
 
-    await page.getByRole('button', { name: '▶ Play' }).click()
+    await page.getByRole('button', { name: 'Play' }).click()
     await sleep(600)
-    await page.getByRole('button', { name: '⏸ Pause' }).click()
-    await expect(page.getByRole('button', { name: '▶ Play' })).toBeVisible()
+    await page.getByRole('button', { name: 'Pause' }).click()
+    await expect(page.getByRole('button', { name: 'Play' })).toBeVisible()
     const pausedAt = await playheadLeft()
     // ~0.6s in: the playhead stayed there instead of snapping back to 0.
     expect(pausedAt).toBeGreaterThan(96 + 6)
@@ -109,9 +109,9 @@ test('pause keeps the playhead where playback stopped; play resumes from it', as
     expect(await playheadLeft()).toBeCloseTo(pausedAt, 1)
 
     // Resume: playback continues from the paused position.
-    await page.getByRole('button', { name: '▶ Play' }).click()
+    await page.getByRole('button', { name: 'Play' }).click()
     await sleep(500)
-    await page.getByRole('button', { name: '⏸ Pause' }).click()
+    await page.getByRole('button', { name: 'Pause' }).click()
     expect(await playheadLeft()).toBeGreaterThan(pausedAt + 4)
   } finally {
     sock.close()
@@ -138,10 +138,10 @@ test('preview replays events to TD port with original spacing', async () => {
     // Space in a focused field must not toggle playback.
     await page.getByLabel('timeline duration').click()
     await page.keyboard.press('Space')
-    await expect(page.getByRole('button', { name: '▶ Play' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Play' })).toBeVisible()
     await page.keyboard.press('Enter') // blur; the space-only draft reverts to 2
     collecting = true
-    await page.getByRole('button', { name: '▶ Play' }).click()
+    await page.getByRole('button', { name: 'Play' }).click()
     await sleep(2800) // playback (2s timeline) + margin
     expect(received.length).toBe(10)
     const span = received[received.length - 1].at - received[0].at
@@ -149,7 +149,7 @@ test('preview replays events to TD port with original spacing', async () => {
     expect(span).toBeLessThan(1400)
     expect(received[0].addr).toContain('/fader')
     // Auto-stopped at the end.
-    await expect(page.getByRole('button', { name: '▶ Play' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Play' })).toBeVisible()
   } finally {
     td.close()
     sock.close()

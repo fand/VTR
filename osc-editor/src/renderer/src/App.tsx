@@ -905,18 +905,22 @@ function App(): React.JSX.Element {
             playhead={playhead}
           />
           <button
-            className={recording ? 'btn rec active' : 'btn rec'}
+            className={recording ? 'btn-icon rec active' : 'btn-icon rec'}
             onClick={toggleRecord}
             disabled={busy}
+            aria-label={recording ? 'Stop' : 'Rec'}
+            title={recording ? 'Stop' : 'Rec'}
           >
-            {recording ? '■ Stop' : '● Rec'}
+            {recording ? '■' : '●'}
           </button>
           <button
-            className={playing ? 'btn play active' : 'btn play'}
+            className={playing ? 'btn-icon play active' : 'btn-icon play'}
             onClick={togglePlay}
             disabled={busy || !!recording || tracks.length === 0}
+            aria-label={playing ? 'Pause' : 'Play'}
+            title={playing ? 'Pause' : 'Play'}
           >
-            {playing ? '⏸ Pause' : '▶ Play'}
+            {playing ? '⏸' : '▶'}
           </button>
         </div>
         <div className="header-right">
