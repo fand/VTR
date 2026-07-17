@@ -97,8 +97,9 @@ function buildProperties(
     points.sort((a, b) => a.t - b.t)
     const [addr, argIdx] = key.split(' ')
     const label = (argCount.get(addr) ?? 1) > 1 ? `${addr}[${argIdx}]` : addr
-    let min = Infinity
-    let max = -Infinity
+    // Value axis defaults to 0..1; data outside widens it.
+    let min = 0
+    let max = 1
     for (const p of points) {
       min = Math.min(min, p.v)
       max = Math.max(max, p.v)

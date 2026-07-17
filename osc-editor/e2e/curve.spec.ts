@@ -79,24 +79,25 @@ test('curve panel: properties per address/arg, visibility toggle', async () => {
     await page.mouse.move(1, 1)
     await expect(page.locator('.curve-tooltip')).toHaveCount(0)
 
-    // Grid: time + value lines, value labels on /fader's scale (0.1…0.9 → 0.1 step).
+    // Grid: time + value lines; the value axis defaults to 0.0–1.0 even
+    // though /fader only spans 0.1…0.9.
     expect(await page.locator('.curve-grid-line').count()).toBeGreaterThan(5)
     await expect(
-      page.locator('.curve-ylabels .curve-grid-label').filter({ hasText: /^0\.5$/ })
+      page.locator('.curve-ylabels .curve-grid-label').filter({ hasText: /^0\.0$/ })
+    ).toHaveCount(1)
+    await expect(
+      page.locator('.curve-ylabels .curve-grid-label').filter({ hasText: /^1\.0$/ })
     ).toHaveCount(1)
     // Time axis labels sit at the top, in the ruler's format ("1s", not "1.0s").
     const oneSec = page.locator('.curve-grid-label').filter({ hasText: /^1s$/ }).first()
     await expect(oneSec).toBeVisible()
     expect((await oneSec.boundingBox())!.y - editorBox.y).toBeLessThan(20)
 
-    // Selecting a property retargets the value axis to its scale (0.2…0.4).
+    // Selecting a property keeps the 0–1 floor (its 0.2…0.4 data fits inside).
     await page.locator('.curve-prop-name', { hasText: '/xy[1]' }).click()
     await expect(
-      page.locator('.curve-ylabels .curve-grid-label').filter({ hasText: /^0\.40$/ })
+      page.locator('.curve-ylabels .curve-grid-label').filter({ hasText: /^1\.0$/ })
     ).toHaveCount(1)
-    await expect(
-      page.locator('.curve-ylabels .curve-grid-label').filter({ hasText: /^0\.5/ })
-    ).toHaveCount(0)
     await page.locator('.curve-prop-name', { hasText: '/xy[1]' }).click()
 
     // Toggle /fader off → its polyline disappears.
@@ -343,11 +344,12 @@ test('curve panel: clicking a curve line selects its property', async () => {
     // 3 fader + 2 xy points.
     await expect(page.locator('circle')).toHaveCount(5)
 
-    // Click the flat /fader segment between its first two points (step-after:
-    // it sits at the first point's value) — away from any point circle.
+    // Click the flat /fader segment between its 2nd and 3rd points (step-after:
+    // it sits at the 2nd point's value 0.5) — away from any point circle, and
+    // on the shared 0–1 axis no other curve passes near 0.5 there.
     const faderPoints = page.locator('g[data-prop="/fader"] circle')
-    const b0 = (await faderPoints.nth(0).boundingBox())!
-    const b1 = (await faderPoints.nth(1).boundingBox())!
+    const b0 = (await faderPoints.nth(1).boundingBox())!
+    const b1 = (await faderPoints.nth(2).boundingBox())!
     const midX = (b0.x + b1.x) / 2 + b0.width / 2
     const midY = b0.y + b0.height / 2
     await page.mouse.click(midX, midY)
@@ -765,7 +767,7 @@ test('curve header: snap locks drags to the grid, Box toggles the transform box'
     await expect(page.locator('circle')).toHaveCount(3)
 
     // Snap on: a free drag of the middle point lands on the grid
-    // (0.2s time step, 0.1 value step at this scale).
+    // (0.2s time step, 0.2 value step on the 0–1 axis).
     const snapBtn = page.locator('.curve-header').getByRole('button', { name: 'Snap' })
     await snapBtn.click()
     await expect(snapBtn).toHaveAttribute('aria-pressed', 'true')

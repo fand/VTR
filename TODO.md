@@ -1,6 +1,6 @@
 # TODO
 
-- Curve Editorの縦軸はデフォルトで0.0~1.0を表示するようにしてほしい
+- [x] Curve Editorの縦軸はデフォルトで0.0~1.0を表示するようにしてほしい
 - Curve Editorのheader右端に、x軸/y軸それぞれのzoom sliderを追加したい
   - y軸zoom時は、curve editorで縦スクロールできるようにする
 - play/stop ボタンはplay/pauseに変更
