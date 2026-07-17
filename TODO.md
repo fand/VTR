@@ -6,34 +6,6 @@ File refs are `osc-editor/src/...` unless prefixed `osc-tap/`.
 
 ## High — data loss / corruption
 
-### 3. Keep unreadable clips as missing instead of dropping them
-
-- Context: `loadProject` wraps per-clip loading in try/catch and on ANY throw
-  removes the clip from the track and only records its name in `missing[]`
-  (`main/project.ts:55-67`). The doc the renderer gets — and later saves — no
-  longer contains the clip reference. Cmd+S makes the removal permanent.
-- What actually throws (all verified in code):
-  - Torn last JSONL line: osc-tap appends line-by-line; crash/power-loss can leave
-    a partial final line. `readClip` JSON.parses every line with no per-line guard
-    (`main/clips.ts:21`) → one bad line throws the WHOLE clip away.
-  - Corrupt `.edits.json` sidecar: parsed inside the same try
-    (`project.ts:61`) → a broken sidecar kills the clip even when the clip file
-    itself is perfectly fine.
-  - File genuinely absent: user deleted it externally, or a crash hit between
-    collectClips' move and the project.json write (see task 7).
-  - Perms/disk errors.
-- Fix, two steps:
-  1. Make `readClip` lenient: skip unparseable lines (same policy as
-     `main/undo.ts:24` uses for the undo log). Most corruption becomes non-fatal.
-  2. For clips that still fail: KEEP the reference in the track with a
-     `missing: true` / `summary: null` marker so save round-trips it; render it
-     grayed out. Move sidecar parsing OUT of the clip try-block so a bad sidecar
-     degrades to "no edits", not "no clip".
-- Test (TDD): unit (vitest) — `readClip` on a file with a torn last line returns
-  the intact events; `loadProject` with a corrupt sidecar keeps the clip. E2E —
-  make a referenced clip unreadable, open, save, restore the file, reopen: clip is
-  back.
-
 ### 4. Bundle the osc-tap binary in packaged builds
 
 - Problem: `findTapBinary` looks at
@@ -336,14 +308,13 @@ File refs are `osc-editor/src/...` unless prefixed `osc-tap/`.
     set/del-on-add paths).
   - `editsEmpty`, `resolveClipPath` precedence (bundle clips/ → legacy flat →
     staging → fallback-to-first).
-  - New code from tasks above: lenient `readClip`, `validatePath`, duration
-    clamp, canvas hit-testing.
+  - New code from tasks above: `validatePath`, duration clamp, canvas
+    hit-testing.
 - [ ] E2E gaps (each is a designed-for scenario with zero coverage):
   - Redo after relaunch — log entries with seq > `undoSeq` become the redo stack
     (crash-recovery path). Planned in `docs/tasks/persistency/plan.md:153`, never
     written. `e2e/undo.spec.ts` covers undo-after-restart, truncation, and
     cross-project isolation.
-  - Missing/corrupt clip → open → save keeps the reference (task 3's red test).
   - Untitled → record → Save As collects staged clips by MOVE — only the
     with-project copy path is tested (`e2e/bundle.spec.ts`); the EXDEV
     copy-fallback in `transfer` (`main/project.ts:82-93`) is fully untested.
