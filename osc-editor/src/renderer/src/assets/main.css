@@ -362,6 +362,12 @@ body {
   opacity: 0;
 }
 
+.track-label.selected {
+  background: var(--clip);
+  color: var(--text);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
 .track-label:hover .track-del {
   opacity: 1;
 }

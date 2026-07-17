@@ -55,12 +55,15 @@ interface TimelineProps {
   /** Timeline length, seconds (the view extends to at least this). */
   duration: number
   selectedIds: number[]
+  selectedTrackIds: number[]
   recordingRow: { events: number } | null
   playhead: number
   playing: PlayingState | null
   onSeek: (sec: number) => void
   /** Additive select (shift/cmd-click) toggles membership. */
   onSelect: (id: number | null, additive?: boolean) => void
+  /** Track label click; additive (shift/cmd) toggles membership. */
+  onSelectTrack: (trackId: number, additive: boolean) => void
   onTracksChange: (tracks: TrackState[], commit: boolean) => void
   onAddTrack: () => void
   /** Add a marker at the playhead. */
@@ -191,11 +194,13 @@ export function Timeline({
   pxPerSec,
   duration,
   selectedIds,
+  selectedTrackIds,
   recordingRow,
   playhead,
   playing,
   onSeek,
   onSelect,
+  onSelectTrack,
   onTracksChange,
   onAddTrack,
   onAddMarker,
@@ -550,7 +555,13 @@ export function Timeline({
 
           {tracks.map((track, trackIdx) => (
             <div className="track" key={track.id} style={{ height: TRACK_HEIGHT }}>
-              <div className="track-label">
+              <div
+                className={'track-label' + (selectedTrackIds.includes(track.id) ? ' selected' : '')}
+                // Keep the scroll area's deselect-on-pointerdown away so an
+                // additive click doesn't clear the selection first.
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => onSelectTrack(track.id, e.shiftKey || e.metaKey || e.ctrlKey)}
+              >
                 <EditableLabel
                   value={track.name}
                   placeholder={`Track ${trackIdx + 1}`}
@@ -565,7 +576,10 @@ export function Timeline({
                   title="delete track"
                   aria-label={`delete track ${trackIdx + 1}`}
                   onPointerDown={(e) => e.stopPropagation()}
-                  onClick={() => onDeleteTrack(track.id)}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onDeleteTrack(track.id)
+                  }}
                 >
                   ×
                 </button>

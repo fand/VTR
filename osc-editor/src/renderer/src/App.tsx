@@ -181,6 +181,7 @@ function parseDuration(draft: string): number | null {
 function App(): React.JSX.Element {
   const [recording, setRecording] = useState<{ path: string; startedAt: number } | null>(null)
   const [selectedIds, setSelectedIds] = useState<number[]>([])
+  const [selectedTrackIds, setSelectedTrackIds] = useState<number[]>([])
   const [selectedPoints, setSelectedPoints] = useState<PointSel[]>([])
   const [pxPerSec, setPxPerSec] = useState(20)
   const [curveHeight, setCurveHeight] = useState(220)
@@ -210,6 +211,7 @@ function App(): React.JSX.Element {
     setSelectedIds((ids) =>
       ids.filter((id) => doc.tracks.some((t) => t.clips.some((c) => c.id === id)))
     )
+    setSelectedTrackIds((ids) => ids.filter((id) => doc.tracks.some((t) => t.id === id)))
     setSelectedPoints([])
   }, [])
 
@@ -400,6 +402,7 @@ function App(): React.JSX.Element {
         d.tracks = d.tracks.filter((t) => t.id !== trackId)
       })
       setSelectedIds([])
+      setSelectedTrackIds((ids) => ids.filter((id) => id !== trackId))
       setSelectedPoints([])
     },
     [commit]
@@ -580,8 +583,10 @@ function App(): React.JSX.Element {
 
   // A curve point only makes sense within the clip it belongs to.
   // Additive select (shift/cmd-click) toggles membership.
+  // Clip and track selections are mutually exclusive.
   const selectClip = useCallback((id: number | null, additive = false) => {
     setSelectedPoints([])
+    setSelectedTrackIds([])
     if (id == null) {
       setSelectedIds([])
       return
@@ -592,10 +597,27 @@ function App(): React.JSX.Element {
     })
   }, [])
 
-  // The curve panel shows every selected clip's events.
+  const selectTrack = useCallback((id: number, additive: boolean) => {
+    setSelectedPoints([])
+    setSelectedIds([])
+    setSelectedTrackIds((ids) => {
+      if (!additive) return [id]
+      return ids.includes(id) ? ids.filter((i) => i !== id) : [...ids, id]
+    })
+  }, [])
+
+  // The curve panel shows every selected clip's events; with no clip
+  // selected, the selected tracks' clips.
   const selectedClips = React.useMemo(
     () => tracks.flatMap((t) => t.clips).filter((c) => selectedIds.includes(c.id)),
     [tracks, selectedIds]
+  )
+  const curveClips = React.useMemo(
+    () =>
+      selectedClips.length > 0
+        ? selectedClips
+        : tracks.filter((t) => selectedTrackIds.includes(t.id)).flatMap((t) => t.clips),
+    [selectedClips, tracks, selectedTrackIds]
   )
 
   const onPointEdit = useCallback(
@@ -851,11 +873,13 @@ function App(): React.JSX.Element {
         pxPerSec={pxPerSec}
         duration={duration}
         selectedIds={selectedIds}
+        selectedTrackIds={selectedTrackIds}
         recordingRow={recording ? { events: status?.events ?? 0 } : null}
         playhead={playhead}
         playing={playing}
         onSeek={onSeek}
         onSelect={selectClip}
+        onSelectTrack={selectTrack}
         onTracksChange={onTracksChange}
         onAddTrack={addTrack}
         onAddMarker={addMarker}
@@ -891,7 +915,7 @@ function App(): React.JSX.Element {
       />
 
       <CurvePanel
-        clips={selectedClips}
+        clips={curveClips}
         height={curveHeight}
         edits={edits}
         selectedPoints={selectedPoints}
