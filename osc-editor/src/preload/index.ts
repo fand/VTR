@@ -1,5 +1,4 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { electronAPI } from '@electron-toolkit/preload'
 import type {
   ClipSummary,
   ExportResult,
@@ -73,16 +72,15 @@ const api = {
 
 export type Api = typeof api
 
+// Only the typed api crosses the bridge: the generic electronAPI (raw
+// ipcRenderer.invoke/send on any channel) stays out of the page world.
 if (process.contextIsolated) {
   try {
-    contextBridge.exposeInMainWorld('electron', electronAPI)
     contextBridge.exposeInMainWorld('api', api)
   } catch (error) {
     console.error(error)
   }
 } else {
-  // @ts-ignore (define in dts)
-  window.electron = electronAPI
   // @ts-ignore (define in dts)
   window.api = api
 }

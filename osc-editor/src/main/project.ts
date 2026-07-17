@@ -10,10 +10,11 @@ import {
   rmSync,
   writeSync
 } from 'fs'
-import { dirname, join } from 'path'
+import { basename, dirname, join } from 'path'
 import { editsEmpty } from '../shared/edits'
 import type { ClipEdits, LoadedProject, PortConfig, ProjectFile } from '../shared/types'
 import { clipSummary } from './clips'
+import { isSafeClipFile } from './paths'
 
 export const PROJECT_FILE = 'project.json'
 
@@ -29,6 +30,11 @@ export function normalizeProjectPath(path: string): string {
  * file exists nowhere (missing clip).
  */
 export function resolveClipPath(projectDir: string, stagingDir: string, file: string): string {
+  // Defense in depth: a traversal reference never escapes the roots.
+  if (!isSafeClipFile(file)) {
+    const base = basename(file)
+    file = isSafeClipFile(base) ? base : '_invalid_clip_'
+  }
   const candidates = [
     join(projectDir, 'clips', file),
     join(projectDir, file),
@@ -80,6 +86,28 @@ export function loadProject(projectPath: string, stagingDir: string): LoadedProj
     name: track.name,
     clips: track.clips.flatMap((clip) => {
       const clipPath = resolveClipPath(dir, stagingDir, clip.file)
+      const missingEntry = (): (typeof track.clips)[0] & {
+        path: string
+        missing: boolean
+        summary: ReturnType<typeof clipSummary>
+      } => {
+        missing.push(clip.file)
+        return {
+          ...clip,
+          path: clipPath,
+          missing: true,
+          summary: {
+            path: clipPath,
+            name: clip.file,
+            wall: null,
+            duration: clip.trimOut,
+            events: 0,
+            tlOffset: null
+          }
+        }
+      }
+      // A traversal reference is never resolved — kept in the doc as missing.
+      if (!isSafeClipFile(clip.file)) return [missingEntry()]
       // A broken sidecar degrades to "no edits", never to "no clip".
       const sidecar = editsPath(clipPath)
       if (!(clip.file in edits) && existsSync(sidecar)) {
@@ -92,22 +120,7 @@ export function loadProject(projectPath: string, stagingDir: string): LoadedProj
       try {
         return [{ ...clip, path: clipPath, summary: clipSummary(clipPath) }]
       } catch {
-        missing.push(clip.file)
-        return [
-          {
-            ...clip,
-            path: clipPath,
-            missing: true,
-            summary: {
-              path: clipPath,
-              name: clip.file,
-              wall: null,
-              duration: clip.trimOut,
-              events: 0,
-              tlOffset: null
-            }
-          }
-        ]
+        return [missingEntry()]
       }
     })
   }))
@@ -137,6 +150,8 @@ export function collectClips(
   const staged: string[] = []
   for (const track of project.tracks) {
     for (const clip of track.clips) {
+      // A traversal reference never writes outside the bundle.
+      if (!isSafeClipFile(clip.file)) continue
       const src = resolveFrom(clip.file)
       const dest = join(dir, 'clips', clip.file)
       if (!existsSync(src) || src === dest || src === join(dir, clip.file)) continue
@@ -159,6 +174,7 @@ export function saveProject(projectPath: string, project: ProjectFile, stagingDi
   // Additive first: edits travel inline over IPC but live in per-clip
   // sidecar files on disk, next to the clip they belong to.
   for (const [file, clipEdits] of Object.entries(edits)) {
+    if (!isSafeClipFile(file)) continue
     if (!editsEmpty(clipEdits)) {
       const sidecar = editsPath(resolveClipPath(dir, stagingDir, file))
       // A missing-clip sidecar can resolve into a clips/ dir nobody created.

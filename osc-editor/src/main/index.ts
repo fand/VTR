@@ -14,6 +14,7 @@ import {
   resolveClipPath
 } from './project'
 import { SESSION_FILE, exportSession } from './session'
+import { ensureWithin } from './paths'
 import { SpawnMode, TapManager } from './tap'
 import { findTapBinary } from './tapBinary'
 import { appendUndo, clearUndoLog, loadUndoLog, transferUndoLog, truncateUndoAfter } from './undo'
@@ -50,6 +51,25 @@ let projectDir: string | null = null
 // Clip files resolve against the project bundle, then staging.
 const resolveClip = (file: string): string =>
   resolveClipPath(projectDir ?? workdir, stagingDir, file)
+
+// Roots a renderer-supplied clip path may point into.
+const clipRoots = (): (string | null)[] => [projectDir ?? workdir, stagingDir]
+
+// Project paths the user explicitly granted (CLI arg or a native dialog
+// result). project:save and project:loadPath refuse anything else, so a
+// compromised renderer can't write or read arbitrary locations.
+const grantedPaths = new Set<string>()
+const grantProjectPath = (p: string): string => {
+  grantedPaths.add(normalizeProjectPath(p))
+  return p
+}
+const requireGranted = (p: string): string => {
+  const projectPath = normalizeProjectPath(p)
+  if (!grantedPaths.has(projectPath)) {
+    throw new Error(`project path not granted by a dialog: ${p}`)
+  }
+  return projectPath
+}
 
 // The undo log lives in the project bundle; untitled sessions stage it in
 // userData and it moves into the bundle on Save As.
@@ -233,7 +253,7 @@ app.whenReady().then(() => {
   )
   ipcMain.handle('tap:stop', async (_e, clipPath: string) => {
     await requireTap().stop()
-    return clipSummary(clipPath)
+    return clipSummary(ensureWithin(clipRoots(), clipPath))
   })
   ipcMain.handle('tap:status', () => requireTap().status())
   ipcMain.handle('tap:setPorts', (_e, ports: PortConfig) => requireTap().setPorts(ports))
@@ -255,7 +275,7 @@ app.whenReady().then(() => {
   // A stale path (clip collected into a bundle since) re-resolves by name.
   ipcMain.handle('clip:events', (_e, path: string) => {
     try {
-      return readClip(path).events
+      return readClip(ensureWithin(clipRoots(), path)).events
     } catch {
       return readClip(resolveClip(basename(path))).events
     }
@@ -276,10 +296,14 @@ app.whenReady().then(() => {
     savedUndoSeq = project.undoSeq ?? 0
     return { path, project }
   }
+  if (cliProjectPath) grantProjectPath(cliProjectPath)
   ipcMain.handle('project:load', () => (cliProjectPath ? load(cliProjectPath) : null))
-  ipcMain.handle('project:loadPath', (_e, path: string) => load(path))
+  ipcMain.handle('project:loadPath', (_e, path: string) => {
+    requireGranted(path)
+    return load(path)
+  })
   ipcMain.handle('project:save', (_e, path: string, project: ProjectFile) => {
-    const projectPath = normalizeProjectPath(path)
+    const projectPath = requireGranted(path)
     const dir = dirname(projectPath)
     mkdirSync(dir, { recursive: true })
     // Sources resolve with the outgoing projectDir; adopt the new one only
@@ -293,7 +317,10 @@ app.whenReady().then(() => {
   // the user's pick (open returns null without it, save falls back to the
   // suggested path).
   ipcMain.handle('project:openDialog', async (e) => {
-    if (hidden) return process.env.OSC_EDITOR_DIALOG_PATH ?? null
+    if (hidden) {
+      const p = process.env.OSC_EDITOR_DIALOG_PATH ?? null
+      return p ? grantProjectPath(p) : null
+    }
     const win = BrowserWindow.fromWebContents(e.sender)
     // openDirectory: a .oscproj is a plain dir wherever LSTypeIsPackage
     // doesn't apply (dev runs, non-mac).
@@ -302,17 +329,17 @@ app.whenReady().then(() => {
       filters: [{ name: 'Project', extensions: ['oscproj', 'json'] }],
       properties: ['openFile', 'openDirectory']
     })
-    return res.canceled || res.filePaths.length === 0 ? null : res.filePaths[0]
+    return res.canceled || res.filePaths.length === 0 ? null : grantProjectPath(res.filePaths[0])
   })
   ipcMain.handle('project:saveDialog', async (e, defaultPath?: string) => {
     const fallback = defaultPath ?? join(projectDir ?? workdir, 'Untitled.oscproj')
-    if (hidden) return process.env.OSC_EDITOR_DIALOG_PATH ?? fallback
+    if (hidden) return grantProjectPath(process.env.OSC_EDITOR_DIALOG_PATH ?? fallback)
     const win = BrowserWindow.fromWebContents(e.sender)
     const res = await dialog.showSaveDialog(win!, {
       defaultPath: fallback,
       filters: [{ name: 'Project', extensions: ['oscproj'] }]
     })
-    return res.canceled || !res.filePath ? null : res.filePath
+    return res.canceled || !res.filePath ? null : grantProjectPath(res.filePath)
   })
   ipcMain.handle('undo:load', () => loadUndoLog(undoDir()))
   ipcMain.handle('undo:append', (_e, entry: UndoEntry) => appendUndo(undoDir(), entry, savedUndoSeq))
