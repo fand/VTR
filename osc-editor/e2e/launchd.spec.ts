@@ -1,7 +1,7 @@
 import { _electron as electron, expect, test } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdtempSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 // Touches the user's launchd domain — run explicitly:
@@ -74,8 +74,10 @@ test('launchd agent: crash restart + bootout on quit', async () => {
     await app.close()
   }
 
-  // Clean editor exit must bootout the agent.
+  // Clean editor exit must bootout the agent AND remove the plist —
+  // RunAtLoad=true would otherwise re-bootstrap the tap at next login.
   await sleep(1500)
   expect(jobLoaded()).toBe(false)
   expect(tapPid()).toBeNull()
+  expect(existsSync(join(homedir(), 'Library', 'LaunchAgents', `${LABEL}.plist`))).toBe(false)
 })

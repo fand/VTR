@@ -1,5 +1,5 @@
 import { ChildProcess, execFileSync, spawn } from 'child_process'
-import { mkdirSync, writeFileSync } from 'fs'
+import { mkdirSync, rmSync, writeFileSync } from 'fs'
 import net from 'net'
 import { homedir } from 'os'
 import { dirname, join } from 'path'
@@ -42,6 +42,7 @@ export class TapManager {
   private nextId = 1
   private buf = ''
   private stopping = false
+  private restarting = false
   private respawnDelay = RESPAWN_DELAY_MS
   private spawnedAt = 0
 
@@ -83,7 +84,9 @@ export class TapManager {
       return
     }
     if (this.proc) {
-      // The exit handler respawns with the updated args.
+      // The exit handler respawns with the updated args. This kill is
+      // intentional — it must not count toward the crash-loop backoff.
+      this.restarting = true
       this.proc.kill()
     } else {
       this.spawnTap()
@@ -115,14 +118,20 @@ export class TapManager {
     proc.on('exit', (code, signal) => {
       this.proc = null
       this.dropConnection(new Error('osc-tap exited'))
-      if (!this.stopping) {
-        // Back off when the tap dies right after spawning (bad args, port in use…).
-        const lived = Date.now() - this.spawnedAt
-        this.respawnDelay =
-          lived < 2000 ? Math.min(this.respawnDelay * 2, RESPAWN_DELAY_MAX_MS) : RESPAWN_DELAY_MS
-        console.log(`osc-tap exited (${code ?? signal}), respawning in ${this.respawnDelay}ms`)
-        setTimeout(() => this.spawnTap(), this.respawnDelay)
+      if (this.stopping) return
+      if (this.restarting) {
+        // Explicit restart (e.g. new ports): respawn now, keep the base delay.
+        this.restarting = false
+        this.respawnDelay = RESPAWN_DELAY_MS
+        this.spawnTap()
+        return
       }
+      // Back off when the tap dies right after spawning (bad args, port in use…).
+      const lived = Date.now() - this.spawnedAt
+      this.respawnDelay =
+        lived < 2000 ? Math.min(this.respawnDelay * 2, RESPAWN_DELAY_MAX_MS) : RESPAWN_DELAY_MS
+      console.log(`osc-tap exited (${code ?? signal}), respawning in ${this.respawnDelay}ms`)
+      setTimeout(() => this.spawnTap(), this.respawnDelay)
     })
     proc.on('error', (e) => {
       this.proc = null
@@ -136,6 +145,9 @@ export class TapManager {
     this.dropConnection(new Error('shutting down'))
     if (this.mode === 'launchd') {
       this.launchctl('bootout', `gui/${process.getuid!()}/${LAUNCHD_LABEL}`)
+      // RunAtLoad=true: a surviving plist would bootstrap osc-tap at next
+      // login with no editor running, orphaning the ports. Delete it.
+      rmSync(this.plistPath(), { force: true })
       return
     }
     this.proc?.kill()
