@@ -2,6 +2,7 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 're
 import { applyEditsIndexed } from '../../../shared/edits'
 import type { ClipEdits, OscEvent } from '../../../shared/types'
 import { ClipInst, clipLen } from '../timeline/model'
+import { formatRulerLabel } from './Timeline'
 
 const COLORS = [
   '#4da3ff',
@@ -598,14 +599,14 @@ export function CurvePanel({
     if (clips.length === 0) return null
     const lines: React.JSX.Element[] = []
     const tStep = gridStep(tRange, innerW - 2 * PAD, 50)
-    const tDec = stepDecimals(tStep)
     for (let i = Math.ceil(tMin / tStep - 1e-6); i * tStep <= tMax + 1e-6; i++) {
       const t = i * tStep
       const px = x(t)
       lines.push(
         <line key={`t${i}`} x1={px} y1={0} x2={px} y2={h} className="curve-grid-line" />,
-        <text key={`tl${i}`} x={px + 3} y={h - 4} className="curve-grid-label" fill="#8b919c">
-          {t.toFixed(tDec)}s
+        // Top-aligned, ruler-style labels — same format as the timeline seekbar.
+        <text key={`tl${i}`} x={px + 4} y={13} className="curve-grid-label" fill="#8b919c">
+          {formatRulerLabel(t)}
         </text>
       )
     }

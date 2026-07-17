@@ -81,7 +81,13 @@ test('curve panel: properties per address/arg, visibility toggle', async () => {
 
     // Grid: time + value lines, value labels on /fader's scale (0.1…0.9 → 0.1 step).
     expect(await page.locator('.curve-grid-line').count()).toBeGreaterThan(5)
-    await expect(page.locator('.curve-grid-label').filter({ hasText: /^0\.5$/ })).toHaveCount(1)
+    await expect(
+      page.locator('.curve-ylabels .curve-grid-label').filter({ hasText: /^0\.5$/ })
+    ).toHaveCount(1)
+    // Time axis labels sit at the top, in the ruler's format ("1s", not "1.0s").
+    const oneSec = page.locator('.curve-grid-label').filter({ hasText: /^1s$/ }).first()
+    await expect(oneSec).toBeVisible()
+    expect((await oneSec.boundingBox())!.y - editorBox.y).toBeLessThan(20)
 
     // Toggle /fader off → its polyline disappears.
     await page.getByLabel('toggle /fader').uncheck()

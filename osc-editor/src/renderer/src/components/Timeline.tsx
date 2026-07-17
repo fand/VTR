@@ -189,13 +189,15 @@ function rulerStep(pxPerSec: number): number {
   return RULER_STEPS[RULER_STEPS.length - 1]
 }
 
-function formatRulerLabel(s: number): string {
+/** Ruler tick label; shared with the curve editor's time axis. */
+export function formatRulerLabel(s: number): string {
   if (s >= 60) {
     const m = Math.floor(s / 60)
     const sec = s % 60
     return sec === 0 ? `${m}m` : `${m}m${sec.toFixed(0)}`
   }
-  return s < 1 ? s.toFixed(2).replace(/0$/, '') : `${s.toFixed(0)}s`
+  // ≤3 decimals, no trailing zeros (the curve grid steps go below 0.1s).
+  return s < 1 ? String(Number(s.toFixed(3))) : `${s.toFixed(0)}s`
 }
 
 export function Timeline({
