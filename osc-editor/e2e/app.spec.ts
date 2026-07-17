@@ -48,7 +48,8 @@ async function launchApp(): Promise<Launched> {
     env: {
       ...process.env,
       OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
-      OSC_EDITOR_HIDDEN: '1'
+      OSC_EDITOR_HIDDEN: '1',
+      OSC_EDITOR_DATA_DIR: workdir
     }
   })
   app.process().stdout?.on('data', (d) => console.log(`[main] ${d.toString().trimEnd()}`))
@@ -161,7 +162,8 @@ test('boot: no CLI arg → empty project; broken arg → error + empty project',
   const env = {
     ...process.env,
     OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
-    OSC_EDITOR_HIDDEN: '1'
+    OSC_EDITOR_HIDDEN: '1',
+    OSC_EDITOR_DATA_DIR: workdir
   }
   const app = await electron.launch({
     args: [join(__dirname, '../out/main/index.js')],
@@ -213,7 +215,8 @@ test('tracks can be added and deleted without clips', async () => {
       env: {
         ...process.env,
         OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
-        OSC_EDITOR_HIDDEN: '1'
+        OSC_EDITOR_HIDDEN: '1',
+        OSC_EDITOR_DATA_DIR: workdir
       }
     })
     const page2 = await relaunch.firstWindow()

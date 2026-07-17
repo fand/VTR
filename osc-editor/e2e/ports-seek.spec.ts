@@ -41,7 +41,8 @@ async function launchApp(): Promise<{ app: ElectronApplication; page: Page; work
     env: {
       ...process.env,
       OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
-      OSC_EDITOR_HIDDEN: '1'
+      OSC_EDITOR_HIDDEN: '1',
+      OSC_EDITOR_DATA_DIR: workdir
     }
   })
   const page = await app.firstWindow()
@@ -78,7 +79,10 @@ test('seek: ruler click, lane click, scrub', async () => {
     expect(head.y).toBeCloseTo(scroll.y, 0)
 
     // Empty lane click at x=300.
-    await page.locator('.track-lane').first().click({ position: { x: 300, y: 55 } })
+    await page
+      .locator('.track-lane')
+      .first()
+      .click({ position: { x: 300, y: 55 } })
     expect(await playheadLeft(page)).toBeCloseTo(396, 0)
 
     // Scrub: drag along the ruler.

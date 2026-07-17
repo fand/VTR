@@ -47,11 +47,14 @@ export class TapManager {
 
   constructor(
     private bin: string,
-    readonly workdir: string,
+    /** App-owned dir for the control socket and launchd log. */
+    readonly dataDir: string,
+    /** Default recording dir (staging); start(dir) overrides per clip. */
+    readonly outdir: string,
     private mode: SpawnMode = 'child',
     ports: PortConfig = DEFAULT_PORTS
   ) {
-    this.sockPath = join(workdir, 'osc-tap.sock')
+    this.sockPath = join(dataDir, 'osc-tap.sock')
     this._ports = ports
   }
 
@@ -89,7 +92,7 @@ export class TapManager {
       '--listen', String(this._ports.listen),
       '--forward', `127.0.0.1:${this._ports.forward}`,
       '--beacon', String(this._ports.beacon),
-      '--outdir', this.workdir,
+      '--outdir', this.outdir,
       '--control', this.sockPath
     ]
   }
@@ -166,7 +169,7 @@ export class TapManager {
 ${programArgs}
     </array>
     <key>WorkingDirectory</key>
-    <string>${xmlEscape(this.workdir)}</string>
+    <string>${xmlEscape(this.dataDir)}</string>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
@@ -177,7 +180,7 @@ ${programArgs}
     <key>ThrottleInterval</key>
     <integer>1</integer>
     <key>StandardErrorPath</key>
-    <string>${xmlEscape(join(this.workdir, 'osc-tap.log'))}</string>
+    <string>${xmlEscape(join(this.dataDir, 'osc-tap.log'))}</string>
   </dict>
 </plist>
 `

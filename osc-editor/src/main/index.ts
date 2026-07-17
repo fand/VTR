@@ -1,5 +1,5 @@
 import { app, shell, BrowserWindow, Menu, dialog, ipcMain } from 'electron'
-import { existsSync, statSync } from 'fs'
+import { existsSync, mkdirSync, statSync } from 'fs'
 import { dirname, join, resolve } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -14,6 +14,14 @@ import { DEFAULT_PORTS, type PortConfig, type ProjectFile, type UndoEntry } from
 
 // Working directory: cwd when launched from the CLI (per spec).
 const workdir = process.cwd()
+
+// App-owned files (control socket, undo log, staged recordings) live in
+// userData, not the cwd. OSC_EDITOR_DATA_DIR redirects it (e2e).
+if (process.env.OSC_EDITOR_DATA_DIR) {
+  app.setPath('userData', resolve(workdir, process.env.OSC_EDITOR_DATA_DIR))
+}
+const dataDir = app.getPath('userData')
+mkdirSync(dataDir, { recursive: true })
 
 // First CLI arg = project file to open at boot (packaged apps have no script arg).
 const cliArg = process.argv[app.isPackaged ? 1 : 2]
@@ -153,7 +161,7 @@ app.whenReady().then(() => {
       ...DEFAULT_PORTS,
       ...(cliProjectPath ? readProjectPorts(cliProjectPath) : undefined)
     }
-    tap = new TapManager(findTapBinary(), workdir, mode, ports)
+    tap = new TapManager(findTapBinary(), dataDir, workdir, mode, ports)
     tap.spawnTap()
   } catch (e) {
     tapError = (e as Error).message
@@ -211,9 +219,9 @@ app.whenReady().then(() => {
     })
     return res.canceled || !res.filePath ? null : res.filePath
   })
-  ipcMain.handle('undo:load', () => loadUndoLog(workdir))
-  ipcMain.handle('undo:append', (_e, entry: UndoEntry) => appendUndo(workdir, entry))
-  ipcMain.handle('undo:truncateAfter', (_e, seq: number) => truncateUndoAfter(workdir, seq))
+  ipcMain.handle('undo:load', () => loadUndoLog(dataDir))
+  ipcMain.handle('undo:append', (_e, entry: UndoEntry) => appendUndo(dataDir, entry))
+  ipcMain.handle('undo:truncateAfter', (_e, seq: number) => truncateUndoAfter(dataDir, seq))
   // Ask where to save; null = user cancelled. Hidden (e2e) skips the native
   // dialog — it would hang the test — and writes the default session.jsonl.
   ipcMain.handle('session:export', async (e, project: ProjectFile) => {

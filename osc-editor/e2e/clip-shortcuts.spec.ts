@@ -40,7 +40,8 @@ test('clip keyboard shortcuts: Cmd+C / Cmd+V copy-paste at playhead', async () =
     env: {
       ...process.env,
       OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
-      OSC_EDITOR_HIDDEN: '1'
+      OSC_EDITOR_HIDDEN: '1',
+      OSC_EDITOR_DATA_DIR: workdir
     }
   })
   try {

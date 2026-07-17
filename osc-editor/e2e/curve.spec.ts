@@ -45,7 +45,8 @@ test('curve panel: properties per address/arg, visibility toggle', async () => {
     env: {
       ...process.env,
       OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
-      OSC_EDITOR_HIDDEN: '1'
+      OSC_EDITOR_HIDDEN: '1',
+      OSC_EDITOR_DATA_DIR: workdir
     }
   })
   try {
@@ -168,7 +169,8 @@ test('curve panel: filter input narrows the property list and drawn curves', asy
     env: {
       ...process.env,
       OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
-      OSC_EDITOR_HIDDEN: '1'
+      OSC_EDITOR_HIDDEN: '1',
+      OSC_EDITOR_DATA_DIR: workdir
     }
   })
   try {
@@ -227,7 +229,8 @@ test('curve panel: property list sorted by address', async () => {
     env: {
       ...process.env,
       OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
-      OSC_EDITOR_HIDDEN: '1'
+      OSC_EDITOR_HIDDEN: '1',
+      OSC_EDITOR_DATA_DIR: workdir
     }
   })
   try {
@@ -274,7 +277,8 @@ test('curve panel: selecting a property dims other curves and hides their points
     env: {
       ...process.env,
       OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
-      OSC_EDITOR_HIDDEN: '1'
+      OSC_EDITOR_HIDDEN: '1',
+      OSC_EDITOR_DATA_DIR: workdir
     }
   })
   try {
@@ -334,7 +338,8 @@ test('curve panel: clicking a curve line selects its property', async () => {
     env: {
       ...process.env,
       OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
-      OSC_EDITOR_HIDDEN: '1'
+      OSC_EDITOR_HIDDEN: '1',
+      OSC_EDITOR_DATA_DIR: workdir
     }
   })
   try {
@@ -414,7 +419,8 @@ test('curve panel: multi-select shows every selected clip, timeline time axis', 
     env: {
       ...process.env,
       OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
-      OSC_EDITOR_HIDDEN: '1'
+      OSC_EDITOR_HIDDEN: '1',
+      OSC_EDITOR_DATA_DIR: workdir
     }
   })
   try {
@@ -479,7 +485,8 @@ test('curve panel: drag and delete points, edits persisted to sidecar', async ()
     env: {
       ...process.env,
       OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
-      OSC_EDITOR_HIDDEN: '1'
+      OSC_EDITOR_HIDDEN: '1',
+      OSC_EDITOR_DATA_DIR: workdir
     }
   })
   try {
@@ -563,7 +570,8 @@ test('curve panel: transform box moves and scales the selected points', async ()
     env: {
       ...process.env,
       OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
-      OSC_EDITOR_HIDDEN: '1'
+      OSC_EDITOR_HIDDEN: '1',
+      OSC_EDITOR_DATA_DIR: workdir
     }
   })
   try {
@@ -669,7 +677,8 @@ test('curve panel: double-click / cmd+click on a curve inserts a point', async (
     env: {
       ...process.env,
       OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
-      OSC_EDITOR_HIDDEN: '1'
+      OSC_EDITOR_HIDDEN: '1',
+      OSC_EDITOR_DATA_DIR: workdir
     }
   })
   try {
@@ -763,7 +772,8 @@ test('curve header: snap locks drags to the grid, Box toggles the transform box'
     env: {
       ...process.env,
       OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
-      OSC_EDITOR_HIDDEN: '1'
+      OSC_EDITOR_HIDDEN: '1',
+      OSC_EDITOR_DATA_DIR: workdir
     }
   })
   try {
@@ -850,7 +860,8 @@ test('curve header: pencil clicks add points to the selected curve', async () =>
     env: {
       ...process.env,
       OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
-      OSC_EDITOR_HIDDEN: '1'
+      OSC_EDITOR_HIDDEN: '1',
+      OSC_EDITOR_DATA_DIR: workdir
     }
   })
   try {
@@ -955,7 +966,8 @@ test('curve panel: marquee selects multiple points, group drag and delete', asyn
     env: {
       ...process.env,
       OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
-      OSC_EDITOR_HIDDEN: '1'
+      OSC_EDITOR_HIDDEN: '1',
+      OSC_EDITOR_DATA_DIR: workdir
     }
   })
   try {

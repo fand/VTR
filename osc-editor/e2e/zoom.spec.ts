@@ -40,7 +40,8 @@ test('timeline pinch zoom (ctrl+wheel) scales around the cursor', async () => {
     env: {
       ...process.env,
       OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
-      OSC_EDITOR_HIDDEN: '1'
+      OSC_EDITOR_HIDDEN: '1',
+      OSC_EDITOR_DATA_DIR: workdir
     }
   })
   try {
@@ -137,7 +138,8 @@ test('curve editor x/y zoom sliders scale the axes; y zoom scrolls vertically', 
     env: {
       ...process.env,
       OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
-      OSC_EDITOR_HIDDEN: '1'
+      OSC_EDITOR_HIDDEN: '1',
+      OSC_EDITOR_DATA_DIR: workdir
     }
   })
   try {
@@ -195,7 +197,8 @@ test('min zoom fits a long timeline in the window', async () => {
     env: {
       ...process.env,
       OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
-      OSC_EDITOR_HIDDEN: '1'
+      OSC_EDITOR_HIDDEN: '1',
+      OSC_EDITOR_DATA_DIR: workdir
     }
   })
   try {
@@ -207,9 +210,7 @@ test('min zoom fits a long timeline in the window', async () => {
     await page.getByLabel('zoom', { exact: true }).fill('0')
     await expect
       .poll(() =>
-        page
-          .locator('.timeline-scroll')
-          .evaluate((el) => el.scrollWidth - el.clientWidth)
+        page.locator('.timeline-scroll').evaluate((el) => el.scrollWidth - el.clientWidth)
       )
       .toBeLessThanOrEqual(1)
   } finally {
