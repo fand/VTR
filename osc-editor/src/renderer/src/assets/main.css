@@ -568,6 +568,19 @@ body {
   user-select: none;
 }
 
+.curve-filter {
+  display: block;
+  width: calc(100% - 12px);
+  margin: 0 6px 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text);
+  background: #0c0d10;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 6px;
+}
+
 .curve-prop {
   display: flex;
   align-items: center;

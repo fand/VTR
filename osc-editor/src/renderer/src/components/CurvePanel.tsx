@@ -159,6 +159,8 @@ export function CurvePanel({
   const [loaded, setLoaded] = useState<Map<string, OscEvent[]>>(new Map())
   // Visibility is keyed by address, so it usefully carries across clip selections.
   const [hidden, setHidden] = useState<Set<string>>(new Set())
+  // Name filter: narrows the property list and the drawn curves.
+  const [filter, setFilter] = useState('')
   // Selected properties: their curves draw thicker and win the hover tooltip.
   const [selectedProps, setSelectedProps] = useState<Set<string>>(new Set())
   const editorRef = useRef<HTMLDivElement | null>(null)
@@ -231,6 +233,12 @@ export function CurvePanel({
     })
     return buildProperties(ready, edits)
   }, [clips, loaded, edits])
+
+  // Properties that pass the name filter; everything drawn works off this.
+  const shown = useMemo(() => {
+    const q = filter.trim().toLowerCase()
+    return q === '' ? curves : curves.filter((p) => p.label.toLowerCase().includes(q))
+  }, [curves, filter])
 
   const toggle = (key: string): void => {
     setHidden((prev) => {
@@ -356,7 +364,7 @@ export function CurvePanel({
     let x1 = -Infinity
     let y1 = -Infinity
     let n = 0
-    for (const p of curves) {
+    for (const p of shown) {
       if (hidden.has(p.key) || dimmed(p.key)) continue
       for (const pt of p.points) {
         if (!selKeys.has(selKey(ptSel(pt)))) continue
@@ -384,7 +392,7 @@ export function CurvePanel({
 
   const beginXform = (e: React.PointerEvent, mode: XformMode, box: Box): void => {
     const targets: { pt: CurvePoint; min: number; max: number; px0: number; py0: number }[] = []
-    for (const p of curves) {
+    for (const p of shown) {
       if (hidden.has(p.key) || dimmed(p.key)) continue
       for (const pt of p.points) {
         if (!selKeys.has(selKey(ptSel(pt)))) continue
@@ -463,7 +471,7 @@ export function CurvePanel({
   const [mouse, setMouse] = useState<{ x: number; y: number } | null>(null)
   const hoverInfo = ((): { px: number; py: number; text: string } | null => {
     if (!mouse || clips.length === 0) return null
-    const visible = curves.filter((p) => !hidden.has(p.key))
+    const visible = shown.filter((p) => !hidden.has(p.key))
     const sel = visible.filter((p) => selectedProps.has(p.key))
     let best: { px: number; py: number; text: string } | null = null
     let bestD = Infinity
@@ -556,7 +564,7 @@ export function CurvePanel({
     setMarqueeRect(rect)
     const seen = new Set(m.base.map(selKey))
     const hits = [...m.base]
-    for (const p of curves) {
+    for (const p of shown) {
       if (hidden.has(p.key) || dimmed(p.key)) continue
       for (const pt of p.points) {
         const px = x(pt.t)
@@ -583,7 +591,7 @@ export function CurvePanel({
 
   // Grid: vertical time lines for the shown range; horizontal value lines on
   // the first visible curve's scale (each curve auto-scales its own Y).
-  const gridProp = curves.find((p) => !hidden.has(p.key))
+  const gridProp = shown.find((p) => !hidden.has(p.key))
   const yGrid = ((): { py: number; label: string }[] => {
     if (clips.length === 0 || !gridProp || gridProp.max <= gridProp.min) return []
     const vStep = gridStep(gridProp.max - gridProp.min, h - 2 * PAD, 18)
@@ -632,7 +640,15 @@ export function CurvePanel({
   return (
     <div className="curve-panel" style={{ height }}>
       <div className="curve-props">
-        {curves.map((p) => (
+        <input
+          className="curve-filter"
+          type="search"
+          placeholder="filter"
+          aria-label="filter properties"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+        />
+        {shown.map((p) => (
           <div
             className={selectedProps.has(p.key) ? 'curve-prop selected' : 'curve-prop'}
             key={p.key}
@@ -678,7 +694,7 @@ export function CurvePanel({
                     </g>
                   )
                 })}
-              {curves
+              {shown
                 .filter((p) => !hidden.has(p.key))
                 .map((p) => (
                   <g key={p.key} data-prop={p.label} opacity={dimmed(p.key) ? 0.1 : 1}>

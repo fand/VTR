@@ -129,6 +129,64 @@ test('curve panel: properties per address/arg, visibility toggle', async () => {
   }
 })
 
+test('curve panel: filter input narrows the property list and drawn curves', async () => {
+  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  writeFileSync(
+    join(workdir, CLIP),
+    jsonl([
+      { type: 'session_start', t: 0, wall: '2026-07-16T00:00:00Z' },
+      { t: 0.2, port: LISTEN_PORT, a: '/fader', args: [0.1] },
+      { t: 0.5, port: LISTEN_PORT, a: '/xy', args: [0.1, 0.2] },
+      { t: 0.8, port: LISTEN_PORT, a: '/fader', args: [0.5] },
+      { type: 'session_end', t: 2 }
+    ])
+  )
+  writeFileSync(
+    join(workdir, 'project.json'),
+    JSON.stringify({
+      version: 1,
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT, beacon: BEACON_PORT },
+      duration: 10,
+      tracks: [{ clips: [{ file: CLIP, offset: 0, trimIn: 0, trimOut: 2 }] }]
+    })
+  )
+
+  const app = await electron.launch({
+    args: [join(__dirname, '../out/main/index.js')],
+    cwd: workdir,
+    env: {
+      ...process.env,
+      OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
+      OSC_EDITOR_HIDDEN: '1'
+    }
+  })
+  try {
+    const page = await app.firstWindow()
+    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await page.locator('.clip').click()
+    await expect(page.locator('.curve-prop-name')).toHaveText(['/fader', '/xy[0]', '/xy[1]'])
+    await expect(page.locator('polyline')).toHaveCount(3)
+
+    // "xy" keeps only /xy[0] and /xy[1], in the list and on the canvas.
+    await page.getByLabel('filter properties').fill('xy')
+    await expect(page.locator('.curve-prop-name')).toHaveText(['/xy[0]', '/xy[1]'])
+    await expect(page.locator('polyline')).toHaveCount(2)
+    await expect(page.locator('polyline[data-prop="/fader"]')).toHaveCount(0)
+
+    // No match: empty list, no curves.
+    await page.getByLabel('filter properties').fill('nope')
+    await expect(page.locator('.curve-prop-name')).toHaveCount(0)
+    await expect(page.locator('polyline')).toHaveCount(0)
+
+    // Clearing restores everything.
+    await page.getByLabel('filter properties').fill('')
+    await expect(page.locator('.curve-prop-name')).toHaveCount(3)
+    await expect(page.locator('polyline')).toHaveCount(3)
+  } finally {
+    await app.close()
+  }
+})
+
 test('curve panel: property list sorted by address', async () => {
   const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
   writeFileSync(
