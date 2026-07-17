@@ -368,7 +368,11 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('project:saveDialog', async (e, defaultPath?: string) => {
     const fallback = defaultPath ?? join(projectDir ?? workdir, 'Untitled.oscproj')
-    if (hidden) return grantProjectPath(process.env.OSC_EDITOR_DIALOG_PATH ?? fallback)
+    if (hidden) {
+      // Empty OSC_EDITOR_DIALOG_PATH stands in for a cancelled dialog.
+      const p = process.env.OSC_EDITOR_DIALOG_PATH
+      return p === '' ? null : grantProjectPath(p ?? fallback)
+    }
     const win = BrowserWindow.fromWebContents(e.sender)
     const res = await dialog.showSaveDialog(win!, {
       defaultPath: fallback,
@@ -377,14 +381,20 @@ app.whenReady().then(() => {
     return res.canceled || !res.filePath ? null : grantProjectPath(res.filePath)
   })
   ipcMain.handle('undo:load', () => loadUndoLog(undoDir()))
-  ipcMain.handle('undo:append', (_e, entry: UndoEntry) => appendUndo(undoDir(), entry, savedUndoSeq))
+  ipcMain.handle('undo:append', (_e, entry: UndoEntry) =>
+    appendUndo(undoDir(), entry, savedUndoSeq)
+  )
   ipcMain.handle('undo:truncateAfter', (_e, seq: number) => truncateUndoAfter(undoDir(), seq))
   // Ask where to save; null = user cancelled. Hidden (e2e) skips the native
   // dialog — it would hang the test — and writes the default session.jsonl.
   ipcMain.handle('session:export', async (e, project: ProjectFile) => {
     // Default next to the project: a bundle's parent dir, not inside it.
     const exportDir =
-      projectDir == null ? workdir : projectDir.endsWith('.oscproj') ? dirname(projectDir) : projectDir
+      projectDir == null
+        ? workdir
+        : projectDir.endsWith('.oscproj')
+          ? dirname(projectDir)
+          : projectDir
     let outPath = join(exportDir, SESSION_FILE)
     if (!hidden) {
       const win = BrowserWindow.fromWebContents(e.sender)

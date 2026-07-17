@@ -112,6 +112,107 @@ test('undo/redo: one entry per drag, survives restart, linear truncation', async
   await app.close()
 })
 
+test('redo survives a relaunch: entries past undoSeq become the redo stack', async () => {
+  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  writeFileSync(
+    join(workdir, CLIP),
+    jsonl([
+      { type: 'session_start', t: 0, wall: '2026-07-16T00:00:00Z' },
+      { t: 0.5, port: LISTEN_PORT, a: '/a', args: [0.1] },
+      { type: 'session_end', t: 2 }
+    ])
+  )
+  writeFileSync(
+    join(workdir, 'project.json'),
+    JSON.stringify({
+      version: 1,
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT, beacon: BEACON_PORT },
+      duration: 20,
+      tracks: [{ clips: [{ file: CLIP, offset: 0, trimIn: 0, trimOut: 2 }] }]
+    })
+  )
+
+  let app = await launch(workdir)
+  let page = await app.firstWindow()
+  await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+  const dragClip = async (px: number): Promise<void> => {
+    const box = (await page.locator('.clip').boundingBox())!
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width / 2 + px, box.y + box.height / 2, { steps: 5 })
+    await page.mouse.up()
+  }
+
+  // Two entries (offset 0 → 5 → 10), undo one, save: undoSeq = 1 while the
+  // log keeps seq 2 — the crash-recovery shape.
+  await dragClip(100)
+  await dragClip(100)
+  await page.keyboard.press(`${MOD}+z`)
+  await page.keyboard.press('ControlOrMeta+s')
+  await expect.poll(() => savedSeq(workdir)).toBe(1)
+  await expect.poll(() => savedOffset(workdir)).toBeGreaterThan(4)
+  await app.close()
+
+  // Relaunch: seq 2 must come back as redo.
+  app = await launch(workdir)
+  page = await app.firstWindow()
+  await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+  await page.keyboard.press(`${MOD}+Shift+z`)
+  await page.keyboard.press('ControlOrMeta+s')
+  await expect.poll(() => savedOffset(workdir)).toBeGreaterThan(9)
+  await expect.poll(() => savedSeq(workdir)).toBe(2)
+  await app.close()
+})
+
+test('divergent undo entry drops history and says so in the banner', async () => {
+  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  writeFileSync(
+    join(workdir, CLIP),
+    jsonl([
+      { type: 'session_start', t: 0, wall: '2026-07-16T00:00:00Z' },
+      { t: 0.5, port: LISTEN_PORT, a: '/a', args: [0.1] },
+      { type: 'session_end', t: 2 }
+    ])
+  )
+  writeFileSync(
+    join(workdir, 'project.json'),
+    JSON.stringify({
+      version: 1,
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT, beacon: BEACON_PORT },
+      duration: 10,
+      undoSeq: 1,
+      tracks: [{ clips: [{ file: CLIP, offset: 0, trimIn: 0, trimOut: 2 }] }]
+    })
+  )
+  // An entry whose inverse patch points at a track that doesn't exist:
+  // applyPatches must throw, wiping the stack instead of corrupting the doc.
+  writeFileSync(
+    join(workdir, 'undo.jsonl'),
+    jsonl([
+      {
+        seq: 1,
+        label: 'bogus',
+        patches: [{ op: 'replace', path: ['tracks', 5, 'clips', 0, 'offset'], value: 5 }],
+        inversePatches: [{ op: 'replace', path: ['tracks', 5, 'clips', 0, 'offset'], value: 0 }]
+      }
+    ])
+  )
+
+  const app = await launch(workdir)
+  try {
+    const page = await app.firstWindow()
+    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await page.keyboard.press(`${MOD}+z`)
+    await expect(page.locator('.error-banner')).toContainText('history')
+    // The log is truncated and the doc untouched.
+    await expect.poll(() => readFileSync(join(workdir, 'undo.jsonl'), 'utf8').trim()).toBe('')
+    await page.keyboard.press('ControlOrMeta+s')
+    await expect.poll(() => savedOffset(workdir)).toBe(0)
+  } finally {
+    await app.close()
+  }
+})
+
 test('undo log stays with its project: opening A never replays B', async () => {
   const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
   // Two projects in separate dirs, one shared data dir (workdir).

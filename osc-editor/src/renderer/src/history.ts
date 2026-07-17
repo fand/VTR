@@ -13,7 +13,6 @@ export interface Doc {
   edits: Record<string, ClipEdits>
 }
 
-
 export interface History {
   doc: Doc
   /** Version (undo seq) of the current doc; saved as project.json undoSeq. */
@@ -132,7 +131,9 @@ export function useHistory(
     future.current = []
     window.api.undo.truncateAfter(0).catch(persistError)
     install(docRef.current)
-  }, [install, persistError])
+    // Losing the whole stack must not be silent.
+    onError('undo history no longer matches the project; history cleared')
+  }, [install, persistError, onError])
 
   const undo = useCallback((): void => {
     // Mid-gesture undo would apply patches onto the uncommitted transient
