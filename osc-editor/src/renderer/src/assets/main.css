@@ -577,6 +577,18 @@ body {
   opacity: 0.45;
 }
 
+.clip.missing {
+  opacity: 0.45;
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--bg-raised),
+    var(--bg-raised) 6px,
+    transparent 6px,
+    transparent 12px
+  );
+  border-style: dashed;
+}
+
 .ctx-overlay {
   position: fixed;
   inset: 0;

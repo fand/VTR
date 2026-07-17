@@ -129,7 +129,10 @@ export interface ProjectFile {
 /** ProjectClip enriched with parsed clip metadata (load result). */
 export interface LoadedClip extends ProjectClip {
   path: string
+  /** Stub (0 events) when missing; kept non-null so the UI needs no null checks. */
   summary: ClipSummary
+  /** Clip file unreadable at load; the reference is kept so save round-trips it. */
+  missing?: boolean
 }
 
 export interface ExportResult {

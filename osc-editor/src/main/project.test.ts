@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { expect, test } from 'vitest'
@@ -34,6 +34,19 @@ test('corrupt edits sidecar keeps the clip, degrades to no edits', () => {
   expect(loaded.tracks[0].clips.map((c) => c.file)).toEqual(['a.jsonl'])
   expect(loaded.missing).toEqual([])
   expect(loaded.edits).toEqual({})
+})
+
+test('unreadable clip is kept in the track as missing', () => {
+  const { dir, staging, projectPath } = makeBundle()
+  rmSync(join(dir, 'clips', 'a.jsonl'))
+  const loaded = loadProject(projectPath, staging)!
+  expect(loaded.missing).toEqual(['a.jsonl'])
+  const clip = loaded.tracks[0].clips[0]
+  expect(clip.file).toBe('a.jsonl')
+  expect(clip.missing).toBe(true)
+  expect(clip.trimOut).toBe(2)
+  expect(clip.summary.events).toBe(0)
+  expect(clip.summary.tlOffset).toBeNull()
 })
 
 test('valid sidecar still loads', () => {

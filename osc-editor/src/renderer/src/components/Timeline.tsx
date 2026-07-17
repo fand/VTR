@@ -689,7 +689,8 @@ export function Timeline({
                     className={
                       'clip' +
                       (selectedIds.includes(clip.id) ? ' selected' : '') +
-                      (clip.muted ? ' muted' : '')
+                      (clip.muted ? ' muted' : '') +
+                      (clip.missing ? ' missing' : '')
                     }
                     style={{
                       left: clip.offset * pxPerSec,
@@ -724,7 +725,9 @@ export function Timeline({
                       />
                     </span>
                     <span className="clip-meta">
-                      {clipLen(clip).toFixed(1)}s · {clip.summary.events} ev
+                      {clip.missing
+                        ? 'missing file'
+                        : `${clipLen(clip).toFixed(1)}s · ${clip.summary.events} ev`}
                       {clip.summary.tlOffset != null && ' · tl'}
                     </span>
                     <div className="trim-handle trim-in" />

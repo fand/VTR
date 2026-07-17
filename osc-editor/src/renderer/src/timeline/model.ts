@@ -24,6 +24,8 @@ export interface ClipInst {
   /** Muted clips are skipped on preview/export. */
   muted?: boolean
   summary: ClipSummary
+  /** Clip file unreadable at load; rendered grayed out, saved as-is. */
+  missing?: boolean
 }
 
 export interface TrackState {
@@ -108,7 +110,8 @@ export function tracksFromProject(project: LoadedProject, nextId: () => number):
       trimIn: c.trimIn,
       trimOut: c.trimOut,
       muted: c.muted,
-      summary: c.summary
+      summary: c.summary,
+      missing: c.missing
     }))
   }))
 }

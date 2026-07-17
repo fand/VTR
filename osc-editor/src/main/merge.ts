@@ -21,7 +21,12 @@ export function mergeProject(
       // Muted clips still occupy the timeline, so they count into duration.
       duration = Math.max(duration, clip.offset + (clip.trimOut - clip.trimIn))
       if (clip.muted) continue
-      const data = readClip(resolveClip(clip.file))
+      let data
+      try {
+        data = readClip(resolveClip(clip.file))
+      } catch {
+        continue // missing clip: no events, but it kept its timeline slot above
+      }
       // Edits first: a t edit decides whether the event falls inside the trim.
       const clipEvents = applyEdits(data.events, project.edits?.[clip.file])
       for (const e of clipEvents) {

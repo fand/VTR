@@ -1,4 +1,12 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs'
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync
+} from 'fs'
 import { dirname, join } from 'path'
 import { editsEmpty } from '../shared/edits'
 import type { ClipEdits, LoadedProject, PortConfig, ProjectFile } from '../shared/types'
@@ -18,7 +26,11 @@ export function normalizeProjectPath(path: string): string {
  * file exists nowhere (missing clip).
  */
 export function resolveClipPath(projectDir: string, stagingDir: string, file: string): string {
-  const candidates = [join(projectDir, 'clips', file), join(projectDir, file), join(stagingDir, file)]
+  const candidates = [
+    join(projectDir, 'clips', file),
+    join(projectDir, file),
+    join(stagingDir, file)
+  ]
   return candidates.find(existsSync) ?? candidates[0]
 }
 
@@ -67,7 +79,21 @@ export function loadProject(projectPath: string, stagingDir: string): LoadedProj
         return [{ ...clip, path: clipPath, summary: clipSummary(clipPath) }]
       } catch {
         missing.push(clip.file)
-        return []
+        return [
+          {
+            ...clip,
+            path: clipPath,
+            missing: true,
+            summary: {
+              path: clipPath,
+              name: clip.file,
+              wall: null,
+              duration: clip.trimOut,
+              events: 0,
+              tlOffset: null
+            }
+          }
+        ]
       }
     })
   }))
@@ -129,7 +155,10 @@ export function saveProject(projectPath: string, project: ProjectFile, stagingDi
   // next to the clip they belong to.
   for (const [file, clipEdits] of Object.entries(edits)) {
     if (!editsEmpty(clipEdits)) {
-      writeAtomic(editsPath(resolveClipPath(dir, stagingDir, file)), JSON.stringify(clipEdits) + '\n')
+      writeAtomic(
+        editsPath(resolveClipPath(dir, stagingDir, file)),
+        JSON.stringify(clipEdits) + '\n'
+      )
     }
   }
   // Drop stale sidecars for referenced clips whose edits are gone.
