@@ -145,6 +145,13 @@ function NumField({
             } else if (onInput && d.last !== d.start) {
               onCommit(d.last)
             }
+          },
+          // Cancelled scrub: commit the last streamed value (like release),
+          // so no transient is left dangling. No focus on cancel.
+          onPointerCancel: () => {
+            const d = drag.current
+            drag.current = null
+            if (d?.moved && onInput && d.last !== d.start) onCommit(d.last)
           }
         }
       : {}
@@ -277,7 +284,7 @@ function App(): React.JSX.Element {
     onRestore,
     setError
   )
-  const { reset, transient, commit, undo, redo } = history
+  const { reset, transient, commit, abortTransient, undo, redo } = history
   const { tracks, markers, duration, edits } = history.doc
 
   // Clip clipboard (session-local, not the OS clipboard). Paste overrides
@@ -1193,6 +1200,7 @@ function App(): React.JSX.Element {
         onSelectMany={selectClips}
         onSelectTrack={selectTrack}
         onTracksChange={onTracksChange}
+        onDragCancel={abortTransient}
         onAddTrack={addTrack}
         onAddMarker={addMarker}
         onDeleteTrack={deleteTrack}
@@ -1222,6 +1230,9 @@ function App(): React.JSX.Element {
           setCurveHeight(Math.min(Math.max(h, 80), window.innerHeight - 240))
         }}
         onPointerUp={() => {
+          splitDrag.current = null
+        }}
+        onPointerCancel={() => {
           splitDrag.current = null
         }}
       />

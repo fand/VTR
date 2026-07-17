@@ -72,6 +72,8 @@ interface TimelineProps {
   /** Track label click; additive (shift/cmd) toggles membership. */
   onSelectTrack: (trackId: number, additive: boolean) => void
   onTracksChange: (tracks: TrackState[], commit: boolean) => void
+  /** pointercancel mid-drag: discard the uncommitted transient doc. */
+  onDragCancel: () => void
   onAddTrack: () => void
   /** Add a marker at the playhead. */
   onAddMarker: () => void
@@ -208,6 +210,7 @@ export function Timeline({
   onSelectMany,
   onSelectTrack,
   onTracksChange,
+  onDragCancel,
   onAddTrack,
   onAddMarker,
   onDeleteTrack,
@@ -330,6 +333,12 @@ export function Timeline({
     const pos = contentPos(e)
     const inLanes = pos.y >= RULER_H && pos.y < RULER_H + tracks.length * TRACK_HEIGHT
     if (inLanes && pos.x >= LABEL_W) clampSeek((pos.x - LABEL_W) / pxPerSec)
+  }
+
+  // Marquee selection is applied per-move, so cancel just drops the rect.
+  const onBgPointerCancel = (): void => {
+    marquee.current = null
+    setMarqueeRect(null)
   }
 
   // macOS pinch arrives as ctrl+wheel; preventDefault needs a non-passive
@@ -499,6 +508,14 @@ export function Timeline({
     setDragRow(null)
   }
 
+  // Cancel coords are unreliable, so abort instead of committing there.
+  const onClipPointerCancel = (): void => {
+    const d = drag.current
+    drag.current = null
+    setDragRow(null)
+    if (d?.moved) onDragCancel()
+  }
+
   const applyMarkerDrag = (e: React.PointerEvent, commit: boolean): void => {
     const d = markerDrag.current
     if (!d) return
@@ -583,6 +600,7 @@ export function Timeline({
         onPointerDown={onBgPointerDown}
         onPointerMove={onBgPointerMove}
         onPointerUp={onBgPointerUp}
+        onPointerCancel={onBgPointerCancel}
       >
         <div className="tl-content" ref={contentRef} style={{ width: widthPx + 96 }}>
           <div className="ruler-row">
@@ -639,6 +657,11 @@ export function Timeline({
                     if (!d) return
                     if (d.moved) applyMarkerDrag(e, true)
                     markerDrag.current = null
+                  }}
+                  onPointerCancel={() => {
+                    const d = markerDrag.current
+                    markerDrag.current = null
+                    if (d?.moved) onDragCancel()
                   }}
                   // Pointer capture (drag) retargets the dblclick from the
                   // label span to this div, so the rename trigger lives here.
@@ -723,6 +746,7 @@ export function Timeline({
                     onPointerDown={(e) => onClipPointerDown(e, clip, trackIdx)}
                     onPointerMove={onClipPointerMove}
                     onPointerUp={onClipPointerUp}
+                    onPointerCancel={onClipPointerCancel}
                     // Pointer capture retargets the dblclick from the label
                     // span to this div, so the rename trigger lives here.
                     onDoubleClick={() => setRenaming({ kind: 'clip', id: clip.id })}

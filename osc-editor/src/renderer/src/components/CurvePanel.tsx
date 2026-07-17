@@ -1091,6 +1091,10 @@ export function CurvePanel({
           onPointerDown={onEditorDown}
           onPointerMove={onEditorMove}
           onPointerUp={onEditorUp}
+          // Cancel acts like release: point/xform drags commit their last
+          // streamed values (never cancel-event coords), pencil commits its
+          // batch, a marquee just closes.
+          onPointerCancel={onEditorUp}
           onDoubleClick={onEditorDoubleClick}
           onPointerLeave={() => updateHover(null)}
         >

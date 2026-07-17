@@ -29,6 +29,8 @@ export interface History {
   /** Record one undoable change. The recipe must set final absolute values —
    *  it is (re)applied to the pre-gesture base, not the transient doc. */
   commit: (label: string, recipe: (d: Doc) => void) => void
+  /** Cancelled gesture (pointercancel): drop transient state, restore the base. */
+  abortTransient: () => void
   undo: () => void
   redo: () => void
 }
@@ -108,6 +110,13 @@ export function useHistory(
     [install, persistError]
   )
 
+  const abortTransient = useCallback((): void => {
+    if (!base.current) return
+    const b = base.current
+    base.current = null
+    install(b)
+  }, [install])
+
   const restore = useCallback(
     (next: Doc): void => {
       base.current = null
@@ -161,6 +170,7 @@ export function useHistory(
     reset,
     transient,
     commit,
+    abortTransient,
     undo,
     redo
   }
