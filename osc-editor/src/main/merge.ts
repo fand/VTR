@@ -1,4 +1,3 @@
-import { join } from 'path'
 import { applyEdits } from '../shared/edits'
 import type { OscEvent, ProjectFile } from '../shared/types'
 import { readClip } from './clips'
@@ -12,7 +11,7 @@ function round6(x: number): number {
  * Duplicate writes to one address are kept in time order (last-wins on replay).
  */
 export function mergeProject(
-  workdir: string,
+  resolveClip: (file: string) => string,
   project: ProjectFile
 ): { events: OscEvent[]; duration: number } {
   const events: OscEvent[] = []
@@ -22,7 +21,7 @@ export function mergeProject(
       // Muted clips still occupy the timeline, so they count into duration.
       duration = Math.max(duration, clip.offset + (clip.trimOut - clip.trimIn))
       if (clip.muted) continue
-      const data = readClip(join(workdir, clip.file))
+      const data = readClip(resolveClip(clip.file))
       // Edits first: a t edit decides whether the event falls inside the trim.
       const clipEvents = applyEdits(data.events, project.edits?.[clip.file])
       for (const e of clipEvents) {

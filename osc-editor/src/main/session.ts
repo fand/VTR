@@ -1,17 +1,16 @@
 import { renameSync, writeFileSync } from 'fs'
-import { join } from 'path'
 import { DEFAULT_PORTS, type ExportResult, type ProjectFile } from '../shared/types'
 import { mergeProject } from './merge'
 
-const SESSION_FILE = 'session.jsonl'
+export const SESSION_FILE = 'session.jsonl'
 
 /** Write the merged project as a single session JSONL (the app↔TD contract). */
 export function exportSession(
-  workdir: string,
+  resolveClip: (file: string) => string,
   project: ProjectFile,
-  outPath: string = join(workdir, SESSION_FILE)
+  outPath: string
 ): ExportResult {
-  const merged = mergeProject(workdir, project)
+  const merged = mergeProject(resolveClip, project)
   const { events } = merged
   // Session length = timeline length (never shorter than the content).
   const duration = Math.max(merged.duration, project.duration ?? 0)

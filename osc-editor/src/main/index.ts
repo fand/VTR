@@ -6,8 +6,8 @@ import icon from '../../resources/icon.png?asset'
 import { clipSummary, readClip } from './clips'
 import { mergeProject } from './merge'
 import { Preview } from './preview'
-import { PROJECT_FILE, loadProject, readProjectPorts, saveProject } from './project'
-import { exportSession } from './session'
+import { PROJECT_FILE, loadProject, readProjectPorts, resolveClipPath, saveProject } from './project'
+import { SESSION_FILE, exportSession } from './session'
 import { SpawnMode, TapManager } from './tap'
 import { appendUndo, loadUndoLog, truncateUndoAfter } from './undo'
 import { DEFAULT_PORTS, type PortConfig, type ProjectFile, type UndoEntry } from '../shared/types'
@@ -23,6 +23,9 @@ if (process.env.OSC_EDITOR_DATA_DIR) {
 const dataDir = app.getPath('userData')
 mkdirSync(dataDir, { recursive: true })
 
+// Recordings for unsaved projects land here, never in the cwd.
+const stagingDir = join(dataDir, 'recordings')
+
 // First CLI arg = project file to open at boot (packaged apps have no script arg).
 const cliArg = process.argv[app.isPackaged ? 1 : 2]
 const cliProjectPath = cliArg ? resolve(workdir, cliArg) : null
@@ -30,6 +33,9 @@ const cliProjectPath = cliArg ? resolve(workdir, cliArg) : null
 // Dir the current project file lives in; clip files resolve against it.
 // Defaults to the workdir until a project is opened or saved elsewhere.
 let projectDir = workdir
+
+// Clip files resolve against the project bundle, then staging.
+const resolveClip = (file: string): string => resolveClipPath(projectDir, stagingDir, file)
 
 let tap: TapManager | null = null
 let tapError: string | null = null
@@ -161,7 +167,7 @@ app.whenReady().then(() => {
       ...DEFAULT_PORTS,
       ...(cliProjectPath ? readProjectPorts(cliProjectPath) : undefined)
     }
-    tap = new TapManager(findTapBinary(), dataDir, workdir, mode, ports)
+    tap = new TapManager(findTapBinary(), dataDir, stagingDir, mode, ports)
     tap.spawnTap()
   } catch (e) {
     tapError = (e as Error).message
@@ -181,20 +187,20 @@ app.whenReady().then(() => {
   // Boot load: the CLI-arg project (if any); the default is an empty project.
   ipcMain.handle('project:load', () => {
     if (!cliProjectPath) return null
-    const project = loadProject(cliProjectPath)
+    const project = loadProject(cliProjectPath, stagingDir)
     if (!project) throw new Error(`project not found: ${cliProjectPath}`)
     projectDir = dirname(cliProjectPath)
     return { path: cliProjectPath, project }
   })
   ipcMain.handle('project:loadPath', (_e, path: string) => {
-    const project = loadProject(path)
+    const project = loadProject(path, stagingDir)
     if (!project) throw new Error(`project not found: ${path}`)
     projectDir = dirname(path)
     return { path, project }
   })
   ipcMain.handle('project:save', (_e, path: string, project: ProjectFile) => {
-    saveProject(path, project)
     projectDir = dirname(path)
+    saveProject(path, project, stagingDir)
   })
   // Hidden (e2e) skips native dialogs; OSC_EDITOR_DIALOG_PATH stands in for
   // the user's pick (open returns null without it, save falls back to the
@@ -225,7 +231,7 @@ app.whenReady().then(() => {
   // Ask where to save; null = user cancelled. Hidden (e2e) skips the native
   // dialog — it would hang the test — and writes the default session.jsonl.
   ipcMain.handle('session:export', async (e, project: ProjectFile) => {
-    let outPath = join(workdir, 'session.jsonl')
+    let outPath = join(projectDir, SESSION_FILE)
     if (!hidden) {
       const win = BrowserWindow.fromWebContents(e.sender)
       const res = await dialog.showSaveDialog(win!, {
@@ -235,12 +241,12 @@ app.whenReady().then(() => {
       if (res.canceled || !res.filePath) return null
       outPath = res.filePath
     }
-    return exportSession(projectDir, project, outPath)
+    return exportSession(resolveClip, project, outPath)
   })
 
   const preview = new Preview()
   ipcMain.handle('preview:play', (_e, project: ProjectFile, fromSec: number) => {
-    const merged = mergeProject(projectDir, project)
+    const merged = mergeProject(resolveClip, project)
     preview.play(merged.events, fromSec, tap?.ports.forward ?? DEFAULT_PORTS.forward)
     return { duration: Math.max(merged.duration, project.duration ?? 0) }
   })

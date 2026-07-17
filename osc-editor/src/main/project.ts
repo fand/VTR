@@ -6,9 +6,20 @@ import { clipSummary } from './clips'
 
 export const PROJECT_FILE = 'project.json'
 
-/** Sidecar path for a clip's edit overlay. */
-function editsPath(dir: string, file: string): string {
-  return join(dir, `${file}.edits.json`)
+/**
+ * Where a clip file lives: the project bundle's clips/, the project dir
+ * itself (legacy flat layout), or the staging dir (recorded, not yet
+ * collected into a bundle). Falls back to the first candidate when the
+ * file exists nowhere (missing clip).
+ */
+export function resolveClipPath(projectDir: string, stagingDir: string, file: string): string {
+  const candidates = [join(projectDir, 'clips', file), join(projectDir, file), join(stagingDir, file)]
+  return candidates.find(existsSync) ?? candidates[0]
+}
+
+/** Sidecar path for a clip's edit overlay: next to the clip file. */
+function editsPath(clipPath: string): string {
+  return `${clipPath}.edits.json`
 }
 
 function writeAtomic(path: string, content: string): void {
@@ -27,8 +38,8 @@ export function readProjectPorts(projectPath: string): PortConfig | undefined {
   }
 }
 
-/** Clip files and edit sidecars resolve relative to the project file's dir. */
-export function loadProject(projectPath: string): LoadedProject | null {
+/** Clip files and edit sidecars resolve via resolveClipPath. */
+export function loadProject(projectPath: string, stagingDir: string): LoadedProject | null {
   if (!existsSync(projectPath)) return null
   const dir = dirname(projectPath)
   const project = JSON.parse(readFileSync(projectPath, 'utf8')) as ProjectFile
@@ -37,10 +48,10 @@ export function loadProject(projectPath: string): LoadedProject | null {
   const tracks = project.tracks.map((track) => ({
     name: track.name,
     clips: track.clips.flatMap((clip) => {
-      const clipPath = join(dir, clip.file)
+      const clipPath = resolveClipPath(dir, stagingDir, clip.file)
       try {
         const loaded = { ...clip, path: clipPath, summary: clipSummary(clipPath) }
-        const sidecar = editsPath(dir, clip.file)
+        const sidecar = editsPath(clipPath)
         if (!(clip.file in edits) && existsSync(sidecar)) {
           edits[clip.file] = JSON.parse(readFileSync(sidecar, 'utf8')) as ClipEdits
         }
@@ -62,20 +73,21 @@ export function loadProject(projectPath: string): LoadedProject | null {
   }
 }
 
-export function saveProject(projectPath: string, project: ProjectFile): void {
+export function saveProject(projectPath: string, project: ProjectFile, stagingDir: string): void {
   const dir = dirname(projectPath)
   const { edits = {}, ...rest } = project
-  // Edits travel inline over IPC but live in per-clip sidecar files on disk.
+  // Edits travel inline over IPC but live in per-clip sidecar files on disk,
+  // next to the clip they belong to.
   for (const [file, clipEdits] of Object.entries(edits)) {
     if (!editsEmpty(clipEdits)) {
-      writeAtomic(editsPath(dir, file), JSON.stringify(clipEdits) + '\n')
+      writeAtomic(editsPath(resolveClipPath(dir, stagingDir, file)), JSON.stringify(clipEdits) + '\n')
     }
   }
   // Drop stale sidecars for referenced clips whose edits are gone.
   for (const track of project.tracks) {
     for (const clip of track.clips) {
       if (editsEmpty(edits[clip.file])) {
-        rmSync(editsPath(dir, clip.file), { force: true })
+        rmSync(editsPath(resolveClipPath(dir, stagingDir, clip.file)), { force: true })
       }
     }
   }
