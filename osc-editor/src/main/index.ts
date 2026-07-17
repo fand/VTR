@@ -17,6 +17,7 @@ import { SESSION_FILE, exportSession } from './session'
 import { ensureWithin } from './paths'
 import { SpawnMode, TapManager } from './tap'
 import { findTapBinary } from './tapBinary'
+import { addRecent, clearRecents, loadRecents, removeRecent } from './recents'
 import { appendUndo, clearUndoLog, loadUndoLog, transferUndoLog, truncateUndoAfter } from './undo'
 import {
   DEFAULT_PORTS,
@@ -197,12 +198,45 @@ function createWindow(): void {
 // No dock icon, no app activation — the running test never grabs focus.
 if (hidden && process.platform === 'darwin') app.setActivationPolicy('accessory')
 
+// Recent projects: recorded on load/save, shown under File > Open Recent.
+// Opening one reuses the Finder-open path (dirty prompt + grant).
+function recordRecent(path: string): void {
+  addRecent(dataDir, path, normalizeProjectPath)
+  if (process.platform === 'darwin') app.addRecentDocument(path)
+  installMenu()
+}
+
+function openRecent(path: string): void {
+  if (!existsSync(normalizeProjectPath(path))) {
+    const win = BrowserWindow.getAllWindows()[0]
+    if (win && !hidden) {
+      dialog.showMessageBoxSync(win, {
+        type: 'warning',
+        message: 'Project not found.',
+        detail: path
+      })
+    }
+    removeRecent(dataDir, path)
+    installMenu()
+    return
+  }
+  openAfterReady?.(path)
+}
+
+// A flat project.json alone is ambiguous; show its parent dir too.
+function recentLabel(path: string): string {
+  return basename(path) === 'project.json'
+    ? join(basename(dirname(path)), 'project.json')
+    : basename(path)
+}
+
 /**
  * Custom Edit menu: the default menu's Undo/Redo roles would swallow
  * Cmd+Z before the page ever sees the keydown. Ours forwards to the
  * renderer, which owns the history.
  */
 function installMenu(): void {
+  const recents = loadRecents(dataDir)
   const send = (channel: string) => (): void => {
     BrowserWindow.getAllWindows()[0]?.webContents.send(channel)
   }
@@ -221,6 +255,24 @@ function installMenu(): void {
         label: 'File',
         submenu: [
           { label: 'Open…', accelerator: 'CmdOrCtrl+O', click: send('menu:open') },
+          {
+            label: 'Open Recent',
+            submenu: [
+              ...recents.map((p) => ({
+                label: recentLabel(p),
+                click: (): void => openRecent(p)
+              })),
+              { type: 'separator' as const },
+              {
+                label: 'Clear Menu',
+                enabled: recents.length > 0,
+                click: (): void => {
+                  clearRecents(dataDir)
+                  installMenu()
+                }
+              }
+            ]
+          },
           { type: 'separator' },
           { label: 'Save', accelerator: 'CmdOrCtrl+S', click: send('menu:save') },
           { label: 'Save As…', accelerator: 'Shift+CmdOrCtrl+S', click: send('menu:saveAs') }
@@ -329,6 +381,7 @@ app.whenReady().then(() => {
     if (!project) throw new Error(`project not found: ${path}`)
     projectDir = dirname(projectPath)
     savedUndoSeq = project.undoSeq ?? 0
+    recordRecent(path)
     return { path, project }
   }
   if (bootProjectPath) grantProjectPath(bootProjectPath)
@@ -347,6 +400,7 @@ app.whenReady().then(() => {
     transferUndoLog(undoDir(), dir, projectDir === null)
     projectDir = dir
     savedUndoSeq = project.undoSeq ?? 0
+    recordRecent(path)
   })
   // Hidden (e2e) skips native dialogs; OSC_EDITOR_DIALOG_PATH stands in for
   // the user's pick (open returns null without it, save falls back to the

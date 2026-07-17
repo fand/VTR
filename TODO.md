@@ -2,7 +2,7 @@
 
 - [x] repo名を `VTR` に統一
   - desc: `VJs' Timeline Recorder`
-- File MenuにOpen Recentを追加
+- [x] File MenuにOpen Recentを追加
 - repo rootからアプリ起動するスクリプトを追加して
   - `./run` とか？あるいはjustfileでも良いね
 - VJアプリ側からrecordのstart, stopもコントロール出来るようにしたい
