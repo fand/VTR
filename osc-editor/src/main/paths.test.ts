@@ -35,6 +35,24 @@ test('resolveClipPath never escapes its roots', () => {
   expect(isWithin('/proj', p)).toBe(true)
 })
 
+test('resolveClipPath precedence: clips/ > flat > staging > first candidate', () => {
+  const root = mkdtempSync(join(tmpdir(), 'osc-mtr-paths-'))
+  const proj = join(root, 'p.oscproj')
+  const staging = join(root, 'staging')
+  mkdirSync(join(proj, 'clips'), { recursive: true })
+  mkdirSync(staging, { recursive: true })
+  const put = (dir: string): void => writeFileSync(join(dir, 'c.jsonl'), 'x\n')
+
+  // Missing everywhere: falls back to the bundle clips/ candidate.
+  expect(resolveClipPath(proj, staging, 'c.jsonl')).toBe(join(proj, 'clips', 'c.jsonl'))
+  put(staging)
+  expect(resolveClipPath(proj, staging, 'c.jsonl')).toBe(join(staging, 'c.jsonl'))
+  put(proj) // legacy flat layout beats staging
+  expect(resolveClipPath(proj, staging, 'c.jsonl')).toBe(join(proj, 'c.jsonl'))
+  put(join(proj, 'clips')) // bundle clips/ beats both
+  expect(resolveClipPath(proj, staging, 'c.jsonl')).toBe(join(proj, 'clips', 'c.jsonl'))
+})
+
 test('loadProject marks a traversal clip.file missing without touching disk', () => {
   const root = mkdtempSync(join(tmpdir(), 'osc-mtr-paths-'))
   const dir = join(root, 'p.oscproj')
