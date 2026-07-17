@@ -335,6 +335,128 @@ export function CurvePanel({
     if (d?.last) onPointEdit(d.last, true)
   }
 
+  // Transform box: with 2+ points selected, a box wraps them. Dragging its
+  // body moves the group; dragging an edge scales the group toward the
+  // opposite edge. All math runs in pixel space on positions frozen at drag
+  // start, then converts back per point (t clamped to the point's clip span,
+  // value in the property's frozen scale — same rules as a point drag).
+  type XformMode = 'move' | 'left' | 'right' | 'top' | 'bottom'
+  interface Box {
+    x: number
+    y: number
+    w: number
+    h: number
+  }
+
+  // Bounding box of the drawn selected points (hidden/dimmed curves excluded).
+  const selBox = ((): Box | null => {
+    if (selectedPoints.length < 2 || clips.length === 0) return null
+    let x0 = Infinity
+    let y0 = Infinity
+    let x1 = -Infinity
+    let y1 = -Infinity
+    let n = 0
+    for (const p of curves) {
+      if (hidden.has(p.key) || dimmed(p.key)) continue
+      for (const pt of p.points) {
+        if (!selKeys.has(selKey(ptSel(pt)))) continue
+        const px = x(pt.t)
+        const py = y(p, pt.v)
+        x0 = Math.min(x0, px)
+        y0 = Math.min(y0, py)
+        x1 = Math.max(x1, px)
+        y1 = Math.max(y1, py)
+        n++
+      }
+    }
+    return n >= 2 ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null
+  })()
+
+  const xform = useRef<{
+    mode: XformMode
+    startX: number
+    startY: number
+    box0: Box
+    targets: { pt: CurvePoint; min: number; max: number; px0: number; py0: number }[]
+    moved: boolean
+    last: PointPatch[] | null
+  } | null>(null)
+
+  const beginXform = (e: React.PointerEvent, mode: XformMode, box: Box): void => {
+    const targets: { pt: CurvePoint; min: number; max: number; px0: number; py0: number }[] = []
+    for (const p of curves) {
+      if (hidden.has(p.key) || dimmed(p.key)) continue
+      for (const pt of p.points) {
+        if (!selKeys.has(selKey(ptSel(pt)))) continue
+        targets.push({ pt, min: p.min, max: p.max, px0: x(pt.t), py0: y(p, pt.v) })
+      }
+    }
+    xform.current = {
+      mode,
+      startX: e.clientX,
+      startY: e.clientY,
+      box0: box,
+      targets,
+      moved: false,
+      last: null
+    }
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+
+  const applyXform = (e: React.PointerEvent): void => {
+    const d = xform.current
+    if (!d) return
+    const dx = e.clientX - d.startX
+    const dy = e.clientY - d.startY
+    if (!d.moved && Math.abs(dx) < 3 && Math.abs(dy) < 3) return
+    d.moved = true
+    const b = d.box0
+    // Edges scale toward the opposite (anchored) edge; zero extent is a noop.
+    const map = (px: number, py: number): { nx: number; ny: number } => {
+      switch (d.mode) {
+        case 'move':
+          return { nx: px + dx, ny: py + dy }
+        case 'left':
+          return { nx: b.w > 0 ? b.x + b.w - ((b.x + b.w - px) * (b.w - dx)) / b.w : px, ny: py }
+        case 'right':
+          return { nx: b.w > 0 ? b.x + ((px - b.x) * (b.w + dx)) / b.w : px, ny: py }
+        case 'top':
+          return { nx: px, ny: b.h > 0 ? b.y + b.h - ((b.y + b.h - py) * (b.h - dy)) / b.h : py }
+        case 'bottom':
+          return { nx: px, ny: b.h > 0 ? b.y + ((py - b.y) * (b.h + dy)) / b.h : py }
+      }
+    }
+    d.last = d.targets.map(({ pt, min, max, px0, py0 }) => {
+      const { nx, ny } = map(px0, py0)
+      const c = pt.clip
+      const t = tMin + ((nx - PAD) / Math.max(innerW - 2 * PAD, 1)) * tRange
+      const tl = Math.min(Math.max(t, c.offset), c.offset + clipLen(c))
+      return {
+        file: c.file,
+        eventIndex: pt.eventIndex,
+        t: c.trimIn + (tl - c.offset),
+        argIndex: pt.argIndex,
+        value: pt.v + (-(ny - py0) / Math.max(h - 2 * PAD, 1)) * (max - min || 1)
+      }
+    })
+    onPointEdit(d.last, false)
+  }
+
+  /** Ends an xform drag; a plain click (no move) on the box body clears the selection. */
+  const endXform = (clearIfUnmoved: boolean): void => {
+    const d = xform.current
+    xform.current = null
+    if (!d) return
+    if (d.last) onPointEdit(d.last, true)
+    else if (!d.moved && clearIfUnmoved) onSelectPoints([])
+  }
+
+  const onEdgeDown = (e: React.PointerEvent<SVGRectElement>, mode: XformMode): void => {
+    if (e.button !== 0 || !selBox) return
+    e.stopPropagation()
+    beginXform(e, mode, selBox)
+  }
+
   // Hover: the tooltip always shows the point nearest to the cursor (px
   // distance). Selected properties win; otherwise all visible points compete.
   // Positions resolve each render, so the tooltip tracks a dragged point.
@@ -391,6 +513,19 @@ export function CurvePanel({
       return
     }
     const pos = svgPos(e)
+    // Inside the transform box (with a little slop for degenerate boxes),
+    // drag moves the whole selection; shift still rubber-bands additively.
+    if (
+      selBox &&
+      !e.shiftKey &&
+      pos.x >= selBox.x - 4 &&
+      pos.x <= selBox.x + selBox.w + 4 &&
+      pos.y >= selBox.y - 4 &&
+      pos.y <= selBox.y + selBox.h + 4
+    ) {
+      beginXform(e, 'move', selBox)
+      return
+    }
     marquee.current = {
       x0: pos.x,
       y0: pos.y,
@@ -404,6 +539,10 @@ export function CurvePanel({
   const onEditorMove = (e: React.PointerEvent<HTMLDivElement>): void => {
     const pos = svgPos(e)
     setMouse(pos)
+    if (xform.current) {
+      applyXform(e)
+      return
+    }
     const m = marquee.current
     if (!m) return
     if (!m.moved && Math.abs(pos.x - m.x0) < 3 && Math.abs(pos.y - m.y0) < 3) return
@@ -432,6 +571,10 @@ export function CurvePanel({
   }
 
   const onEditorUp = (): void => {
+    if (xform.current) {
+      endXform(true)
+      return
+    }
     const m = marquee.current
     marquee.current = null
     setMarqueeRect(null)
@@ -555,6 +698,52 @@ export function CurvePanel({
                       })}
                   </g>
                 ))}
+              {selBox && (
+                <g className="curve-xform">
+                  <rect
+                    className="curve-xform-box"
+                    x={selBox.x}
+                    y={selBox.y}
+                    width={selBox.w}
+                    height={selBox.h}
+                  />
+                  {(
+                    [
+                      { mode: 'left', x: selBox.x - 3, y: selBox.y, w: 6, h: selBox.h },
+                      { mode: 'right', x: selBox.x + selBox.w - 3, y: selBox.y, w: 6, h: selBox.h },
+                      { mode: 'top', x: selBox.x, y: selBox.y - 3, w: selBox.w, h: 6 },
+                      { mode: 'bottom', x: selBox.x, y: selBox.y + selBox.h - 3, w: selBox.w, h: 6 }
+                    ] as const
+                  ).map((s) => (
+                    <rect
+                      key={s.mode}
+                      className={`curve-xform-edge ${s.mode}`}
+                      x={s.x}
+                      y={s.y}
+                      width={s.w}
+                      height={s.h}
+                      onPointerDown={(e) => onEdgeDown(e, s.mode)}
+                    />
+                  ))}
+                  {(
+                    [
+                      { k: 'l', x: selBox.x, y: selBox.y + selBox.h / 2 },
+                      { k: 'r', x: selBox.x + selBox.w, y: selBox.y + selBox.h / 2 },
+                      { k: 't', x: selBox.x + selBox.w / 2, y: selBox.y },
+                      { k: 'b', x: selBox.x + selBox.w / 2, y: selBox.y + selBox.h }
+                    ] as const
+                  ).map((s) => (
+                    <rect
+                      key={s.k}
+                      className="curve-xform-handle"
+                      x={s.x - 3}
+                      y={s.y - 3}
+                      width={6}
+                      height={6}
+                    />
+                  ))}
+                </g>
+              )}
               {hoverInfo && (
                 <text
                   className="curve-tooltip"

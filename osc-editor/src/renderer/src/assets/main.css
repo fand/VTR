@@ -663,6 +663,32 @@ body {
   pointer-events: none;
 }
 
+.curve-xform-box {
+  fill: rgba(77, 163, 255, 0.06);
+  stroke: var(--accent);
+  pointer-events: none;
+}
+
+.curve-xform-edge {
+  fill: transparent;
+  touch-action: none;
+}
+
+.curve-xform-edge.left,
+.curve-xform-edge.right {
+  cursor: ew-resize;
+}
+
+.curve-xform-edge.top,
+.curve-xform-edge.bottom {
+  cursor: ns-resize;
+}
+
+.curve-xform-handle {
+  fill: var(--accent);
+  pointer-events: none;
+}
+
 .curve-grid-line {
   stroke: #232833;
 }

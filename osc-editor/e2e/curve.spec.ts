@@ -159,7 +159,12 @@ test('curve panel: property list sorted by address', async () => {
     const page = await app.firstWindow()
     await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
     await page.locator('.clip').click()
-    await expect(page.locator('.curve-prop-name')).toHaveText(['/fader', '/xy[0]', '/xy[1]', '/zoom'])
+    await expect(page.locator('.curve-prop-name')).toHaveText([
+      '/fader',
+      '/xy[0]',
+      '/xy[1]',
+      '/zoom'
+    ])
   } finally {
     await app.close()
   }
@@ -368,6 +373,109 @@ test('curve panel: drag and delete points, edits persisted to sidecar', async ()
         }
       })
       .toBe(true)
+  } finally {
+    await app.close()
+  }
+})
+
+test('curve panel: transform box moves and scales the selected points', async () => {
+  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  writeFileSync(
+    join(workdir, CLIP),
+    jsonl([
+      { type: 'session_start', t: 0, wall: '2026-07-16T00:00:00Z' },
+      { t: 0.2, port: LISTEN_PORT, a: '/fader', args: [0.1] },
+      { t: 0.8, port: LISTEN_PORT, a: '/fader', args: [0.5] },
+      { t: 1.4, port: LISTEN_PORT, a: '/fader', args: [0.9] },
+      { type: 'session_end', t: 2 }
+    ])
+  )
+  writeFileSync(
+    join(workdir, 'project.json'),
+    JSON.stringify({
+      version: 1,
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT, beacon: BEACON_PORT },
+      duration: 10,
+      tracks: [{ clips: [{ file: CLIP, offset: 0, trimIn: 0, trimOut: 2 }] }]
+    })
+  )
+
+  const app = await electron.launch({
+    args: [join(__dirname, '../out/main/index.js')],
+    cwd: workdir,
+    env: {
+      ...process.env,
+      OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
+      OSC_EDITOR_HIDDEN: '1'
+    }
+  })
+  try {
+    const page = await app.firstWindow()
+    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await page.locator('.clip').click()
+    await expect(page.locator('circle')).toHaveCount(3)
+
+    // Single selection: no box.
+    await page.locator('circle').first().click()
+    await expect(page.locator('.curve-xform-box')).toHaveCount(0)
+
+    // Marquee all 3 points: the box appears around them.
+    const editor = (await page.locator('.curve-editor').boundingBox())!
+    await page.mouse.move(editor.x + 4, editor.y + 4)
+    await page.mouse.down()
+    await page.mouse.move(editor.x + editor.width - 4, editor.y + editor.height - 4, { steps: 5 })
+    await page.mouse.up()
+    await expect(page.locator('circle.selected')).toHaveCount(3)
+    await expect(page.locator('.curve-xform-box')).toHaveCount(1)
+
+    // Drag the box body (a spot inside the box away from points/edges):
+    // every point shifts by the same Δt.
+    const sidecar = join(workdir, `${CLIP}.edits.json`)
+    const readSet = (): Record<string, { t: number; args: Record<string, number> }> => {
+      try {
+        return JSON.parse(readFileSync(sidecar, 'utf8')).set ?? {}
+      } catch {
+        return {}
+      }
+    }
+    const box1 = (await page.locator('.curve-xform-box').boundingBox())!
+    await page.mouse.move(box1.x + box1.width * 0.6, box1.y + box1.height * 0.4)
+    await page.mouse.down()
+    await page.mouse.move(box1.x + box1.width * 0.6 + 30, box1.y + box1.height * 0.4, { steps: 5 })
+    await page.mouse.up()
+    await expect.poll(() => Object.keys(readSet()).length).toBe(3)
+    const afterMove = readSet()
+    expect(afterMove['0'].t).toBeGreaterThan(0.2)
+    expect(afterMove['2'].t).toBeGreaterThan(1.4)
+    // Selection (and the box) survive the drag.
+    await expect(page.locator('circle.selected')).toHaveCount(3)
+    await expect(page.locator('.curve-xform-box')).toHaveCount(1)
+
+    // Drag the right edge: the left point stays anchored, the right one stretches.
+    const right = (await page.locator('.curve-xform-edge.right').boundingBox())!
+    await page.mouse.move(right.x + right.width / 2, right.y + right.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(right.x + right.width / 2 + 40, right.y + right.height / 2, { steps: 5 })
+    await page.mouse.up()
+    await expect.poll(() => readSet()['2'].t).toBeGreaterThan(afterMove['2'].t)
+    const afterScale = readSet()
+    expect(Math.abs(afterScale['0'].t - afterMove['0'].t)).toBeLessThan(0.01)
+    // Values untouched by a horizontal scale.
+    expect(afterScale['1'].args['0']).toBeCloseTo(afterMove['1'].args['0'], 5)
+
+    // Drag the top edge upward: the max value grows, the min stays.
+    const top = (await page.locator('.curve-xform-edge.top').boundingBox())!
+    await page.mouse.move(top.x + top.width / 2, top.y + top.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(top.x + top.width / 2, top.y + top.height / 2 - 30, { steps: 5 })
+    await page.mouse.up()
+    await expect.poll(() => readSet()['2'].args['0']).toBeGreaterThan(afterScale['2'].args['0'])
+    expect(readSet()['0'].args['0']).toBeCloseTo(afterScale['0'].args['0'], 5)
+
+    // Click outside the box clears the selection and removes the box.
+    await page.mouse.click(editor.x + editor.width - 6, editor.y + editor.height - 6)
+    await expect(page.locator('circle.selected')).toHaveCount(0)
+    await expect(page.locator('.curve-xform-box')).toHaveCount(0)
   } finally {
     await app.close()
   }
