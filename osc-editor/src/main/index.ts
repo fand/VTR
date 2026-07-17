@@ -56,6 +56,29 @@ app.on('open-file', (e, path) => {
   else bootProjectPath = projectPath
 })
 
+// Single instance per userData: two instances would share the undo log, the
+// staging dir, and the control socket — and osc-tap's stale-socket cleanup
+// would let the second tap steal the first's control plane. The second
+// launch forwards its project arg here and quits.
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+}
+app.on('second-instance', (_e, argv, workingDirectory) => {
+  const win = BrowserWindow.getAllWindows()[0]
+  if (win) {
+    if (win.isMinimized()) win.restore()
+    win.focus()
+  }
+  // Chromium splices switches into the forwarded argv; the project path is
+  // the first non-flag arg (after the script path in dev).
+  const nonFlags = argv.slice(1).filter((a) => !a.startsWith('-'))
+  const arg = nonFlags[app.isPackaged ? 0 : 1]
+  if (!arg) return
+  const projectPath = resolve(workingDirectory || workdir, arg)
+  if (openAfterReady) openAfterReady(projectPath)
+  else bootProjectPath = projectPath
+})
+
 // Dir the current project lives in (the .oscproj bundle, or the dir of a
 // legacy flat project.json). Null until a project is opened or saved.
 let projectDir: string | null = null
