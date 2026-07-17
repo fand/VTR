@@ -733,6 +733,84 @@ test('curve header: snap locks drags to the grid, Box toggles the transform box'
   }
 })
 
+test('curve header: pencil clicks add points to the selected curve', async () => {
+  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  writeFileSync(
+    join(workdir, CLIP),
+    jsonl([
+      { type: 'session_start', t: 0, wall: '2026-07-16T00:00:00Z' },
+      { t: 0.2, port: LISTEN_PORT, a: '/fader', args: [0.1] },
+      { t: 0.8, port: LISTEN_PORT, a: '/fader', args: [0.5] },
+      { t: 1.4, port: LISTEN_PORT, a: '/fader', args: [0.9] },
+      { type: 'session_end', t: 2 }
+    ])
+  )
+  writeFileSync(
+    join(workdir, 'project.json'),
+    JSON.stringify({
+      version: 1,
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT, beacon: BEACON_PORT },
+      duration: 10,
+      tracks: [{ clips: [{ file: CLIP, offset: 0, trimIn: 0, trimOut: 2 }] }]
+    })
+  )
+
+  const app = await electron.launch({
+    args: [join(__dirname, '../out/main/index.js')],
+    cwd: workdir,
+    env: {
+      ...process.env,
+      OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
+      OSC_EDITOR_HIDDEN: '1'
+    }
+  })
+  try {
+    const page = await app.firstWindow()
+    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await page.locator('.clip').click()
+    await expect(page.locator('circle')).toHaveCount(3)
+
+    const pencilBtn = page.locator('.curve-header').getByRole('button', { name: 'Pencil' })
+    await pencilBtn.click()
+    await expect(pencilBtn).toHaveAttribute('aria-pressed', 'true')
+
+    // No curve selected: a click still rubber-bands / clears, adds nothing.
+    const editor = (await page.locator('.curve-editor').boundingBox())!
+    await page.mouse.click(editor.x + editor.width / 2, editor.y + editor.height * 0.25)
+    await expect(page.locator('circle')).toHaveCount(3)
+
+    // Select /fader, then click empty space: a point lands there, selected.
+    await page.locator('.curve-prop-name', { hasText: '/fader' }).click()
+    await page.mouse.click(editor.x + editor.width / 2, editor.y + editor.height * 0.25)
+    await expect(page.locator('circle')).toHaveCount(4)
+    await expect(page.locator('circle.selected')).toHaveCount(1)
+
+    const sidecar = join(workdir, `${CLIP}.edits.json`)
+    await expect
+      .poll(() => {
+        try {
+          return JSON.parse(readFileSync(sidecar, 'utf8')).add?.length ?? 0
+        } catch {
+          return 0
+        }
+      })
+      .toBe(1)
+    const added = JSON.parse(readFileSync(sidecar, 'utf8')).add[0]
+    expect(added.a).toBe('/fader')
+    // Clicked in the upper quarter: the value lands in the top of 0.1..0.9.
+    expect(added.args[0]).toBeGreaterThan(0.6)
+
+    // Pencil off: an empty-space click goes back to clearing the selection
+    // (a spot away from every point and segment).
+    await pencilBtn.click()
+    await page.mouse.click(editor.x + editor.width * 0.3, editor.y + editor.height * 0.1)
+    await expect(page.locator('circle')).toHaveCount(4)
+    await expect(page.locator('circle.selected')).toHaveCount(0)
+  } finally {
+    await app.close()
+  }
+})
+
 test('curve panel: marquee selects multiple points, group drag and delete', async () => {
   const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
   writeFileSync(

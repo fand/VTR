@@ -674,6 +674,10 @@ body {
   touch-action: none;
 }
 
+.curve-editor.pencil {
+  cursor: crosshair;
+}
+
 .curve-tooltip {
   font-family: var(--mono);
   font-size: 10px;

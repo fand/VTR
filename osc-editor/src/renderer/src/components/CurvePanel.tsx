@@ -173,9 +173,11 @@ export function CurvePanel({
   const [hidden, setHidden] = useState<Set<string>>(new Set())
   // Name filter: narrows the property list and the drawn curves.
   const [filter, setFilter] = useState('')
-  // Header toggles: snap point edits to the grid; show the transform box.
+  // Header toggles: snap point edits to the grid; show the transform box;
+  // pencil (clicks add points to the selected curve).
   const [snap, setSnap] = useState(false)
   const [useBox, setUseBox] = useState(true)
+  const [pencil, setPencil] = useState(false)
   // Selected properties: their curves draw thicker and win the hover tooltip.
   const [selectedProps, setSelectedProps] = useState<Set<string>>(new Set())
   const editorRef = useRef<HTMLDivElement | null>(null)
@@ -585,6 +587,15 @@ export function CurvePanel({
       return
     }
     const pos = svgPos(e)
+    // Pencil: a click adds a point to the selected curve. With nothing
+    // selected it falls through to the normal marquee behavior.
+    const pencilTarget = pencil
+      ? shown.find((p) => selectedProps.has(p.key) && !hidden.has(p.key))
+      : undefined
+    if (pencilTarget) {
+      addPointAt(pencilTarget, pos)
+      return
+    }
     // Inside the transform box (with a little slop for degenerate boxes),
     // drag moves the whole selection; shift still rubber-bands additively.
     if (
@@ -720,6 +731,14 @@ export function CurvePanel({
         >
           Box
         </button>
+        <button
+          className={pencil ? 'btn small snap active' : 'btn small snap'}
+          title="pencil: click in the editor adds points to the selected curve"
+          aria-pressed={pencil}
+          onClick={() => setPencil((p) => !p)}
+        >
+          Pencil
+        </button>
       </div>
       <div className="curve-body">
         <div className="curve-props">
@@ -753,7 +772,7 @@ export function CurvePanel({
           )}
         </div>
         <div
-          className="curve-editor"
+          className={pencil ? 'curve-editor pencil' : 'curve-editor'}
           ref={editorRef}
           onPointerDown={onEditorDown}
           onPointerMove={onEditorMove}
@@ -807,7 +826,18 @@ export function CurvePanel({
                             // capture, which would swallow the dblclick)
                             // out of clicks that land on the curve.
                             e.stopPropagation()
-                            if (e.metaKey || e.ctrlKey) addPointAt(p, svgPos(e))
+                            if (e.metaKey || e.ctrlKey) {
+                              addPointAt(p, svgPos(e))
+                            } else if (pencil) {
+                              // Pencil draws on the selected curve if any,
+                              // else on the curve under the cursor.
+                              addPointAt(
+                                shown.find(
+                                  (sp) => selectedProps.has(sp.key) && !hidden.has(sp.key)
+                                ) ?? p,
+                                svgPos(e)
+                              )
+                            }
                           }}
                         />
                       )}
