@@ -165,6 +165,66 @@ test('curve panel: property list sorted by address', async () => {
   }
 })
 
+test('curve panel: selecting a property dims other curves and hides their points', async () => {
+  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  writeFileSync(
+    join(workdir, CLIP),
+    jsonl([
+      { type: 'session_start', t: 0, wall: '2026-07-16T00:00:00Z' },
+      { t: 0.2, port: LISTEN_PORT, a: '/fader', args: [0.1] },
+      { t: 0.5, port: LISTEN_PORT, a: '/xy', args: [0.1, 0.2] },
+      { t: 0.8, port: LISTEN_PORT, a: '/fader', args: [0.5] },
+      { t: 1.4, port: LISTEN_PORT, a: '/fader', args: [0.9] },
+      { type: 'session_end', t: 2 }
+    ])
+  )
+  writeFileSync(
+    join(workdir, 'project.json'),
+    JSON.stringify({
+      version: 1,
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT, beacon: BEACON_PORT },
+      duration: 10,
+      tracks: [{ clips: [{ file: CLIP, offset: 0, trimIn: 0, trimOut: 2 }] }]
+    })
+  )
+
+  const app = await electron.launch({
+    args: [join(__dirname, '../out/main/index.js')],
+    cwd: workdir,
+    env: {
+      ...process.env,
+      OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
+      OSC_EDITOR_HIDDEN: '1'
+    }
+  })
+  try {
+    const page = await app.firstWindow()
+    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await page.locator('.clip').click()
+    // 3 fader + 2 xy points.
+    await expect(page.locator('circle')).toHaveCount(5)
+
+    const opacity = (prop: string): Promise<string | null> =>
+      page.locator(`g[data-prop="${prop}"]`).getAttribute('opacity')
+
+    // Select /fader: other curves fade to 0.1 and lose their point circles.
+    await page.locator('.curve-prop-name', { hasText: '/fader' }).click()
+    expect(await opacity('/fader')).toBe('1')
+    expect(await opacity('/xy[0]')).toBe('0.1')
+    expect(await opacity('/xy[1]')).toBe('0.1')
+    await expect(page.locator('circle')).toHaveCount(3)
+    // Dimmed polylines are still drawn.
+    await expect(page.locator('polyline')).toHaveCount(3)
+
+    // Deselect: everything back.
+    await page.locator('.curve-prop-name', { hasText: '/fader' }).click()
+    expect(await opacity('/xy[0]')).toBe('1')
+    await expect(page.locator('circle')).toHaveCount(5)
+  } finally {
+    await app.close()
+  }
+})
+
 test('curve panel: multi-select shows every selected clip, timeline time axis', async () => {
   const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
   writeFileSync(

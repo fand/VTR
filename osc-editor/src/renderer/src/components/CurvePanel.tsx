@@ -254,6 +254,9 @@ export function CurvePanel({
     })
   }
 
+  // With a property selection, other curves fade out and lose their points.
+  const dimmed = (key: string): boolean => selectedProps.size > 0 && !selectedProps.has(key)
+
   // Time domain: the union of the shown clips' timeline spans.
   const tMin = clips.length > 0 ? Math.min(...clips.map((c) => c.offset)) : 0
   const tMax = clips.length > 0 ? Math.max(...clips.map((c) => c.offset + clipLen(c))) : 0
@@ -415,7 +418,7 @@ export function CurvePanel({
     const seen = new Set(m.base.map(selKey))
     const hits = [...m.base]
     for (const p of curves) {
-      if (hidden.has(p.key)) continue
+      if (hidden.has(p.key) || dimmed(p.key)) continue
       for (const pt of p.points) {
         const px = x(pt.t)
         const py = y(p, pt.v)
@@ -523,7 +526,7 @@ export function CurvePanel({
               {curves
                 .filter((p) => !hidden.has(p.key))
                 .map((p) => (
-                  <g key={p.key} data-prop={p.label}>
+                  <g key={p.key} data-prop={p.label} opacity={dimmed(p.key) ? 0.1 : 1}>
                     <polyline
                       data-prop={p.label}
                       points={stepPoints(p)}
@@ -531,24 +534,25 @@ export function CurvePanel({
                       stroke={p.color}
                       strokeWidth={selectedProps.has(p.key) ? 3 : 1.5}
                     />
-                    {p.points.map((pt) => {
-                      const selected = selKeys.has(selKey(ptSel(pt)))
-                      return (
-                        <circle
-                          key={`${pt.clip.id}:${pt.eventIndex}:${pt.argIndex}`}
-                          className={selected ? 'curve-point selected' : 'curve-point'}
-                          cx={x(pt.t)}
-                          cy={y(p, pt.v)}
-                          r={selected ? 5 : 3}
-                          fill={p.color}
-                          stroke={selected ? '#fff' : 'none'}
-                          strokeWidth={selected ? 1.5 : 0}
-                          onPointerDown={(e) => onPointDown(e, pt)}
-                          onPointerMove={onPointMove}
-                          onPointerUp={onPointUp}
-                        />
-                      )
-                    })}
+                    {!dimmed(p.key) &&
+                      p.points.map((pt) => {
+                        const selected = selKeys.has(selKey(ptSel(pt)))
+                        return (
+                          <circle
+                            key={`${pt.clip.id}:${pt.eventIndex}:${pt.argIndex}`}
+                            className={selected ? 'curve-point selected' : 'curve-point'}
+                            cx={x(pt.t)}
+                            cy={y(p, pt.v)}
+                            r={selected ? 5 : 3}
+                            fill={p.color}
+                            stroke={selected ? '#fff' : 'none'}
+                            strokeWidth={selected ? 1.5 : 0}
+                            onPointerDown={(e) => onPointDown(e, pt)}
+                            onPointerMove={onPointMove}
+                            onPointerUp={onPointUp}
+                          />
+                        )
+                      })}
                   </g>
                 ))}
               {hoverInfo && (
