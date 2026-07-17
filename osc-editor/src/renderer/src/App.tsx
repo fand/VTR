@@ -8,6 +8,7 @@ import {
   type UndoEntry
 } from '../../shared/types'
 import { CurvePanel, PointAdd, PointPatch, PointSel } from './components/CurvePanel'
+import { clearEventsCache } from './components/eventsCache'
 import {
   ClipAction,
   LABEL_W,
@@ -225,7 +226,6 @@ function parsePort(draft: string): number | null {
   return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : null
 }
 
-
 function App(): React.JSX.Element {
   const [recording, setRecording] = useState<{ path: string; startedAt: number } | null>(null)
   const [selectedIds, setSelectedIds] = useState<number[]>([])
@@ -328,6 +328,7 @@ function App(): React.JSX.Element {
       // Clipboard clips reference files in the previous bundle; drop them.
       clipClipboard.current = []
       setCanPaste(false)
+      clearEventsCache()
     },
     [newId, reset]
   )

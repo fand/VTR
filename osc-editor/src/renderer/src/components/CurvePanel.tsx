@@ -3,6 +3,7 @@ import { applyEditsIndexed } from '../../../shared/edits'
 import type { ClipEdits, OscEvent } from '../../../shared/types'
 import { ClipInst, clipLen, formatRulerLabel } from '../timeline/model'
 import { PAD, hitCurve, hitPoint, tAt, vAt, visibleRange, xAt, yAt, type Scale } from './curveGeom'
+import { eventsCache } from './eventsCache'
 
 /** e2e hooks: curves/points are canvas pixels, not DOM nodes, so tests read
  *  their geometry (in client coordinates) from these. */
@@ -69,9 +70,6 @@ function zoomToSlider(z: number): number {
 function sliderToZoom(v: number): number {
   return Math.pow(MAX_ZOOM, v / 100)
 }
-
-/** Clip files are immutable, so raw events cache forever. */
-const eventsCache = new Map<string, OscEvent[]>()
 
 interface CurvePoint {
   /** Timeline seconds (clip offset applied). */
@@ -302,8 +300,10 @@ export function CurvePanel({
       missing.map((p) =>
         window.api.clip
           .events(p)
-          .catch((): OscEvent[] => [])
           .then((events) => eventsCache.set(p, events))
+          // Don't cache failures: a transient read error (e.g. file mid-move
+          // during save) would blank the clip's curves for the whole session.
+          .catch(() => undefined)
       )
     ).then(() => {
       if (stale) return
