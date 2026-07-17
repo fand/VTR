@@ -7,7 +7,11 @@ export interface TapStatus {
   beacon_age: number | null
   /** Timeline speed from the last /clock beacon (1 = playing, 0 = paused). */
   beacon_rate: number | null
+  /** Packets dropped since the current clip started. */
   dropped: number
+  /** First write failure since the current clip started (latched). */
+  write_error: string | null
+  write_errors: number
 }
 
 /** One OSC event line in a clip/session JSONL file. */

@@ -81,8 +81,13 @@ pub struct Status {
     pub beacon_age: Option<f64>,
     /// Timeline speed from the last beacon.
     pub beacon_rate: Option<f64>,
-    /// Packets dropped because the writer backlog was full.
+    /// Packets dropped because the writer backlog was full. Reset per clip
+    /// start so drops attribute to the current recording.
     pub dropped: u64,
+    /// First write failure since the last clip start (latched).
+    pub write_error: Option<String>,
+    /// Write failures since the last clip start.
+    pub write_errors: u64,
 }
 
 impl Handle {
@@ -255,20 +260,66 @@ fn writer_loop(
     dropped: Arc<AtomicU64>,
     beacon_max_age_s: f64,
 ) {
-    let mut rec: Option<Recording> = None;
-
+    let mut w = Writer {
+        outdir,
+        listen_port,
+        forward_addr,
+        beacon,
+        dropped,
+        beacon_max_age_s,
+        rec: None,
+        write_error: None,
+        write_errors: 0,
+    };
     for msg in rx {
+        w.handle(msg);
+    }
+}
+
+/// Writer-thread state, split out so unit tests can drive it directly.
+struct Writer {
+    outdir: PathBuf,
+    listen_port: u16,
+    forward_addr: SocketAddr,
+    beacon: BeaconState,
+    dropped: Arc<AtomicU64>,
+    beacon_max_age_s: f64,
+    rec: Option<Recording>,
+    /// First write failure since the last clip start; disk-full mid-show
+    /// must show up in status, not only on stderr.
+    write_error: Option<String>,
+    write_errors: u64,
+}
+
+impl Writer {
+    /// write_line + latch: the first failure since clip start is kept for
+    /// status; every failure counts.
+    fn write(&mut self, file: &mut File, value: &Value) {
+        match write_line(file, value) {
+            Ok(()) => {}
+            Err(e) => {
+                self.write_errors += 1;
+                if self.write_error.is_none() {
+                    self.write_error = Some(e);
+                }
+            }
+        }
+    }
+
+    fn handle(&mut self, msg: Msg) {
         match msg {
             Msg::Packet { buf, t, beacon } => {
-                let Some(r) = rec.as_mut() else { continue };
+                let Some(mut rec) = self.rec.take() else { return };
                 // Arrived before the clip started.
-                let Some(dt) = t.checked_duration_since(r.epoch) else {
-                    continue;
+                let Some(dt) = t.checked_duration_since(rec.epoch) else {
+                    self.rec = Some(rec);
+                    return;
                 };
                 let Ok((_, packet)) = rosc::decoder::decode_udp(&buf).map_err(|e| {
                     eprintln!("osc-tap: OSC parse error: {e}");
                 }) else {
-                    continue;
+                    self.rec = Some(rec);
+                    return;
                 };
                 let ts = round6(dt.as_secs_f64());
                 // A beacon older than the cutoff means TD stopped talking
@@ -276,7 +327,7 @@ fn writer_loop(
                 // wrong — omit tl per the "omit when unknown" contract. A
                 // rate-0 pause keeps beaconing, so its age stays low.
                 let tl = beacon
-                    .filter(|b| signed_secs_since(t, b.at) <= beacon_max_age_s)
+                    .filter(|b| signed_secs_since(t, b.at) <= self.beacon_max_age_s)
                     .map(|b| round6(b.tl_at(t)))
                     .filter(|v| v.is_finite());
                 let mut msgs = Vec::new();
@@ -287,35 +338,45 @@ fn writer_loop(
                     if let Some(tl) = tl {
                         line.insert("tl".into(), json!(tl));
                     }
-                    line.insert("port".into(), json!(listen_port));
+                    line.insert("port".into(), json!(self.listen_port));
                     line.insert("a".into(), json!(m.addr));
                     let args: Vec<Value> = m.args.iter().filter_map(arg_to_json).collect();
                     line.insert("args".into(), Value::Array(args));
-                    if write_line(&mut r.file, &Value::Object(line)) {
-                        r.events += 1;
+                    let before = self.write_errors;
+                    self.write(&mut rec.file, &Value::Object(line));
+                    if self.write_errors == before {
+                        rec.events += 1;
                     }
                 }
+                self.rec = Some(rec);
             }
             Msg::Start { dir, reply } => {
-                if rec.is_some() {
+                if self.rec.is_some() {
                     let _ = reply.send(Err("already recording".into()));
-                    continue;
+                    return;
                 }
-                match start_recording(dir.as_deref().unwrap_or(&outdir), listen_port, forward_addr)
-                {
+                match start_recording(
+                    dir.as_deref().unwrap_or(&self.outdir),
+                    self.listen_port,
+                    self.forward_addr,
+                ) {
                     Ok(r) => {
+                        // Fresh counters: errors and drops attribute to THIS clip.
+                        self.write_error = None;
+                        self.write_errors = 0;
+                        self.dropped.store(0, Ordering::Relaxed);
                         let _ = reply.send(Ok(r.path.clone()));
-                        rec = Some(r);
+                        self.rec = Some(r);
                     }
                     Err(e) => {
                         let _ = reply.send(Err(e.to_string()));
                     }
                 }
             }
-            Msg::Stop { reply } => match rec.take() {
+            Msg::Stop { reply } => match self.rec.take() {
                 Some(mut r) => {
                     let t = round6(r.epoch.elapsed().as_secs_f64());
-                    write_line(&mut r.file, &json!({"type": "session_end", "t": t}));
+                    self.write(&mut r.file, &json!({"type": "session_end", "t": t}));
                     let _ = reply.send(Ok(()));
                 }
                 None => {
@@ -324,7 +385,7 @@ fn writer_loop(
             },
             Msg::Status { reply } => {
                 let now = Instant::now();
-                let (beacon_tl, beacon_age, beacon_rate) = match *beacon.lock().unwrap() {
+                let (beacon_tl, beacon_age, beacon_rate) = match *self.beacon.lock().unwrap() {
                     Some(b) => (
                         Some(round6(b.tl_at(now))),
                         Some(round6(signed_secs_since(now, b.at))),
@@ -333,13 +394,15 @@ fn writer_loop(
                     None => (None, None, None),
                 };
                 let _ = reply.send(Status {
-                    recording: rec.is_some(),
-                    clip: rec.as_ref().map(|r| r.path.clone()),
-                    events: rec.as_ref().map(|r| r.events).unwrap_or(0),
+                    recording: self.rec.is_some(),
+                    clip: self.rec.as_ref().map(|r| r.path.clone()),
+                    events: self.rec.as_ref().map(|r| r.events).unwrap_or(0),
                     beacon_tl,
                     beacon_age,
                     beacon_rate,
-                    dropped: dropped.load(Ordering::Relaxed),
+                    dropped: self.dropped.load(Ordering::Relaxed),
+                    write_error: self.write_error.clone(),
+                    write_errors: self.write_errors,
                 });
             }
         }
@@ -368,7 +431,8 @@ fn start_recording(
         "host": forward_addr.ip().to_string(),
         "routes": [format!("{}->{}", listen_port, forward_addr.port())],
     });
-    write_line(&mut file, &header);
+    // Header write failure surfaces on the first packet write instead.
+    let _ = write_line(&mut file, &header);
     Ok(Recording {
         file,
         path,
@@ -378,16 +442,15 @@ fn start_recording(
 }
 
 /// Write one JSON line and flush so a crash loses nothing.
-fn write_line(file: &mut File, value: &Value) -> bool {
+fn write_line(file: &mut File, value: &Value) -> Result<(), String> {
     let mut line = value.to_string();
     line.push('\n');
-    match file.write_all(line.as_bytes()).and_then(|_| file.flush()) {
-        Ok(()) => true,
-        Err(e) => {
+    file.write_all(line.as_bytes())
+        .and_then(|_| file.flush())
+        .map_err(|e| {
             eprintln!("osc-tap: write error: {e}");
-            false
-        }
-    }
+            e.to_string()
+        })
 }
 
 fn flatten(packet: OscPacket, out: &mut Vec<OscMessage>) {
@@ -460,5 +523,89 @@ fn signed_secs_since(t: Instant, since: Instant) -> f64 {
     match t.checked_duration_since(since) {
         Some(d) => d.as_secs_f64(),
         None => -since.duration_since(t).as_secs_f64(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+
+    fn test_writer(outdir: &std::path::Path) -> Writer {
+        Writer {
+            outdir: outdir.to_path_buf(),
+            listen_port: 1,
+            forward_addr: "127.0.0.1:9".parse().unwrap(),
+            beacon: Arc::new(Mutex::new(None)),
+            dropped: Arc::new(AtomicU64::new(0)),
+            beacon_max_age_s: 5.0,
+            rec: None,
+            write_error: None,
+            write_errors: 0,
+        }
+    }
+
+    fn status_of(w: &mut Writer) -> Status {
+        let (tx, rx) = mpsc::channel();
+        w.handle(Msg::Status { reply: tx });
+        rx.recv().unwrap()
+    }
+
+    fn start_clip(w: &mut Writer) -> PathBuf {
+        let (tx, rx) = mpsc::channel();
+        w.handle(Msg::Start { dir: None, reply: tx });
+        rx.recv().unwrap().unwrap()
+    }
+
+    fn packet_msg() -> Msg {
+        let buf = rosc::encoder::encode(&OscPacket::Message(OscMessage {
+            addr: "/x".into(),
+            args: vec![OscType::Int(1)],
+        }))
+        .unwrap();
+        Msg::Packet {
+            buf,
+            t: Instant::now(),
+            beacon: None,
+        }
+    }
+
+    #[test]
+    fn write_failure_latches_into_status() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut w = test_writer(tmp.path());
+        let path = start_clip(&mut w);
+        // Swap in a read-only handle: every write now fails like a dead disk.
+        w.rec.as_mut().unwrap().file = File::open(&path).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+
+        w.handle(packet_msg());
+        w.handle(packet_msg());
+        let st = status_of(&mut w);
+        assert!(st.recording);
+        assert_eq!(st.events, 0, "failed writes must not count as events");
+        assert_eq!(st.write_errors, 2);
+        assert!(st.write_error.is_some(), "status must carry the error");
+
+        // The latch survives stop (the operator sees it after the show).
+        let (tx, rx) = mpsc::channel();
+        w.handle(Msg::Stop { reply: tx });
+        rx.recv().unwrap().unwrap();
+        assert!(status_of(&mut w).write_error.is_some());
+    }
+
+    #[test]
+    fn counters_reset_per_clip_start() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut w = test_writer(tmp.path());
+        w.write_error = Some("old".into());
+        w.write_errors = 7;
+        w.dropped.store(9, Ordering::Relaxed);
+
+        start_clip(&mut w);
+        let st = status_of(&mut w);
+        assert_eq!(st.write_error, None);
+        assert_eq!(st.write_errors, 0);
+        assert_eq!(st.dropped, 0, "drops attribute to the current recording");
     }
 }

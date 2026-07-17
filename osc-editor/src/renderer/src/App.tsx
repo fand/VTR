@@ -461,6 +461,11 @@ function App(): React.JSX.Element {
         .then((s) => {
           setStatus(s)
           setStatusError(null)
+          // Disk full mid-performance must not fail silently: the latch
+          // keeps this banner up until the next recording starts.
+          if (s.write_error) {
+            setError(`recording write error (${s.write_errors} failed): ${s.write_error}`)
+          }
         })
         .catch((e: Error) => setStatusError(e.message))
     }
