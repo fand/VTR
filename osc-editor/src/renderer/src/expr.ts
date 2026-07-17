@@ -1,3 +1,13 @@
+/** Longest allowed timeline duration (24 h): an unbounded value would feed
+ *  a multi-million-iteration ruler loop and a DOM width past layout limits. */
+export const MAX_DURATION_S = 86400
+
+/** Accepts arithmetic ("60*2" → 120); must come out positive. Clamped. */
+export function parseDuration(draft: string): number | null {
+  const n = evalExpr(draft)
+  return n != null && n > 0 ? Math.min(n, MAX_DURATION_S) : null
+}
+
 /**
  * Evaluates an arithmetic expression: numbers, + - * /, parens, unary +/-.
  * Returns null on any syntax error or non-finite result.

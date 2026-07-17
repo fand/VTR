@@ -242,6 +242,20 @@ export function Timeline({
   } | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)
+
+  // Visible scroll range: ruler marks render only for it, so a huge duration
+  // never turns into millions of mark divs.
+  const [scrollX, setScrollX] = useState(0)
+  const [viewW, setViewW] = useState(0)
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const measure = (): void => setViewW(el.clientWidth)
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
   // Time + viewport x under the cursor at pinch start; scroll is restored
   // after the zoomed width renders so that point stays put.
   const pinchAnchor = useRef<{ t: number; viewX: number } | null>(null)
@@ -520,8 +534,13 @@ export function Timeline({
   // Marks stop at the timeline end (the tail pad shows no times). A mark's
   // label sticks out ~48px right of its tick; skip marks whose label would
   // poke past the content edge and stretch scrollWidth (the full timeline
-  // must fit the viewport at min zoom).
-  for (let s = 0; s <= end && s * pxPerSec + 48 <= widthPx; s += step) {
+  // must fit the viewport at min zoom). Only the visible scroll range gets
+  // marks; the loop is bounded by the viewport, never by `end`.
+  const visT0 = Math.max(0, (scrollX - LABEL_W) / pxPerSec)
+  const visT1 = (scrollX + (viewW || 1600)) / pxPerSec
+  for (let i = Math.floor(visT0 / step); ; i++) {
+    const s = i * step
+    if (s > end || s > visT1 || s * pxPerSec + 48 > widthPx) break
     marks.push(Math.round(s * 1e6) / 1e6)
   }
 
@@ -560,6 +579,7 @@ export function Timeline({
       <div
         className="timeline-scroll"
         ref={scrollRef}
+        onScroll={(e) => setScrollX(e.currentTarget.scrollLeft)}
         onPointerDown={onBgPointerDown}
         onPointerMove={onBgPointerMove}
         onPointerUp={onBgPointerUp}

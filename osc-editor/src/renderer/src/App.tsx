@@ -17,7 +17,7 @@ import {
   TAIL_PAD,
   Timeline
 } from './components/Timeline'
-import { evalExpr } from './expr'
+import { parseDuration } from './expr'
 import { Doc, useHistory } from './history'
 import {
   ClipInst,
@@ -225,11 +225,6 @@ function parsePort(draft: string): number | null {
   return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : null
 }
 
-/** Accepts arithmetic ("60*2" → 120); must come out positive. */
-function parseDuration(draft: string): number | null {
-  const n = evalExpr(draft)
-  return n != null && n > 0 ? n : null
-}
 
 function App(): React.JSX.Element {
   const [recording, setRecording] = useState<{ path: string; startedAt: number } | null>(null)

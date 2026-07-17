@@ -186,6 +186,14 @@ test('timeline duration: arithmetic input and label drag', async () => {
     await page.keyboard.type('99')
     await page.keyboard.press('Enter')
     await expect(field).toHaveValue('99')
+
+    // A huge value clamps to 24h and the app stays responsive (the ruler
+    // renders only the visible range, not 20M marks).
+    await field.fill('99999999')
+    await field.press('Enter')
+    await expect(field).toHaveValue('86400')
+    await page.locator('.ruler').click({ position: { x: 100, y: 10 } })
+    expect(await page.locator('.ruler-mark').count()).toBeLessThan(200)
   } finally {
     await app.close()
   }
