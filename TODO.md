@@ -6,6 +6,6 @@ File refs are `osc-editor/src/...` unless prefixed `osc-tap/`.
 
 ## Low
 
-- [ ] Preview OSC re-encode, proper fix: record OSC type tags in osc-tap's
-  JSONL and use them in `main/osc.ts`. The ambiguity is documented in the
-  encoder header for now (preview only; export copies JSONL unchanged).
+- [ ] Clip JSONL drops OSC type tags — record them in osc-tap and use them in
+  `main/osc.ts`. NOT preview-only: exported session.jsonl inherits the loss,
+  and TD-side replay scripts must guess too. See `docs/tasks/schema/task.md`.
