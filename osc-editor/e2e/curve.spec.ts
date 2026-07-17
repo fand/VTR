@@ -89,6 +89,16 @@ test('curve panel: properties per address/arg, visibility toggle', async () => {
     await expect(oneSec).toBeVisible()
     expect((await oneSec.boundingBox())!.y - editorBox.y).toBeLessThan(20)
 
+    // Selecting a property retargets the value axis to its scale (0.2…0.4).
+    await page.locator('.curve-prop-name', { hasText: '/xy[1]' }).click()
+    await expect(
+      page.locator('.curve-ylabels .curve-grid-label').filter({ hasText: /^0\.40$/ })
+    ).toHaveCount(1)
+    await expect(
+      page.locator('.curve-ylabels .curve-grid-label').filter({ hasText: /^0\.5/ })
+    ).toHaveCount(0)
+    await page.locator('.curve-prop-name', { hasText: '/xy[1]' }).click()
+
     // Toggle /fader off → its polyline disappears.
     await page.getByLabel('toggle /fader').uncheck()
     await expect(page.locator('polyline')).toHaveCount(2)

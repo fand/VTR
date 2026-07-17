@@ -738,8 +738,11 @@ export function CurvePanel({
   }
 
   // Grid: vertical time lines for the shown range; horizontal value lines on
-  // the first visible curve's scale (each curve auto-scales its own Y).
-  const gridProp = shown.find((p) => !hidden.has(p.key))
+  // the selected curve's scale, else the first visible one (each curve
+  // auto-scales its own Y, so the axis must follow what the user works on).
+  const gridProp =
+    shown.find((p) => selectedProps.has(p.key) && !hidden.has(p.key)) ??
+    shown.find((p) => !hidden.has(p.key))
   const yGrid = ((): { py: number; label: string }[] => {
     if (clips.length === 0 || !gridProp || gridProp.max <= gridProp.min) return []
     const vStep = gridStep(gridProp.max - gridProp.min, h - 2 * PAD, 18)
