@@ -199,6 +199,13 @@ app.whenReady().then(() => {
   ipcMain.handle('tap:status', () => requireTap().status())
   ipcMain.handle('tap:setPorts', (_e, ports: PortConfig) => requireTap().setPorts(ports))
   ipcMain.handle('app:workdir', () => workdir)
+  // macOS: proxy icon in the title bar carries the full path; the edited
+  // state shows as a dot on the close button. No-ops on other platforms.
+  ipcMain.handle('window:setFile', (e, path: string | null, dirty: boolean) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    win?.setRepresentedFilename(path ?? '')
+    win?.setDocumentEdited(dirty)
+  })
   // Raw events; the renderer applies its own (possibly newer) edit overlay.
   // A stale path (clip collected into a bundle since) re-resolves by name.
   ipcMain.handle('clip:events', (_e, path: string) => {

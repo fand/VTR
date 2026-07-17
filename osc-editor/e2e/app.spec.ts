@@ -85,9 +85,21 @@ test('record → clip on track → drag → delete → persisted', async () => {
     await expect(page.locator('.clip-meta')).toContainText('15 ev')
 
     // The new clip marks the project edited; save clears the suffix.
-    await expect.poll(() => page.title()).toBe(`osc-mtr - ${join(workdir, 'project.json')} (edited)`)
-    await save(page)
-    await expect.poll(() => page.title()).toBe(`osc-mtr - ${join(workdir, 'project.json')}`)
+    await expect.poll(() => page.title()).toBe('osc-mtr - project.json (edited)')
+    // macOS proxy icon carries the full path + the native edited dot.
+    if (process.platform === 'darwin') {
+      const winState = (): Promise<{ file: string; edited: boolean }> =>
+        app.evaluate(({ BrowserWindow }) => {
+          const win = BrowserWindow.getAllWindows()[0]
+          return { file: win.getRepresentedFilename(), edited: win.isDocumentEdited() }
+        })
+      await expect.poll(winState).toEqual({ file: join(workdir, 'project.json'), edited: true })
+      await save(page)
+      await expect.poll(winState).toEqual({ file: join(workdir, 'project.json'), edited: false })
+    } else {
+      await save(page)
+    }
+    await expect.poll(() => page.title()).toBe('osc-mtr - project.json')
     await expect.poll(() => readProject(workdir).tracks.length).toBe(1)
     expect(readProject(workdir).tracks[0].clips[0].offset).toBe(0)
 

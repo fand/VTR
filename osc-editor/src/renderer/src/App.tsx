@@ -388,11 +388,14 @@ function App(): React.JSX.Element {
     }
   }, [applyLoaded])
 
-  // Window title: "osc-mtr - <full path> (edited)"; parts drop off when
-  // there is no open file / no unsaved change.
+  // Window title: "osc-mtr - <file> (edited)"; parts drop off when there is
+  // no open file / no unsaved change. The macOS proxy icon (via setFile)
+  // carries the full path and the native edited dot.
   const dirty = history.seq !== savedState.seq || ports !== savedState.ports
   useEffect(() => {
-    document.title = `osc-mtr${projectFile ? ` - ${projectFile}` : ''}${dirty ? ' (edited)' : ''}`
+    const name = projectFile?.split(/[\\/]/).pop()
+    document.title = `osc-mtr${name ? ` - ${name}` : ''}${dirty ? ' (edited)' : ''}`
+    window.api.window.setFile(projectFile ?? null, dirty)
   }, [projectFile, dirty])
 
   // File menu actions + a keydown fallback for synthetic input (e2e), same

@@ -61,6 +61,11 @@ const api = {
       return () => ipcRenderer.removeListener(`menu:${channel}`, listener)
     }
   },
+  window: {
+    /** macOS proxy icon (full path) + edited dot; a no-op elsewhere. */
+    setFile: (path: string | null, dirty: boolean): Promise<void> =>
+      ipcRenderer.invoke('window:setFile', path, dirty)
+  },
   workdir: (): Promise<string> => ipcRenderer.invoke('app:workdir')
 }
 
