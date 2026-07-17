@@ -1,6 +1,6 @@
 # Must match the AppUserModelId set in src/main/index.ts (Windows taskbar grouping).
-appId: com.osc-mtr.editor
-productName: osc-editor
+appId: com.fand.vtr
+productName: VTR
 directories:
   buildResources: build
 files:
@@ -18,12 +18,12 @@ extraResources:
     to: bin/osc-tap
 fileAssociations:
   - ext: oscproj
-    name: osc-mtr Project
+    name: VTR Project
     role: Editor
     # .oscproj is a directory bundle; Finder shows it as a single file.
     isPackage: true
 win:
-  executableName: osc-editor
+  executableName: vtr
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}

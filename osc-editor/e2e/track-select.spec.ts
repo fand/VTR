@@ -14,7 +14,7 @@ function jsonl(lines: object[]): string {
 }
 
 test('track select: cmd/shift multi-select, curve shows track clips', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   writeFileSync(
     join(workdir, 'clip-a.jsonl'),
     jsonl([

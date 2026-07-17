@@ -11,7 +11,7 @@ test.skip(
   'launchd test only on demand (RUN_LAUNCHD=1)'
 )
 
-const LABEL = 'com.osc-mtr.osc-tap'
+const LABEL = 'com.fand.vtr.osc-tap'
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms))
@@ -39,7 +39,7 @@ function jobLoaded(): boolean {
 }
 
 test('launchd agent: crash restart + bootout on quit', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-launchd-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-launchd-'))
   const app = await electron.launch({
     args: [join(__dirname, '../out/main/index.js')],
     cwd: workdir,

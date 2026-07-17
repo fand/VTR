@@ -22,7 +22,7 @@ function savedProject(workdir: string): {
 }
 
 test('track rename: double-click, persisted, undoable', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   writeFileSync(
     join(workdir, CLIP),
     jsonl([

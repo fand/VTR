@@ -15,7 +15,7 @@ function jsonl(lines: object[]): string {
 }
 
 test('timeline markers: add at playhead, persist in project.json', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   writeFileSync(
     join(workdir, CLIP),
     jsonl([

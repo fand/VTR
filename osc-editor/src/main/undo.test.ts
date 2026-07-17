@@ -14,7 +14,7 @@ function seqs(dir: string): number[] {
 }
 
 function tmp(): string {
-  return mkdtempSync(join(tmpdir(), 'osc-mtr-undo-'))
+  return mkdtempSync(join(tmpdir(), 'vtr-undo-'))
 }
 
 test('compaction keeps the entries bridging undoSeq to the tail', () => {

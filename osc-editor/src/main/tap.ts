@@ -17,7 +17,9 @@ const RESPAWN_DELAY_MAX_MS = 10_000
  */
 export type SpawnMode = 'child' | 'launchd'
 
-const LAUNCHD_LABEL = 'com.osc-mtr.osc-tap'
+const LAUNCHD_LABEL = 'com.fand.vtr.osc-tap'
+// Pre-rename label; its RunAtLoad plist would keep an orphan tap on the ports.
+const LEGACY_LAUNCHD_LABEL = 'com.osc-mtr.osc-tap'
 
 function xmlEscape(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -204,6 +206,10 @@ ${programArgs}
     const domain = `gui/${process.getuid!()}`
     // Replace any previous incarnation (other workdir/binary).
     this.launchctl('bootout', `${domain}/${LAUNCHD_LABEL}`)
+    this.launchctl('bootout', `${domain}/${LEGACY_LAUNCHD_LABEL}`)
+    rmSync(join(homedir(), 'Library', 'LaunchAgents', `${LEGACY_LAUNCHD_LABEL}.plist`), {
+      force: true
+    })
     if (!this.launchctl('bootstrap', domain, this.plistPath())) {
       console.error('launchctl bootstrap failed; osc-tap not running')
     }

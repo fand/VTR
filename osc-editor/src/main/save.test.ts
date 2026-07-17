@@ -45,7 +45,7 @@ function setup(): {
   project: ProjectFile
   resolveFrom: (file: string) => string
 } {
-  const root = mkdtempSync(join(tmpdir(), 'osc-mtr-save-'))
+  const root = mkdtempSync(join(tmpdir(), 'vtr-save-'))
   const staging = join(root, 'staging')
   mkdirSync(staging, { recursive: true })
   writeFileSync(join(staging, 'rec.jsonl'), CLIP)

@@ -15,7 +15,7 @@ function jsonl(lines: object[]): string {
 }
 
 test('clip context menu: mute, copy, paste, duplicate, split at playhead', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   writeFileSync(
     join(workdir, CLIP),
     jsonl([

@@ -14,7 +14,7 @@ const BEACON_PORT = 15512
 async function launchDirty(
   quitChoice?: string
 ): Promise<{ app: ElectronApplication; workdir: string }> {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   writeFileSync(
     join(workdir, 'project.json'),
     JSON.stringify({

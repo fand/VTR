@@ -35,7 +35,7 @@ async function launch(
 }
 
 test('missing clip: kept grayed, save keeps the reference, restore brings it back', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   const bundle = join(workdir, 'my.oscproj')
   mkdirSync(join(bundle, 'clips'), { recursive: true })
   writeFileSync(join(bundle, 'clips', 'a.jsonl'), CLIP + '\n')
@@ -59,7 +59,7 @@ test('missing clip: kept grayed, save keeps the reference, restore brings it bac
 
     // Save must round-trip the reference, not drop it.
     await page.keyboard.press('ControlOrMeta+s')
-    await expect.poll(() => page.title()).toBe('osc-mtr - my.oscproj')
+    await expect.poll(() => page.title()).toBe('VTR - my.oscproj')
     const saved = JSON.parse(readFileSync(join(bundle, 'project.json'), 'utf8'))
     expect(saved.tracks[0].clips).toHaveLength(1)
     expect(saved.tracks[0].clips[0]).toMatchObject({ file: 'a.jsonl', offset: 1 })

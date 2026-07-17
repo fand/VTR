@@ -33,7 +33,7 @@ interface Launched {
 }
 
 async function launchApp(): Promise<Launched> {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   writeFileSync(
     join(workdir, 'project.json'),
     JSON.stringify({
@@ -85,7 +85,7 @@ test('record → clip on track → drag → delete → persisted', async () => {
     await expect(page.locator('.clip-meta')).toContainText('15 ev')
 
     // The new clip marks the project edited; save clears the suffix.
-    await expect.poll(() => page.title()).toBe('osc-mtr - project.json (edited)')
+    await expect.poll(() => page.title()).toBe('VTR - project.json (edited)')
     // macOS proxy icon carries the full path + the native edited dot.
     if (process.platform === 'darwin') {
       const winState = (): Promise<{ file: string; edited: boolean }> =>
@@ -99,7 +99,7 @@ test('record → clip on track → drag → delete → persisted', async () => {
     } else {
       await save(page)
     }
-    await expect.poll(() => page.title()).toBe('osc-mtr - project.json')
+    await expect.poll(() => page.title()).toBe('VTR - project.json')
     await expect.poll(() => readProject(workdir).tracks.length).toBe(1)
     expect(readProject(workdir).tracks[0].clips[0].offset).toBe(0)
 
@@ -161,7 +161,7 @@ test('beacon → tl recorded → clip auto-aligned at record stop', async () => 
 })
 
 test('boot: no CLI arg → empty project; broken arg → error + empty project', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   // A project.json in the cwd is NOT auto-loaded anymore.
   writeFileSync(
     join(workdir, 'project.json'),
@@ -185,7 +185,7 @@ test('boot: no CLI arg → empty project; broken arg → error + empty project',
   const page = await app.firstWindow()
   await expect(page.locator('.timeline-panel')).toBeVisible()
   await expect(page.locator('.track')).toHaveCount(0)
-  await expect.poll(() => page.title()).toBe('osc-mtr')
+  await expect.poll(() => page.title()).toBe('VTR')
   await app.close()
 
   // Unparsable project file: error banner, still an empty usable project.
@@ -200,7 +200,7 @@ test('boot: no CLI arg → empty project; broken arg → error + empty project',
   await expect(page2.locator('.track')).toHaveCount(0)
   await page2.getByRole('button', { name: '+ Track' }).click()
   await expect(page2.locator('.track')).toHaveCount(1)
-  await expect.poll(() => page2.title()).toBe('osc-mtr (edited)')
+  await expect.poll(() => page2.title()).toBe('VTR (edited)')
   await app2.close()
 })
 

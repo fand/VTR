@@ -5,7 +5,7 @@ import { expect, test } from 'vitest'
 import { readClip } from './clips'
 
 function tmpClip(content: string): string {
-  const dir = mkdtempSync(join(tmpdir(), 'osc-mtr-clips-'))
+  const dir = mkdtempSync(join(tmpdir(), 'vtr-clips-'))
   const path = join(dir, 'clip.jsonl')
   writeFileSync(path, content)
   return path

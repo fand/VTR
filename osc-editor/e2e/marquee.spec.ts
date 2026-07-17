@@ -15,7 +15,7 @@ function jsonl(lines: object[]): string {
 }
 
 test('timeline marquee: drag-select clips, shift adds, click deselects and seeks', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   writeFileSync(
     join(workdir, CLIP),
     jsonl([

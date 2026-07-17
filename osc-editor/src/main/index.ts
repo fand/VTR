@@ -248,7 +248,7 @@ function installMenu(): void {
 }
 
 app.whenReady().then(() => {
-  electronApp.setAppUserModelId('com.osc-mtr.editor')
+  electronApp.setAppUserModelId('com.fand.vtr')
   installMenu()
 
   // A stale staged log (abandoned untitled session) must not leak into this

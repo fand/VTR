@@ -1,6 +1,6 @@
 # osc-editor
 
-An Electron application with React and TypeScript
+VTR (VJs' Timeline Recorder) — Electron editor GUI
 
 ## Recommended IDE Setup
 

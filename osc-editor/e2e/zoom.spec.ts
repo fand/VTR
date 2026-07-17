@@ -15,7 +15,7 @@ function jsonl(lines: object[]): string {
 }
 
 test('timeline pinch zoom (ctrl+wheel) scales around the cursor', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   writeFileSync(
     join(workdir, CLIP),
     jsonl([
@@ -112,7 +112,7 @@ test('timeline pinch zoom (ctrl+wheel) scales around the cursor', async () => {
 })
 
 test('curve editor x/y zoom sliders scale the axes; y zoom scrolls vertically', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   writeFileSync(
     join(workdir, CLIP),
     jsonl([
@@ -172,7 +172,7 @@ test('curve editor x/y zoom sliders scale the axes; y zoom scrolls vertically', 
 })
 
 test('min zoom fits a long timeline in the window', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   writeFileSync(
     join(workdir, CLIP),
     jsonl([

@@ -13,8 +13,8 @@ const BEACON_PORT = 15712
 // suite — each with its own workdir — is unaffected.
 
 test('second instance forwards its project arg to the first and quits', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
-  const projectDir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
+  const projectDir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   const projectPath = join(projectDir, 'project.json')
   writeFileSync(
     projectPath,
@@ -42,7 +42,7 @@ test('second instance forwards its project arg to the first and quits', async ()
   try {
     const page = await app.firstWindow()
     await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
-    await expect.poll(() => page.title()).toBe('osc-mtr')
+    await expect.poll(() => page.title()).toBe('VTR')
 
     // Second launch on the same userData: must exit, first must load the arg.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -61,7 +61,7 @@ test('second instance forwards its project arg to the first and quits', async ()
       })
     })
     expect(exitCode).toBe(0)
-    await expect.poll(() => page.title()).toBe('osc-mtr - project.json')
+    await expect.poll(() => page.title()).toBe('VTR - project.json')
   } finally {
     await app.close()
   }

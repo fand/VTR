@@ -26,7 +26,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 async function launchApp(): Promise<{ app: ElectronApplication; page: Page; workdir: string }> {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   writeFileSync(
     join(workdir, 'project.json'),
     JSON.stringify({

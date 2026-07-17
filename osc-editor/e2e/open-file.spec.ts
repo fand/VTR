@@ -49,16 +49,16 @@ const emitOpenFile = (app: ElectronApplication, path: string): Promise<void> =>
   }, path)
 
 test('open-file while running loads the project', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   const projectPath = writeProject(workdir)
   const app = await launchUntitled(workdir)
   try {
     const page = await app.firstWindow()
     await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
-    await expect.poll(() => page.title()).toBe('osc-mtr')
+    await expect.poll(() => page.title()).toBe('VTR')
 
     await emitOpenFile(app, projectPath)
-    await expect.poll(() => page.title()).toBe('osc-mtr - project.json')
+    await expect.poll(() => page.title()).toBe('VTR - project.json')
     await expect(page.locator('.marker-flag')).toHaveCount(1)
   } finally {
     await app.close()
@@ -66,7 +66,7 @@ test('open-file while running loads the project', async () => {
 })
 
 test('open-file with unsaved changes: cancel keeps the current doc', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   const projectPath = writeProject(workdir)
   const app = await launchUntitled(workdir, { OSC_EDITOR_QUIT_CHOICE: 'cancel' })
   try {
@@ -78,7 +78,7 @@ test('open-file with unsaved changes: cancel keeps the current doc', async () =>
     await emitOpenFile(app, projectPath)
     // The prompt was declined: still the untitled dirty doc.
     await page.waitForTimeout(300)
-    await expect.poll(() => page.title()).toBe('osc-mtr (edited)')
+    await expect.poll(() => page.title()).toBe('VTR (edited)')
   } finally {
     await app.evaluate(({ BrowserWindow }) => {
       BrowserWindow.getAllWindows().forEach((w) => w.destroy())

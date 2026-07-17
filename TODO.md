@@ -1,6 +1,6 @@
 # TODO
 
-- repo名を `VTR` に統一
+- [x] repo名を `VTR` に統一
   - desc: `VJs' Timeline Recorder`
 - File MenuにOpen Recentを追加
 - repo rootからアプリ起動するスクリプトを追加して

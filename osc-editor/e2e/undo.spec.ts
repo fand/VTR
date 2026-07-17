@@ -37,7 +37,7 @@ function savedSeq(workdir: string): number | undefined {
 }
 
 test('undo/redo: one entry per drag, survives restart, linear truncation', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   writeFileSync(
     join(workdir, CLIP),
     jsonl([
@@ -113,7 +113,7 @@ test('undo/redo: one entry per drag, survives restart, linear truncation', async
 })
 
 test('redo survives a relaunch: entries past undoSeq become the redo stack', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   writeFileSync(
     join(workdir, CLIP),
     jsonl([
@@ -165,7 +165,7 @@ test('redo survives a relaunch: entries past undoSeq become the redo stack', asy
 })
 
 test('divergent undo entry drops history and says so in the banner', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   writeFileSync(
     join(workdir, CLIP),
     jsonl([
@@ -214,7 +214,7 @@ test('divergent undo entry drops history and says so in the banner', async () =>
 })
 
 test('undo log stays with its project: opening A never replays B', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   // Two projects in separate dirs, one shared data dir (workdir).
   const project = (offset: number): string =>
     JSON.stringify({
@@ -269,7 +269,7 @@ test('undo log stays with its project: opening A never replays B', async () => {
 })
 
 test('undo mid-drag is ignored; the gesture and the stack survive', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   writeFileSync(
     join(workdir, CLIP),
     jsonl([

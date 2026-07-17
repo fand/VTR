@@ -423,13 +423,13 @@ function App(): React.JSX.Element {
   // unsaved changes before sending this).
   useEffect(() => window.api.project.onOpenPath(openPath), [openPath])
 
-  // Window title: "osc-mtr - <file> (edited)"; parts drop off when there is
+  // Window title: "VTR - <file> (edited)"; parts drop off when there is
   // no open file / no unsaved change. The macOS proxy icon (via setFile)
   // carries the full path and the native edited dot.
   const dirty = history.seq !== savedState.seq || ports !== savedState.ports
   useEffect(() => {
     const name = projectFile?.split(/[\\/]/).pop()
-    document.title = `osc-mtr${name ? ` - ${name}` : ''}${dirty ? ' (edited)' : ''}`
+    document.title = `VTR${name ? ` - ${name}` : ''}${dirty ? ' (edited)' : ''}`
     window.api.window.setFile(projectFile ?? null, dirty)
   }, [projectFile, dirty])
 
@@ -1078,7 +1078,7 @@ function App(): React.JSX.Element {
         <div className="header-left">
           <div className="header-left-grid">
             <div className="logo-row">
-              <span className="logo">osc-mtr</span>
+              <span className="logo">VTR</span>
               <FileMenu onOpen={openProject} onSave={saveProject} onSaveAs={saveProjectAs} />
             </div>
             <div className="header-duration">

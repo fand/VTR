@@ -12,7 +12,7 @@ const CLIP = [
 ].join('\n')
 
 function makeBundle(): { dir: string; staging: string; projectPath: string } {
-  const root = mkdtempSync(join(tmpdir(), 'osc-mtr-proj-'))
+  const root = mkdtempSync(join(tmpdir(), 'vtr-proj-'))
   const dir = join(root, 'p.oscproj')
   const staging = join(root, 'staging')
   mkdirSync(join(dir, 'clips'), { recursive: true })

@@ -63,7 +63,7 @@ function clipFiles(dir: string): string[] {
 }
 
 test('bundle: rec into project clips/, Save As collects into .oscproj, reopen + export', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   const bundle = join(workdir, 'my.oscproj')
   writeFileSync(
     join(workdir, 'project.json'),
@@ -85,7 +85,7 @@ test('bundle: rec into project clips/, Save As collects into .oscproj, reopen + 
 
     // Save As -> the dialog (env stand-in) picks my.oscproj.
     await page.keyboard.press('ControlOrMeta+Shift+s')
-    await expect.poll(() => page.title()).toBe('osc-mtr - my.oscproj')
+    await expect.poll(() => page.title()).toBe('VTR - my.oscproj')
     if (process.platform === 'darwin') {
       await expect
         .poll(() =>
@@ -130,7 +130,7 @@ test('bundle: rec into project clips/, Save As collects into .oscproj, reopen + 
 })
 
 test('bundle: untitled record → Save As moves staged clips into the bundle', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   const bundle = join(workdir, 'live.oscproj')
   // No CLI project arg: the session is untitled, recordings stage in userData.
   const { app, page } = await launch(workdir, '', bundle)

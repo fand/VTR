@@ -54,7 +54,7 @@ function savedOffset(workdir: string): number {
 }
 
 test('cancelled Save As dialog saves nothing and shows no error', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   setup(workdir)
   // Empty OSC_EDITOR_DIALOG_PATH = the user cancels every save dialog.
   const app = await launch(workdir, { OSC_EDITOR_DIALOG_PATH: '' })
@@ -83,7 +83,7 @@ test('cancelled Save As dialog saves nothing and shows no error', async () => {
 })
 
 test('export write failure lands in the error banner', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   setup(workdir)
   // A directory squatting on the output path makes the write fail.
   mkdirSync(join(workdir, 'session.jsonl'))

@@ -36,7 +36,7 @@ test('resolveClipPath never escapes its roots', () => {
 })
 
 test('resolveClipPath precedence: clips/ > flat > staging > first candidate', () => {
-  const root = mkdtempSync(join(tmpdir(), 'osc-mtr-paths-'))
+  const root = mkdtempSync(join(tmpdir(), 'vtr-paths-'))
   const proj = join(root, 'p.oscproj')
   const staging = join(root, 'staging')
   mkdirSync(join(proj, 'clips'), { recursive: true })
@@ -54,7 +54,7 @@ test('resolveClipPath precedence: clips/ > flat > staging > first candidate', ()
 })
 
 test('loadProject marks a traversal clip.file missing without touching disk', () => {
-  const root = mkdtempSync(join(tmpdir(), 'osc-mtr-paths-'))
+  const root = mkdtempSync(join(tmpdir(), 'vtr-paths-'))
   const dir = join(root, 'p.oscproj')
   mkdirSync(dir, { recursive: true })
   const project: ProjectFile = {
@@ -70,7 +70,7 @@ test('loadProject marks a traversal clip.file missing without touching disk', ()
 })
 
 test('collectClips skips traversal clip.file', () => {
-  const root = mkdtempSync(join(tmpdir(), 'osc-mtr-paths-'))
+  const root = mkdtempSync(join(tmpdir(), 'vtr-paths-'))
   const staging = join(root, 'staging')
   mkdirSync(staging, { recursive: true })
   writeFileSync(join(root, 'victim.jsonl'), 'data\n')

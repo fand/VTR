@@ -23,7 +23,7 @@ function jsonl(lines: object[]): string {
 }
 
 test('curve panel: properties per address/arg, visibility toggle', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   writeFileSync(
     join(workdir, CLIP),
     jsonl([
@@ -148,7 +148,7 @@ test('curve panel: properties per address/arg, visibility toggle', async () => {
 })
 
 test('curve panel: filter input narrows the property list and drawn curves', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   writeFileSync(
     join(workdir, CLIP),
     jsonl([
@@ -207,7 +207,7 @@ test('curve panel: filter input narrows the property list and drawn curves', asy
 })
 
 test('curve panel: property list sorted by address', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   writeFileSync(
     join(workdir, CLIP),
     jsonl([
@@ -255,7 +255,7 @@ test('curve panel: property list sorted by address', async () => {
 })
 
 test('curve panel: selecting a property dims other curves and hides their points', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   writeFileSync(
     join(workdir, CLIP),
     jsonl([
@@ -313,7 +313,7 @@ test('curve panel: selecting a property dims other curves and hides their points
 })
 
 test('curve panel: clicking a curve line selects its property', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   writeFileSync(
     join(workdir, CLIP),
     jsonl([
@@ -383,7 +383,7 @@ test('curve panel: clicking a curve line selects its property', async () => {
 })
 
 test('curve panel: multi-select shows every selected clip, timeline time axis', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   writeFileSync(
     join(workdir, CLIP),
     jsonl([
@@ -460,7 +460,7 @@ test('curve panel: multi-select shows every selected clip, timeline time axis', 
 })
 
 test('curve panel: drag and delete points, edits persisted to sidecar', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   writeFileSync(
     join(workdir, CLIP),
     jsonl([
@@ -545,7 +545,7 @@ test('curve panel: drag and delete points, edits persisted to sidecar', async ()
 })
 
 test('curve panel: transform box moves and scales the selected points', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   writeFileSync(
     join(workdir, CLIP),
     jsonl([
@@ -654,7 +654,7 @@ test('curve panel: transform box moves and scales the selected points', async ()
 })
 
 test('curve panel: double-click / cmd+click on a curve inserts a point', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   writeFileSync(
     join(workdir, CLIP),
     jsonl([
@@ -749,7 +749,7 @@ test('curve panel: double-click / cmd+click on a curve inserts a point', async (
 })
 
 test('curve header: snap locks drags to the grid, Box toggles the transform box', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   writeFileSync(
     join(workdir, CLIP),
     jsonl([
@@ -837,7 +837,7 @@ test('curve header: snap locks drags to the grid, Box toggles the transform box'
 })
 
 test('curve header: pencil clicks add points to the selected curve', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   writeFileSync(
     join(workdir, CLIP),
     jsonl([
@@ -943,7 +943,7 @@ test('curve header: pencil clicks add points to the selected curve', async () =>
 })
 
 test('curve panel: marquee selects multiple points, group drag and delete', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   writeFileSync(
     join(workdir, CLIP),
     jsonl([

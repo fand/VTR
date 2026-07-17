@@ -15,7 +15,7 @@ function jsonl(lines: object[]): string {
 }
 
 test('clip keyboard shortcuts: Cmd+C / Cmd+V copy-paste at playhead', async () => {
-  const workdir = mkdtempSync(join(tmpdir(), 'osc-mtr-e2e-'))
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   writeFileSync(
     join(workdir, CLIP),
     jsonl([

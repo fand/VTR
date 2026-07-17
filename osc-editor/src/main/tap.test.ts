@@ -49,7 +49,7 @@ afterEach(() => {
 function setup(
   onRequest: Parameters<typeof fakeServer>[1]
 ): Promise<{ tap: TapManager; connections: () => number }> {
-  const dir = mkdtempSync(join(tmpdir(), 'osc-mtr-tap-'))
+  const dir = mkdtempSync(join(tmpdir(), 'vtr-tap-'))
   const tap = new TapManager('/nonexistent/osc-tap', dir, dir, 'child', DEFAULT_PORTS, 150)
   return fakeServer(tap.sockPath, onRequest).then(({ server, connections }) => {
     cleanups.push(() => {

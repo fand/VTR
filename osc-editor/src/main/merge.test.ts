@@ -6,7 +6,7 @@ import type { ProjectFile } from '../shared/types'
 import { mergeProject } from './merge'
 
 test('unreadable clip contributes no events but keeps its duration', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'osc-mtr-merge-'))
+  const dir = mkdtempSync(join(tmpdir(), 'vtr-merge-'))
   writeFileSync(join(dir, 'b.jsonl'), '{"t":0.5,"port":10000,"a":"/x","args":[1]}\n')
   const project: ProjectFile = {
     version: 1,
@@ -25,7 +25,7 @@ test('unreadable clip contributes no events but keeps its duration', () => {
 })
 
 test('a t edit decides trim membership: moved out drops, moved in appears', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'osc-mtr-merge-'))
+  const dir = mkdtempSync(join(tmpdir(), 'vtr-merge-'))
   writeFileSync(
     join(dir, 'c.jsonl'),
     '{"t":1.0,"port":10000,"a":"/in","args":[1]}\n' +
@@ -51,7 +51,7 @@ test('a t edit decides trim membership: moved out drops, moved in appears', () =
 })
 
 test('edits on added events merge like recorded ones', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'osc-mtr-merge-'))
+  const dir = mkdtempSync(join(tmpdir(), 'vtr-merge-'))
   writeFileSync(join(dir, 'd.jsonl'), '{"t":0.0,"port":10000,"a":"/x","args":[1]}\n')
   const project: ProjectFile = {
     version: 1,
