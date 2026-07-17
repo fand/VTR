@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { applyEditsIndexed } from '../../../shared/edits'
 import type { ClipEdits, OscEvent } from '../../../shared/types'
 import { ClipInst, clipLen, formatRulerLabel } from '../timeline/model'
@@ -152,6 +152,30 @@ export interface PointAdd {
   ev: OscEvent
 }
 
+interface HoverInfo {
+  px: number
+  py: number
+  anchor: 'start' | 'end'
+  text: string
+}
+
+/** Tooltip in its own component: pointermove feeds it through a subscription,
+ *  so hovering never re-renders (and reconciles) the whole point cloud. */
+const HoverTooltip = React.memo(function HoverTooltip({
+  subscribe
+}: {
+  subscribe: (fn: (info: HoverInfo | null) => void) => () => void
+}): React.JSX.Element | null {
+  const [info, setInfo] = useState<HoverInfo | null>(null)
+  useEffect(() => subscribe(setInfo), [subscribe])
+  if (!info) return null
+  return (
+    <text className="curve-tooltip" x={info.px + 8} y={info.py - 8} textAnchor={info.anchor}>
+      {info.text}
+    </text>
+  )
+})
+
 /** One numeric-arg edit: absolute clip-local t and/or value for args[argIndex]. */
 export interface PointPatch {
   file: string
@@ -265,13 +289,20 @@ export function CurvePanel({
   }, [pathsKey])
 
   // Only clips whose events already arrived draw; the rest pop in on load.
+  // Keyed on the clip fields that actually feed buildProperties, not the
+  // clips array identity: timeline drag transients rebuild the array every
+  // pointermove without touching the shown clips' placement or events.
+  const clipsKey = clips
+    .map((c) => `${c.id} ${c.offset} ${c.trimIn} ${c.trimOut} ${c.file} ${c.path}`)
+    .join('\n')
   const curves = useMemo(() => {
     const ready = clips.flatMap((clip) => {
       const events = loaded.get(clip.path)
       return events ? [{ clip, events }] : []
     })
     return buildProperties(ready, edits)
-  }, [clips, loaded, edits])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- clipsKey covers clips
+  }, [clipsKey, loaded, edits])
 
   // Properties that pass the name filter; everything drawn works off this.
   const shown = useMemo(() => {
@@ -522,13 +553,13 @@ export function CurvePanel({
 
   // Hover: the tooltip always shows the point nearest to the cursor (px
   // distance). Selected properties win; otherwise all visible points compete.
-  // Positions resolve each render, so the tooltip tracks a dragged point.
-  const [mouse, setMouse] = useState<{ x: number; y: number } | null>(null)
-  const hoverInfo = ((): { px: number; py: number; text: string } | null => {
-    if (!mouse || clips.length === 0) return null
+  // The scan runs per pointermove but feeds only the HoverTooltip child, so
+  // the point cloud itself never re-renders on hover.
+  const computeHover = (mouse: { x: number; y: number }): HoverInfo | null => {
+    if (clips.length === 0) return null
     const visible = shown.filter((p) => !hidden.has(p.key))
     const sel = visible.filter((p) => selectedProps.has(p.key))
-    let best: { px: number; py: number; text: string } | null = null
+    let best: HoverInfo | null = null
     let bestD = Infinity
     for (const p of sel.length > 0 ? sel : visible) {
       for (const pt of p.points) {
@@ -537,12 +568,32 @@ export function CurvePanel({
         const d = (px - mouse.x) ** 2 + (py - mouse.y) ** 2
         if (d < bestD) {
           bestD = d
-          best = { px, py, text: `${p.label}: ${fmt(pt.v)} @ ${fmt(pt.t)}s` }
+          best = {
+            px,
+            py,
+            anchor: px > innerW - 120 ? 'end' : 'start',
+            text: `${p.label}: ${fmt(pt.v)} @ ${fmt(pt.t)}s`
+          }
         }
       }
     }
     return best
-  })()
+  }
+  // Fresh closure every render; pointermove reads the latest through the ref.
+  const computeHoverRef = useRef(computeHover)
+  useEffect(() => {
+    computeHoverRef.current = computeHover
+  })
+  const hoverListener = useRef<((info: HoverInfo | null) => void) | null>(null)
+  const subscribeHover = useCallback((fn: (info: HoverInfo | null) => void) => {
+    hoverListener.current = fn
+    return () => {
+      if (hoverListener.current === fn) hoverListener.current = null
+    }
+  }, [])
+  const updateHover = (pos: { x: number; y: number } | null): void => {
+    hoverListener.current?.(pos && computeHoverRef.current(pos))
+  }
 
   // Marquee: drag on empty editor space rubber-bands a selection. A plain
   // click (< 3px) clears it, matching the old deselect behavior.
@@ -695,7 +746,7 @@ export function CurvePanel({
 
   const onEditorMove = (e: React.PointerEvent<HTMLDivElement>): void => {
     const pos = svgPos(e)
-    setMouse(pos)
+    updateHover(pos)
     if (draw.current) {
       if (Math.abs(pos.x - draw.current.lastX) >= DRAW_STEP_PX) drawAt(pos)
       return
@@ -896,7 +947,7 @@ export function CurvePanel({
           onPointerDown={onEditorDown}
           onPointerMove={onEditorMove}
           onPointerUp={onEditorUp}
-          onPointerLeave={() => setMouse(null)}
+          onPointerLeave={() => updateHover(null)}
         >
           {clips.length === 0 && (
             <div className="curve-empty">Select a clip to see its curves.</div>
@@ -1049,16 +1100,7 @@ export function CurvePanel({
                     ))}
                   </g>
                 )}
-                {hoverInfo && (
-                  <text
-                    className="curve-tooltip"
-                    x={hoverInfo.px + 8}
-                    y={hoverInfo.py - 8}
-                    textAnchor={hoverInfo.px > innerW - 120 ? 'end' : 'start'}
-                  >
-                    {hoverInfo.text}
-                  </text>
-                )}
+                <HoverTooltip subscribe={subscribeHover} />
                 {marqueeRect && (
                   <rect
                     className="curve-marquee"
