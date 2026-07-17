@@ -387,12 +387,11 @@ function App(): React.JSX.Element {
     }
   }, [applyLoaded])
 
-  // Window title: "osc-mtr - <file> (edited)"; parts drop off when there is
-  // no open file / no unsaved change.
+  // Window title: "osc-mtr - <full path> (edited)"; parts drop off when
+  // there is no open file / no unsaved change.
   const dirty = history.seq !== savedState.seq || ports !== savedState.ports
   useEffect(() => {
-    const name = projectFile?.split(/[\\/]/).pop()
-    document.title = `osc-mtr${name ? ` - ${name}` : ''}${dirty ? ' (edited)' : ''}`
+    document.title = `osc-mtr${projectFile ? ` - ${projectFile}` : ''}${dirty ? ' (edited)' : ''}`
   }, [projectFile, dirty])
 
   // File menu actions + a keydown fallback for synthetic input (e2e), same

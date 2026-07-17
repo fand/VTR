@@ -85,9 +85,9 @@ test('record → clip on track → drag → delete → persisted', async () => {
     await expect(page.locator('.clip-meta')).toContainText('15 ev')
 
     // The new clip marks the project edited; save clears the suffix.
-    await expect.poll(() => page.title()).toBe('osc-mtr - project.json (edited)')
+    await expect.poll(() => page.title()).toBe(`osc-mtr - ${join(workdir, 'project.json')} (edited)`)
     await save(page)
-    await expect.poll(() => page.title()).toBe('osc-mtr - project.json')
+    await expect.poll(() => page.title()).toBe(`osc-mtr - ${join(workdir, 'project.json')}`)
     await expect.poll(() => readProject(workdir).tracks.length).toBe(1)
     expect(readProject(workdir).tracks[0].clips[0].offset).toBe(0)
 

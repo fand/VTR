@@ -85,7 +85,7 @@ test('bundle: rec into project clips/, Save As collects into .oscproj, reopen + 
 
     // Save As -> the dialog (env stand-in) picks my.oscproj.
     await page.keyboard.press('ControlOrMeta+Shift+s')
-    await expect.poll(() => page.title()).toBe('osc-mtr - my.oscproj')
+    await expect.poll(() => page.title()).toBe(`osc-mtr - ${bundle}`)
     const saved = JSON.parse(readFileSync(join(bundle, 'project.json'), 'utf8'))
     expect(saved.tracks[0].clips).toHaveLength(1)
     const file = saved.tracks[0].clips[0].file as string
