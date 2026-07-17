@@ -14,6 +14,7 @@ import {
   MAX_PX_PER_SEC,
   MIN_PX_PER_SEC,
   PlayingState,
+  TAIL_PAD,
   Timeline
 } from './components/Timeline'
 import { evalExpr } from './expr'
@@ -993,7 +994,7 @@ function App(): React.JSX.Element {
   const timelineEnd = Math.max(duration, contentEnd(tracks))
   const minPxPerSec = Math.min(
     MIN_PX_PER_SEC,
-    Math.max((winW - LABEL_W) / timelineEnd, MIN_PX_PER_SEC / 1000)
+    Math.max((winW - LABEL_W - TAIL_PAD) / timelineEnd, MIN_PX_PER_SEC / 1000)
   )
 
   const zoom = useCallback(

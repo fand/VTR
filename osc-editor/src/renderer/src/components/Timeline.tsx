@@ -92,6 +92,8 @@ interface TimelineProps {
 }
 
 export const LABEL_W = 96
+/** Extra space after the last clip so the timeline's right edge stays visible. */
+export const TAIL_PAD = 100
 /** Snap radius, px: clip edges closer than this lock together. */
 const SNAP_PX = 8
 
@@ -508,7 +510,7 @@ export function Timeline({
   }
 
   const end = Math.max(duration, contentEnd(tracks))
-  const widthPx = Math.max(end * pxPerSec, 600)
+  const widthPx = Math.max(end * pxPerSec, 600) + TAIL_PAD
   const step = rulerStep(pxPerSec)
   const marks: number[] = []
   // A mark's label sticks out ~48px right of its tick; skip marks whose label

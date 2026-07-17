@@ -132,11 +132,11 @@ test('timeline duration and zoom slider', async () => {
     await expect
       .poll(() => JSON.parse(readFileSync(join(workdir, 'project.json'), 'utf8')).duration)
       .toBe(120)
-    // 120s at default 20px/s → ruler is 2400px wide.
+    // 120s at default 20px/s → ruler is 2400px + 100px tail padding.
     const rulerW = await page
       .locator('.ruler')
       .evaluate((el) => parseFloat((el as HTMLElement).style.width))
-    expect(rulerW).toBeCloseTo(2400, 0)
+    expect(rulerW).toBeCloseTo(2500, 0)
 
     // Zoom slider changes px/s: max slider → 400px/s.
     // exact: the curve editor has its own "x zoom" / "y zoom" sliders.
@@ -144,7 +144,7 @@ test('timeline duration and zoom slider', async () => {
     const rulerW2 = await page
       .locator('.ruler')
       .evaluate((el) => parseFloat((el as HTMLElement).style.width))
-    expect(rulerW2).toBeCloseTo(120 * 400, -1)
+    expect(rulerW2).toBeCloseTo(120 * 400 + 100, -1)
   } finally {
     await app.close()
   }
