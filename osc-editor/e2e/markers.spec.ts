@@ -93,6 +93,14 @@ test('timeline markers: add at playhead, persist in project.json', async () => {
     await expect.poll(() => readMarkers()[0]?.time).toBeGreaterThan(9.9)
     expect(readMarkers()[0].time).toBeLessThan(10.1)
 
+    // The playhead followed the marker exactly (playhead left = 96 + time*20,
+    // flag left = time*20).
+    const flagLeft = parseFloat(await flag.evaluate((el) => (el as HTMLElement).style.left))
+    const playheadLeft = parseFloat(
+      await page.locator('.playhead').evaluate((el) => (el as HTMLElement).style.left)
+    )
+    expect(playheadLeft - 96).toBeCloseTo(flagLeft, 3)
+
     // Right-click → Delete marker.
     await flag.click({ button: 'right' })
     await page.getByRole('menuitem', { name: 'Delete marker' }).click()

@@ -414,6 +414,9 @@ export function Timeline({
       markers.map((m) => (m.id === d.id ? { ...m, time } : m)),
       commit
     )
+    // The playhead tracks the marker's own time, not the cursor (the grab
+    // point sits somewhere inside the flag).
+    onSeek(time)
   }
 
   useEffect(() => {
@@ -512,6 +515,9 @@ export function Timeline({
                     e.currentTarget.setPointerCapture(e.pointerId)
                   }}
                   onPointerMove={(e) => {
+                    // Don't bubble to the ruler: its scrub-seek follows the
+                    // cursor, which is offset from the marker time.
+                    e.stopPropagation()
                     const d = markerDrag.current
                     if (!d) return
                     if (!d.moved && Math.abs(e.clientX - d.startX) < 3) return
