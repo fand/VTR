@@ -23,6 +23,14 @@ test('torn last line is skipped, intact events survive', () => {
   expect(data.duration).toBe(1.5)
 })
 
+test('types field flows through when present, stays absent when not', () => {
+  const tagged = '{"t":0.5,"port":10000,"a":"/x","types":"fi","args":[0.5,2]}'
+  const path = tmpClip(`${START}\n${tagged}\n${EV2}\n`)
+  const data = readClip(path)
+  expect(data.events[0].types).toBe('fi')
+  expect(data.events[1].types).toBeUndefined()
+})
+
 test('garbage line mid-file is skipped', () => {
   const path = tmpClip(`${START}\n${EV1}\nnot json at all\n${EV2}\n`)
   const data = readClip(path)
