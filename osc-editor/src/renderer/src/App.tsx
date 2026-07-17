@@ -180,7 +180,7 @@ function parseDuration(draft: string): number | null {
 
 function App(): React.JSX.Element {
   const [recording, setRecording] = useState<{ path: string; startedAt: number } | null>(null)
-  const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [selectedIds, setSelectedIds] = useState<number[]>([])
   const [selectedPoints, setSelectedPoints] = useState<PointSel[]>([])
   const [pxPerSec, setPxPerSec] = useState(20)
   const [curveHeight, setCurveHeight] = useState(220)
@@ -207,8 +207,8 @@ function App(): React.JSX.Element {
     }
     for (const m of doc.markers) max = Math.max(max, m.id)
     nextId.current = Math.max(nextId.current, max + 1)
-    setSelectedId((id) =>
-      id != null && doc.tracks.some((t) => t.clips.some((c) => c.id === id)) ? id : null
+    setSelectedIds((ids) =>
+      ids.filter((id) => doc.tracks.some((t) => t.clips.some((c) => c.id === id)))
     )
     setSelectedPoints([])
   }, [])
@@ -399,7 +399,7 @@ function App(): React.JSX.Element {
       commit('delete track', (d) => {
         d.tracks = d.tracks.filter((t) => t.id !== trackId)
       })
-      setSelectedId(null)
+      setSelectedIds([])
       setSelectedPoints([])
     },
     [commit]
@@ -434,51 +434,61 @@ function App(): React.JSX.Element {
   )
 
   // Clip clipboard (session-local, not the OS clipboard). Paste overrides
-  // id/offset, so storing the stale id is harmless; the source track id
-  // is the paste target when no other track is implied.
-  const clipClipboard = useRef<{ clip: ClipInst; trackId: number } | null>(null)
+  // id/offset, so storing stale ids is harmless; the source track ids are
+  // the paste targets when no other track is implied.
+  const clipClipboard = useRef<{ clip: ClipInst; trackId: number }[]>([])
   const [canPaste, setCanPaste] = useState(false)
 
-  const copyClip = useCallback(
-    (clipId: number) => {
-      const t = tracks.find((t) => t.clips.some((c) => c.id === clipId))
-      const clip = t?.clips.find((c) => c.id === clipId)
-      if (!t || !clip) return
-      clipClipboard.current = { clip, trackId: t.id }
+  const copyClips = useCallback(
+    (clipIds: number[]) => {
+      const items = tracks.flatMap((t) =>
+        t.clips.filter((c) => clipIds.includes(c.id)).map((clip) => ({ clip, trackId: t.id }))
+      )
+      if (items.length === 0) return
+      clipClipboard.current = items
       setCanPaste(true)
     },
     [tracks]
   )
 
-  /** Paste at the playhead, onto targetTrackId ?? the copy's source track. */
-  const pasteClip = useCallback(
+  /**
+   * Paste at the playhead, keeping relative offsets (the earliest clip lands
+   * on the playhead). A single clip goes onto targetTrackId ?? its source
+   * track; a multi-clip paste always keeps source tracks.
+   */
+  const pasteClips = useCallback(
     (targetTrackId?: number) => {
-      const src = clipClipboard.current
-      if (!src) return
-      const id = newId()
+      const items = clipClipboard.current
+      if (items.length === 0) return
+      const base = Math.min(...items.map((it) => it.clip.offset))
+      const ids = items.map(() => newId())
       commit('paste clip', (d) => {
-        const t =
-          d.tracks.find((t) => t.id === targetTrackId) ??
-          d.tracks.find((t) => t.id === src.trackId) ??
-          d.tracks[0]
-        t?.clips.push({ ...src.clip, id, offset: playhead })
+        items.forEach((it, i) => {
+          const t =
+            (items.length === 1 ? d.tracks.find((t) => t.id === targetTrackId) : undefined) ??
+            d.tracks.find((t) => t.id === it.trackId) ??
+            d.tracks[0]
+          t?.clips.push({ ...it.clip, id: ids[i], offset: playhead + it.clip.offset - base })
+        })
       })
-      setSelectedId(id)
+      setSelectedIds(ids)
     },
     [commit, newId, playhead]
   )
 
-  /** Duplicate a clip in place, right after the original. */
-  const duplicateClip = useCallback(
-    (clipId: number) => {
-      const id = newId()
+  /** Duplicate clips in place, each right after its original. */
+  const duplicateClips = useCallback(
+    (clipIds: number[]) => {
+      const pairs = clipIds.map((id) => ({ id, dupId: newId() }))
       commit('duplicate clip', (d) => {
-        const t = d.tracks.find((t) => t.clips.some((c) => c.id === clipId))
-        const c = t?.clips.find((c) => c.id === clipId)
-        if (!t || !c) return
-        t.clips.push({ ...c, id, offset: c.offset + clipLen(c) })
+        for (const { id, dupId } of pairs) {
+          const t = d.tracks.find((t) => t.clips.some((c) => c.id === id))
+          const c = t?.clips.find((c) => c.id === id)
+          if (!t || !c) continue
+          t.clips.push({ ...c, id: dupId, offset: c.offset + clipLen(c) })
+        }
       })
-      setSelectedId(id)
+      setSelectedIds(pairs.map((p) => p.dupId))
     },
     [commit, newId]
   )
@@ -487,27 +497,32 @@ function App(): React.JSX.Element {
     (action: ClipAction, clipId: number) => {
       const clip = tracks.flatMap((t) => t.clips).find((c) => c.id === clipId)
       if (!clip) return
+      // A right-click inside a multi-selection acts on the whole selection.
+      const targetIds = selectedIds.includes(clipId) ? selectedIds : [clipId]
       const inDoc = (d: Doc): ClipInst | undefined =>
         d.tracks.flatMap((t) => t.clips).find((c) => c.id === clipId)
       switch (action) {
         case 'mute':
           commit(clip.muted ? 'unmute clip' : 'mute clip', (d) => {
-            const c = inDoc(d)
-            if (!c) return
-            if (c.muted) delete c.muted
-            else c.muted = true
+            for (const t of d.tracks) {
+              for (const c of t.clips) {
+                if (!targetIds.includes(c.id)) continue
+                if (clip.muted) delete c.muted
+                else c.muted = true
+              }
+            }
           })
           break
         case 'copy':
-          copyClip(clipId)
+          copyClips(targetIds)
           break
         case 'paste': {
           // Paste onto the right-clicked clip's track.
-          pasteClip(tracks.find((t) => t.clips.some((c) => c.id === clipId))?.id)
+          pasteClips(tracks.find((t) => t.clips.some((c) => c.id === clipId))?.id)
           break
         }
         case 'duplicate':
-          duplicateClip(clipId)
+          duplicateClips(targetIds)
           break
         case 'split': {
           // Cut point in clip-local seconds; both halves keep a playable length.
@@ -525,18 +540,18 @@ function App(): React.JSX.Element {
         }
       }
     },
-    [tracks, playhead, commit, newId, copyClip, pasteClip, duplicateClip]
+    [tracks, selectedIds, playhead, commit, newId, copyClips, pasteClips, duplicateClips]
   )
 
   // Cmd+C/Cmd+V on clips. The Edit menu handles the native text-field side
   // and notifies us; a keydown fallback covers synthetic input (e2e).
   const copySelected = useCallback(() => {
-    if (selectedId != null) copyClip(selectedId)
-  }, [selectedId, copyClip])
+    if (selectedIds.length > 0) copyClips(selectedIds)
+  }, [selectedIds, copyClips])
 
   const pasteAtPlayhead = useCallback(() => {
-    pasteClip(tracks.find((t) => t.clips.some((c) => c.id === selectedId))?.id)
-  }, [tracks, selectedId, pasteClip])
+    pasteClips(tracks.find((t) => t.clips.some((c) => c.id === selectedIds[0]))?.id)
+  }, [tracks, selectedIds, pasteClips])
 
   useEffect(() => {
     const offCopy = window.api.menu.on('copy', () => {
@@ -552,7 +567,7 @@ function App(): React.JSX.Element {
       else if (k === 'v') pasteAtPlayhead()
       else if (k === 'd') {
         e.preventDefault()
-        if (selectedId != null) duplicateClip(selectedId)
+        if (selectedIds.length > 0) duplicateClips(selectedIds)
       }
     }
     window.addEventListener('keydown', onKey)
@@ -561,18 +576,27 @@ function App(): React.JSX.Element {
       offPaste()
       window.removeEventListener('keydown', onKey)
     }
-  }, [copySelected, pasteAtPlayhead, selectedId, duplicateClip])
+  }, [copySelected, pasteAtPlayhead, selectedIds, duplicateClips])
 
   // A curve point only makes sense within the clip it belongs to.
-  const selectClip = useCallback((id: number | null) => {
-    setSelectedId(id)
+  // Additive select (shift/cmd-click) toggles membership.
+  const selectClip = useCallback((id: number | null, additive = false) => {
     setSelectedPoints([])
+    if (id == null) {
+      setSelectedIds([])
+      return
+    }
+    setSelectedIds((ids) => {
+      if (!additive) return [id]
+      return ids.includes(id) ? ids.filter((i) => i !== id) : [...ids, id]
+    })
   }, [])
 
+  // The curve panel edits one clip at a time.
   const selectedClip =
-    selectedId == null
-      ? null
-      : (tracks.flatMap((t) => t.clips).find((c) => c.id === selectedId) ?? null)
+    selectedIds.length === 1
+      ? (tracks.flatMap((t) => t.clips).find((c) => c.id === selectedIds[0]) ?? null)
+      : null
 
   const onPointEdit = useCallback(
     (patches: PointPatch[], isCommit: boolean) => {
@@ -710,15 +734,15 @@ function App(): React.JSX.Element {
         deleteSelectedPoints()
         return
       }
-      if (selectedId == null) return
+      if (selectedIds.length === 0) return
       commit('delete clip', (d) => {
-        for (const t of d.tracks) t.clips = t.clips.filter((c) => c.id !== selectedId)
+        for (const t of d.tracks) t.clips = t.clips.filter((c) => !selectedIds.includes(c.id))
       })
-      setSelectedId(null)
+      setSelectedIds([])
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [selectedId, selectedPoints, deleteSelectedPoints, commit])
+  }, [selectedIds, selectedPoints, deleteSelectedPoints, commit])
 
   // Undo/redo arrives two ways: the Edit menu (real usage — its accelerator
   // swallows the native Cmd+Z) and a keydown fallback (synthetic input, e.g.
@@ -827,7 +851,7 @@ function App(): React.JSX.Element {
         markers={markers}
         pxPerSec={pxPerSec}
         duration={duration}
-        selectedId={selectedId}
+        selectedIds={selectedIds}
         recordingRow={recording ? { events: status?.events ?? 0 } : null}
         playhead={playhead}
         playing={playing}

@@ -40,6 +40,10 @@ interface Drag {
   startX: number
   startY: number
   orig: ClipInst
+  /** Every clip moving with this drag (the whole selection), move mode only. */
+  origs: { clip: ClipInst; trackIdx: number }[]
+  /** True when the grabbed clip was already selected before pointerdown. */
+  wasSelected: boolean
   /** Set once past the click threshold; a plain click never commits. */
   moved: boolean
 }
@@ -50,12 +54,13 @@ interface TimelineProps {
   pxPerSec: number
   /** Timeline length, seconds (the view extends to at least this). */
   duration: number
-  selectedId: number | null
+  selectedIds: number[]
   recordingRow: { events: number } | null
   playhead: number
   playing: PlayingState | null
   onSeek: (sec: number) => void
-  onSelect: (id: number | null) => void
+  /** Additive select (shift/cmd-click) toggles membership. */
+  onSelect: (id: number | null, additive?: boolean) => void
   onTracksChange: (tracks: TrackState[], commit: boolean) => void
   onAddTrack: () => void
   /** Add a marker at the playhead. */
@@ -183,7 +188,7 @@ export function Timeline({
   markers,
   pxPerSec,
   duration,
-  selectedId,
+  selectedIds,
   recordingRow,
   playhead,
   playing,
@@ -204,9 +209,9 @@ export function Timeline({
   onPxPerSecChange
 }: TimelineProps): React.JSX.Element {
   const drag = useRef<Drag | null>(null)
-  // Vertical move preview: the clip stays in its DOM parent during the drag
-  // (re-parenting would kill pointer capture) and is shifted with translateY.
-  const [dragRow, setDragRow] = useState<{ clipId: number; delta: number } | null>(null)
+  // Vertical move preview: the clips stay in their DOM parents during the
+  // drag (re-parenting would kill pointer capture), shifted with translateY.
+  const [dragRow, setDragRow] = useState<{ clipIds: number[]; delta: number } | null>(null)
   const [renaming, setRenaming] = useState<{
     kind: 'track' | 'clip' | 'marker'
     id: number
@@ -256,14 +261,32 @@ export function Timeline({
     const dy = e.clientY - d.startY
     const orig = d.orig
 
-    const updated: ClipInst = { ...orig }
-    let targetTrack = d.fromTrack
     if (d.mode === 'move') {
-      updated.offset = Math.max(0, orig.offset + dx)
-      const rowDelta = Math.round(dy / TRACK_HEIGHT)
-      targetTrack = Math.min(Math.max(d.fromTrack + rowDelta, 0), tracks.length - 1)
-      setDragRow(commit ? null : { clipId: d.clipId, delta: targetTrack - d.fromTrack })
+      // The whole selection moves together: dx clamps so the earliest clip
+      // stays at 0+, the row delta so every clip stays on an existing track.
+      const minOffset = Math.min(...d.origs.map((o) => o.clip.offset))
+      const dxc = Math.max(dx, -minOffset)
+      const minTrack = Math.min(...d.origs.map((o) => o.trackIdx))
+      const maxTrack = Math.max(...d.origs.map((o) => o.trackIdx))
+      const rowDelta = Math.min(
+        Math.max(Math.round(dy / TRACK_HEIGHT), -minTrack),
+        tracks.length - 1 - maxTrack
+      )
+      setDragRow(commit ? null : { clipIds: d.origs.map((o) => o.clip.id), delta: rowDelta })
+      const ids = new Set(d.origs.map((o) => o.clip.id))
+      // Re-parent to the target tracks only on commit.
+      const next = tracks.map((track, i) => {
+        const without = track.clips.filter((c) => !ids.has(c.id))
+        const moved = d.origs
+          .filter((o) => o.trackIdx + (commit ? rowDelta : 0) === i)
+          .map((o) => ({ ...o.clip, offset: o.clip.offset + dxc }))
+        return { ...track, clips: [...without, ...moved] }
+      })
+      onTracksChange(next, commit)
+      return
     }
+
+    const updated: ClipInst = { ...orig }
     if (d.mode === 'trim-in') {
       const delta = Math.min(
         Math.max(dx, -Math.min(orig.trimIn, orig.offset)),
@@ -279,13 +302,10 @@ export function Timeline({
       )
     }
 
-    // Re-parent to the target track only on commit.
-    const insertInto = commit ? targetTrack : d.fromTrack
-    const next = tracks.map((track, i) => {
-      const without = track.clips.filter((c) => c.id !== d.clipId)
-      const clips = i === insertInto ? [...without, updated] : without
-      return { ...track, clips }
-    })
+    const next = tracks.map((track) => ({
+      ...track,
+      clips: track.clips.map((c) => (c.id === d.clipId ? updated : c))
+    }))
     onTracksChange(next, commit)
   }
 
@@ -296,7 +316,18 @@ export function Timeline({
   ): void => {
     if (e.button !== 0) return
     e.stopPropagation()
-    onSelect(clip.id)
+    // Shift/cmd-click toggles selection membership; no drag starts.
+    if (e.shiftKey || e.metaKey || e.ctrlKey) {
+      onSelect(clip.id, true)
+      return
+    }
+    const wasSelected = selectedIds.includes(clip.id)
+    if (!wasSelected) onSelect(clip.id)
+    // Grabbing a selected clip drags the whole selection.
+    const groupIds = wasSelected ? selectedIds : [clip.id]
+    const origs = tracks.flatMap((t, i) =>
+      t.clips.filter((c) => groupIds.includes(c.id)).map((c) => ({ clip: c, trackIdx: i }))
+    )
     const rect = e.currentTarget.getBoundingClientRect()
     const x = e.clientX - rect.left
     const mode: DragMode =
@@ -308,6 +339,8 @@ export function Timeline({
       startX: e.clientX,
       startY: e.clientY,
       orig: clip,
+      origs,
+      wasSelected,
       moved: false
     }
     e.currentTarget.setPointerCapture(e.pointerId)
@@ -327,6 +360,8 @@ export function Timeline({
     const d = drag.current
     if (!d) return
     if (d.moved) applyDrag(e, true)
+    // A plain click on an already-selected clip collapses the selection to it.
+    else if (d.wasSelected) onSelect(d.clipId)
     drag.current = null
     setDragRow(null)
   }
@@ -509,13 +544,13 @@ export function Timeline({
                     key={clip.id}
                     className={
                       'clip' +
-                      (clip.id === selectedId ? ' selected' : '') +
+                      (selectedIds.includes(clip.id) ? ' selected' : '') +
                       (clip.muted ? ' muted' : '')
                     }
                     style={{
                       left: clip.offset * pxPerSec,
                       width: Math.max(clipLen(clip) * pxPerSec, 12),
-                      ...(dragRow?.clipId === clip.id && {
+                      ...(dragRow?.clipIds.includes(clip.id) && {
                         transform: `translateY(${dragRow.delta * TRACK_HEIGHT}px)`,
                         zIndex: 10
                       })
@@ -528,7 +563,8 @@ export function Timeline({
                     onDoubleClick={() => setRenaming({ kind: 'clip', id: clip.id })}
                     onContextMenu={(e) => {
                       e.preventDefault()
-                      onSelect(clip.id)
+                      // Keep a multi-selection: the menu acts on it.
+                      if (!selectedIds.includes(clip.id)) onSelect(clip.id)
                       setMenu({ x: e.clientX, y: e.clientY, clip })
                     }}
                   >
