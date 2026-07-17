@@ -3,6 +3,13 @@
  * Maps recorded JSON args back to OSC types:
  *   integer number → i, other number → f, string → s,
  *   "#rrggbbaa" → r (color), "<impulse>" → I, bool → T/F, null → N.
+ *
+ * KNOWN-LOSSY: the recorded JSONL carries no OSC type tags, so this
+ * re-encode guesses. Non-integer numbers and ints > 2^31 become f32
+ * (double precision lost); a genuine STRING equal to "<impulse>" or
+ * matching "#rrggbbaa" is re-encoded as impulse/color. Affects preview
+ * only — export copies the JSONL unchanged. The real fix is recording
+ * type tags in osc-tap's JSONL and using them here.
  */
 
 function pad4(b: Buffer): Buffer {
