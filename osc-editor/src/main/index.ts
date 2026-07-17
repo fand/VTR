@@ -44,6 +44,18 @@ const stagingDir = join(dataDir, 'recordings')
 const cliArg = process.argv[app.isPackaged ? 1 : 2]
 const cliProjectPath = cliArg ? resolve(workdir, cliArg) : null
 
+// Finder open (macOS file association): before ready it becomes the boot
+// project; while running it loads into the app. Registered before ready or
+// the launch event is lost.
+let bootProjectPath = cliProjectPath
+let openAfterReady: ((path: string) => void) | null = null
+app.on('open-file', (e, path) => {
+  e.preventDefault()
+  const projectPath = resolve(workdir, path)
+  if (openAfterReady) openAfterReady(projectPath)
+  else bootProjectPath = projectPath
+})
+
 // Dir the current project lives in (the .oscproj bundle, or the dir of a
 // legacy flat project.json). Null until a project is opened or saved.
 let projectDir: string | null = null
@@ -218,7 +230,7 @@ app.whenReady().then(() => {
 
   // A stale staged log (abandoned untitled session) must not leak into this
   // one. Keep it only when the boot project itself lives in the data dir.
-  const bootProjectDir = cliProjectPath ? dirname(normalizeProjectPath(cliProjectPath)) : null
+  const bootProjectDir = bootProjectPath ? dirname(normalizeProjectPath(bootProjectPath)) : null
   if (bootProjectDir !== dataDir) clearUndoLog(dataDir)
 
   app.on('browser-window-created', (_, window) => {
@@ -232,7 +244,7 @@ app.whenReady().then(() => {
     // Start on the project's ports right away — no restart dance at boot.
     const ports = {
       ...DEFAULT_PORTS,
-      ...(cliProjectPath ? readProjectPorts(normalizeProjectPath(cliProjectPath)) : undefined)
+      ...(bootProjectPath ? readProjectPorts(normalizeProjectPath(bootProjectPath)) : undefined)
     }
     const bin = findTapBinary({
       isPackaged: app.isPackaged,
@@ -296,8 +308,8 @@ app.whenReady().then(() => {
     savedUndoSeq = project.undoSeq ?? 0
     return { path, project }
   }
-  if (cliProjectPath) grantProjectPath(cliProjectPath)
-  ipcMain.handle('project:load', () => (cliProjectPath ? load(cliProjectPath) : null))
+  if (bootProjectPath) grantProjectPath(bootProjectPath)
+  ipcMain.handle('project:load', () => (bootProjectPath ? load(bootProjectPath) : null))
   ipcMain.handle('project:loadPath', (_e, path: string) => {
     requireGranted(path)
     return load(path)
@@ -374,6 +386,28 @@ app.whenReady().then(() => {
   ipcMain.handle('preview:stop', () => ({ position: preview.stop() }))
 
   createWindow()
+
+  // Finder open while the app is running: prompt when dirty, then hand the
+  // path to the renderer to load.
+  openAfterReady = (path) => {
+    const win = BrowserWindow.getAllWindows()[0]
+    if (!win) return
+    if (dirtyState) {
+      const discard = hidden
+        ? process.env.OSC_EDITOR_QUIT_CHOICE !== 'cancel'
+        : dialog.showMessageBoxSync(win, {
+            type: 'warning',
+            buttons: ['Discard Changes and Open', 'Cancel'],
+            defaultId: 0,
+            cancelId: 1,
+            message: 'You have unsaved changes.',
+            detail: 'Opening another project will discard them.'
+          }) === 0
+      if (!discard) return
+    }
+    grantProjectPath(path)
+    win.webContents.send('project:openPath', path)
+  }
 
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

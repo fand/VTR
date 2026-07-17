@@ -32,7 +32,13 @@ const api = {
     /** Resolve null when the user cancels. */
     openDialog: (): Promise<string | null> => ipcRenderer.invoke('project:openDialog'),
     saveDialog: (defaultPath?: string): Promise<string | null> =>
-      ipcRenderer.invoke('project:saveDialog', defaultPath)
+      ipcRenderer.invoke('project:saveDialog', defaultPath),
+    /** Finder opened a project while the app is running. */
+    onOpenPath: (cb: (path: string) => void): (() => void) => {
+      const listener = (_e: unknown, path: string): void => cb(path)
+      ipcRenderer.on('project:openPath', listener)
+      return () => ipcRenderer.removeListener('project:openPath', listener)
+    }
   },
   session: {
     /** Resolves null when the user cancels the save dialog. */

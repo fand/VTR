@@ -384,18 +384,32 @@ function App(): React.JSX.Element {
     }
   }, [projectFile, saveTo, saveProjectAs])
 
+  const openPath = useCallback(
+    async (path: string): Promise<void> => {
+      try {
+        const res = await window.api.project.loadPath(path)
+        // The bundle carries its own undo log; restore it like boot does.
+        const log = await window.api.undo.load()
+        applyLoaded(res.path, res.project, log)
+      } catch (e) {
+        setError((e as Error).message)
+      }
+    },
+    [applyLoaded]
+  )
+
   const openProject = useCallback(async (): Promise<void> => {
     try {
       const path = await window.api.project.openDialog()
-      if (!path) return
-      const res = await window.api.project.loadPath(path)
-      // The bundle carries its own undo log; restore it like boot does.
-      const log = await window.api.undo.load()
-      applyLoaded(res.path, res.project, log)
+      if (path) await openPath(path)
     } catch (e) {
       setError((e as Error).message)
     }
-  }, [applyLoaded])
+  }, [openPath])
+
+  // Finder open of a .oscproj while the app is running (main prompts for
+  // unsaved changes before sending this).
+  useEffect(() => window.api.project.onOpenPath(openPath), [openPath])
 
   // Window title: "osc-mtr - <file> (edited)"; parts drop off when there is
   // no open file / no unsaved change. The macOS proxy icon (via setFile)
