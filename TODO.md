@@ -6,34 +6,6 @@ File refs are `osc-editor/src/...` unless prefixed `osc-tap/`.
 
 ## High — data loss / corruption
 
-### 2. **TDD** Fix tap control-socket reply matching
-
-- Context: TapManager (main process) talks to osc-tap over a unix socket with
-  newline-delimited JSON. Replies are matched to requests purely by FIFO order:
-  `onData` does `this.pending.shift()` per line (`main/tap.ts:277`).
-- Defect A (timeout skew): a timed-out request removes itself from `pending`
-  (`tap.ts:229`) and rejects, but osc-tap still sends its reply later. That late
-  line then `shift()`s the *next* pending request → every subsequent reply is off
-  by one until the socket drops. Scenario: `status` times out at 3s while a `start`
-  is pending; `start` resolves with the status payload (`r.clip` undefined).
-- Defect B (connect race): `connect()` checks `this.sock` then awaits
-  `tryConnect()` (`tap.ts:239-243`); two concurrent callers both pass the null
-  check and open two sockets. Both attach `onData` to the SAME shared `buf` and
-  `pending` (`tap.ts:255`); `this.sock` is overwritten, the first socket is never
-  destroyed. Replies from two connections interleave into one FIFO → mismatched or
-  mid-line-spliced responses, plus a leaked socket.
-- Fix: (a) put an `id` on each request and have osc-tap echo it
-  (`osc-tap/src/control.rs` change), match replies by id, ignore unknown ids —
-  this kills both defects; or (b) protocol-unchanged alternative: strictly
-  serialize requests (single in-flight, queue the rest) AND share one connect
-  promise so only one socket can ever exist. Prefer (a); it also survives future
-  concurrent use.
-- Test (TDD): unit-test TapManager against a fake control server (`net.Server` on
-  a temp socket path). Red tests: ① server delays reply past REQUEST_TIMEOUT_MS,
-  then answers; next request must get ITS OWN reply, not the stale one. ② two
-  concurrent requests during initial connect → exactly one socket accepted by the
-  server. Keep e2e green (`e2e/ports-seek.spec.ts` etc. exercise the real tap).
-
 ### 3. Keep unreadable clips as missing instead of dropping them
 
 - Context: `loadProject` wraps per-clip loading in try/catch and on ANY throw
