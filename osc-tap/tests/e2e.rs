@@ -42,6 +42,20 @@ fn wait_events(handle: &Handle, n: u64) {
     }
 }
 
+fn wait_recording(handle: &Handle, want: bool) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if handle.status().unwrap().recording == want {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for recording={want}"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
 fn read_lines(path: &std::path::Path) -> Vec<Value> {
     std::fs::read_to_string(path)
         .unwrap()
@@ -338,6 +352,176 @@ fn stale_beacon_omits_tl() {
     // "omit when unknown": a stale extrapolation must not be stamped.
     let lines = read_lines(&clip);
     assert!(lines[1].get("tl").is_none(), "line = {}", lines[1]);
+}
+
+#[test]
+fn osc_rec_start_and_stop_control_recording() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (tap, _td) = start_tap(tmp.path());
+    let handle = tap.handle();
+    let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
+
+    tx.send_to(&encode_msg("/rec/start", vec![]), tap.beacon_addr)
+        .unwrap();
+    wait_recording(&handle, true);
+    let clip = handle.status().unwrap().clip.unwrap();
+
+    tx.send_to(&encode_msg("/x", vec![OscType::Int(1)]), tap.listen_addr)
+        .unwrap();
+    wait_events(&handle, 1);
+
+    tx.send_to(&encode_msg("/rec/stop", vec![]), tap.beacon_addr)
+        .unwrap();
+    wait_recording(&handle, false);
+
+    assert_eq!(handle.status().unwrap().last_clip, Some(clip.clone()));
+    let lines = read_lines(&clip);
+    assert_eq!(lines[0]["type"], "session_start");
+    assert_eq!(lines[1]["a"], "/x");
+    assert_eq!(lines.last().unwrap()["type"], "session_end");
+
+    // Both transitions landed in the event log.
+    let r = handle.event_log().wait_since(0, Duration::ZERO);
+    assert!(!r.reset);
+    assert_eq!(r.seq, 2);
+    let evs = serde_json::to_value(&r.events).unwrap();
+    assert_eq!(evs[0]["ev"], "rec_started");
+    assert_eq!(evs[1]["ev"], "rec_stopped");
+    assert_eq!(evs[1]["clip"], serde_json::json!(clip));
+}
+
+#[test]
+fn rec_start_tl_arg_seeds_the_clock() {
+    // /rec/start 42.0 with no /clock ever sent: the header carries tl ≈ 42
+    // and event tl continues from it.
+    let tmp = tempfile::tempdir().unwrap();
+    let (tap, _td) = start_tap(tmp.path());
+    let handle = tap.handle();
+    let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
+
+    tx.send_to(
+        &encode_msg("/rec/start", vec![OscType::Float(42.0)]),
+        tap.beacon_addr,
+    )
+    .unwrap();
+    wait_recording(&handle, true);
+    thread::sleep(Duration::from_millis(50));
+    tx.send_to(&encode_msg("/x", vec![OscType::Int(1)]), tap.listen_addr)
+        .unwrap();
+    wait_events(&handle, 1);
+    tx.send_to(&encode_msg("/rec/stop", vec![]), tap.beacon_addr)
+        .unwrap();
+    wait_recording(&handle, false);
+
+    let clip = handle.status().unwrap().last_clip.unwrap();
+    let lines = read_lines(&clip);
+    let header_tl = lines[0]["tl"].as_f64().unwrap();
+    assert!((42.0..43.0).contains(&header_tl), "header tl = {header_tl}");
+    let tl = lines[1]["tl"].as_f64().unwrap();
+    assert!(tl > 42.0 && tl < 44.0, "tl = {tl}");
+
+    let r = handle.event_log().wait_since(0, Duration::ZERO);
+    let evs = serde_json::to_value(&r.events).unwrap();
+    assert!(evs[0]["tl"].as_f64().unwrap() >= 42.0);
+}
+
+#[test]
+fn rec_msgs_are_idempotent() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (tap, _td) = start_tap(tmp.path());
+    let handle = tap.handle();
+    let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
+
+    // Stop while idle: nothing happens, no event.
+    tx.send_to(&encode_msg("/rec/stop", vec![]), tap.beacon_addr)
+        .unwrap();
+    thread::sleep(Duration::from_millis(100));
+    assert!(!handle.status().unwrap().recording);
+    assert_eq!(handle.event_log().newest(), 0);
+
+    // Double start: one clip, one rec_started.
+    tx.send_to(&encode_msg("/rec/start", vec![]), tap.beacon_addr)
+        .unwrap();
+    wait_recording(&handle, true);
+    let clip = handle.status().unwrap().clip;
+    tx.send_to(&encode_msg("/rec/start", vec![]), tap.beacon_addr)
+        .unwrap();
+    thread::sleep(Duration::from_millis(100));
+    let st = handle.status().unwrap();
+    assert!(st.recording);
+    assert_eq!(st.clip, clip);
+    assert_eq!(handle.event_log().newest(), 1, "no second rec_started");
+    assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn wait_long_polls_the_event_log() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (tap, _td) = start_tap(tmp.path());
+    let handle = tap.handle();
+    let sock_path = tmp.path().join("tap.sock");
+    {
+        let handle = handle.clone();
+        let sock_path = sock_path.clone();
+        thread::spawn(move || osc_tap::control::serve(&sock_path, handle));
+    }
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let stream = loop {
+        match UnixStream::connect(&sock_path) {
+            Ok(s) => break s,
+            Err(_) => {
+                assert!(Instant::now() < deadline, "control socket not up");
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+    };
+    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    let mut writer = stream;
+    let mut read_reply = || -> Value {
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        serde_json::from_str(&line).unwrap()
+    };
+
+    // Baseline (no since): reset + snapshot + current seq, no events.
+    writeln!(writer, r#"{{"cmd":"wait","id":1}}"#).unwrap();
+    let resp = read_reply();
+    assert_eq!(resp["id"], 1);
+    assert_eq!(resp["reset"], true);
+    assert_eq!(resp["seq"], 0);
+    assert_eq!(resp["events"].as_array().unwrap().len(), 0);
+    assert_eq!(resp["status"]["recording"], false);
+
+    // A blocked wait must not stall other requests on the same connection.
+    writeln!(writer, r#"{{"cmd":"wait","since":0,"id":2}}"#).unwrap();
+    thread::sleep(Duration::from_millis(50));
+    writeln!(writer, r#"{{"cmd":"status","id":3}}"#).unwrap();
+    let resp = read_reply();
+    assert_eq!(resp["id"], 3, "status must answer while wait blocks");
+
+    // The blocked wait wakes on a (local) start.
+    let clip = handle.start_clip(None).unwrap();
+    let resp = read_reply();
+    assert_eq!(resp["id"], 2);
+    assert_eq!(resp["seq"], 1);
+    assert_eq!(resp["events"][0]["ev"], "rec_started");
+
+    // OSC-path stops flow through the same log; events arrive in order.
+    handle.stop_clip().unwrap();
+    writeln!(writer, r#"{{"cmd":"wait","since":1,"id":4}}"#).unwrap();
+    let resp = read_reply();
+    assert_eq!(resp["id"], 4);
+    assert_eq!(resp["seq"], 2);
+    assert_eq!(resp["events"][0]["ev"], "rec_stopped");
+    assert_eq!(resp["events"][0]["clip"], serde_json::json!(clip));
+
+    // A cursor from another process (ahead of newest): reset + snapshot.
+    writeln!(writer, r#"{{"cmd":"wait","since":99,"id":5}}"#).unwrap();
+    let resp = read_reply();
+    assert_eq!(resp["id"], 5);
+    assert_eq!(resp["reset"], true);
+    assert_eq!(resp["seq"], 2);
+    assert!(resp["status"].is_object());
 }
 
 #[test]

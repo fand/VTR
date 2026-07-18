@@ -59,7 +59,7 @@ test('timeline markers: add at playhead, persist in project.json', async () => {
 
     // Seek to ~8s (160px at 20 px/s), add a marker at the playhead.
     await page.locator('.ruler').click({ position: { x: 160, y: 10 } })
-    await page.getByRole('button', { name: '+ Marker' }).click()
+    await page.getByRole('button', { name: 'add marker' }).click()
     await expect(page.locator('.marker-flag')).toHaveCount(1)
     await expect(page.locator('.marker-flag')).toHaveText('M1')
     await expect(page.locator('.marker-line')).toHaveCount(1)

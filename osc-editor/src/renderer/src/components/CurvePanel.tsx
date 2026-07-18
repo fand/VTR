@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Magnet, Pencil, SquareDashed } from 'lucide-react'
 import { applyEditsIndexed } from '../../../shared/edits'
 import type { ClipEdits, OscEvent } from '../../../shared/types'
 import { ClipInst, clipLen, formatRulerLabel } from '../timeline/model'
@@ -1009,26 +1010,29 @@ export function CurvePanel({
         <button
           className={snap ? 'btn small snap active' : 'btn small snap'}
           title="snap point edits to the grid"
+          aria-label="snap"
           aria-pressed={snap}
           onClick={() => setSnap((s) => !s)}
         >
-          Snap
+          <Magnet size={14} />
         </button>
         <button
           className={useBox ? 'btn small snap active' : 'btn small snap'}
           title="show a transform box around multi-selected points"
+          aria-label="box"
           aria-pressed={useBox}
           onClick={() => setUseBox((b) => !b)}
         >
-          Box
+          <SquareDashed size={14} />
         </button>
         <button
           className={pencil ? 'btn small snap active' : 'btn small snap'}
           title="pencil: click in the editor adds points to the selected curve"
+          aria-label="pencil"
           aria-pressed={pencil}
           onClick={() => setPencil((p) => !p)}
         >
-          Pencil
+          <Pencil size={14} />
         </button>
         <div className="spacer" />
         <span className="curve-zoom-label">X</span>

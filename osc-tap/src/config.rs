@@ -7,7 +7,7 @@ pub struct Config {
     pub listen: SocketAddr,
     /// Destination for the raw datagrams (TD).
     pub forward: SocketAddr,
-    /// Address to receive `/tap/timeline` beacons on.
+    /// Address to receive `/clock` beacons and `/rec/start` / `/rec/stop` on.
     pub beacon: SocketAddr,
     /// Directory clip files are written to.
     pub outdir: PathBuf,
