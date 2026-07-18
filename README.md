@@ -6,7 +6,7 @@ VJs' Timeline Recorder. Record, edit, and replay OSC for VJ performance archival
 
 ## Components
 
-- **osc-tap** (Rust): UDP proxy that forwards OSC unchanged to TD and logs parsed copies as JSONL. Stamps TD-timeline time (`tl`) from a `/tap/timeline` beacon. Default ports: listen 10010, forward 127.0.0.1:10011, beacon 10012.
+- **osc-tap** (Rust): UDP proxy that forwards OSC unchanged to TD and logs parsed copies as JSONL. Stamps TD-timeline time (`tl`) from a `/clock` beacon; the same port takes `/rec/start` / `/rec/stop`. Default ports: listen 10010, forward 127.0.0.1:10011, control 10012.
 - **osc-editor** (Electron): DAW-style editor. Records clips via osc-tap, arranges them on tracks, previews to TD, exports a merged `session.jsonl`.
 
 ## Quick start
@@ -45,6 +45,29 @@ userData (`~/Library/Application Support/VTR/recordings/`) and move
 into the bundle on save. The control socket and undo log live in userData
 too — the editor writes nothing to its cwd.
 
+## OSC control (port 10012)
+
+The VJ app drives VTR over the control port. Addresses are bare (no
+prefix); the dedicated port is the namespace.
+
+- `/clock <t> [rate]` — timeline beacon. `t` = master timeline seconds,
+  `rate` = speed (default 1; 0 = paused). Send at ~10Hz; recorded events
+  get an extrapolated `tl`, omitted once the last beacon is >5s old.
+- `/rec/start [tl] [rate]` — start a clip. Works with the editor closed
+  (launchd keeps osc-tap alive). The optional `tl` updates the clock and
+  starts the clip in one step, so the recording is synced from its first
+  event — this is the official sync mechanism. A running editor picks the
+  clip up live; otherwise it imports on next launch.
+- `/rec/stop` — stop the clip.
+
+Both `/rec` cmds are idempotent: start-while-recording and stop-while-idle
+are no-ops. Non-numeric or non-finite args are ignored (the command still
+runs).
+
+The editor talks to osc-tap over a unix-socket JSON Lines API:
+`start` / `stop` / `status`, plus `wait` — a long-poll on the recording
+event log (`rec_started` / `rec_stopped`) that drives the editor's UI.
+
 ## JSONL schema
 
 Clip and `session.jsonl` event lines share one schema:
@@ -66,7 +89,8 @@ Clip and `session.jsonl` event lines share one schema:
   editor-added events; fall back to guessing (`i` if integral, else `f`).
 
 Session files wrap events in `{"type":"session_start",...}` /
-`{"type":"session_end","t":...}` marker lines.
+`{"type":"session_end","t":...}` marker lines. `session_start` carries
+`tl` (timeline seconds at clip start) when the clock is known.
 
 ## Process model
 

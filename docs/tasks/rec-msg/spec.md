@@ -1,6 +1,6 @@
 # Spec: OSC record control (`/rec/start`, `/rec/stop`)
 
-Status: spec fixed (2026-07-17). Not implemented yet.
+Status: implemented (2026-07-17).
 
 ## Goal
 

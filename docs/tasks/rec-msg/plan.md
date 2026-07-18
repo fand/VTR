@@ -1,6 +1,6 @@
 # Plan: OSC record control
 
-Status: planned. Spec: [spec.md](spec.md).
+Status: done. Spec: [spec.md](spec.md).
 
 ## Shape
 

@@ -17,7 +17,7 @@ struct Cli {
     #[arg(long, default_value = "127.0.0.1:10011")]
     forward: SocketAddr,
 
-    /// UDP port to receive /tap/timeline beacons on
+    /// UDP port to receive /clock beacons and /rec/start, /rec/stop on
     #[arg(long, default_value_t = 10012)]
     beacon: u16,
 
