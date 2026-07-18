@@ -288,6 +288,24 @@ body {
   padding: 2px 10px;
 }
 
+/* Lucide icons inside buttons: kill baseline gap, center in the button box. */
+.btn svg,
+.btn-icon svg {
+  display: block;
+}
+
+.btn.small,
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Icon-only small buttons keep the text-button height (13px text line ≈ 16px). */
+.btn.small svg {
+  margin: 1px 0;
+}
+
 .zoom-slider {
   width: 140px;
   accent-color: var(--accent);

@@ -72,7 +72,7 @@ test('open-file with unsaved changes: cancel keeps the current doc', async () =>
   try {
     const page = await app.firstWindow()
     await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
-    await page.getByRole('button', { name: '+ Marker' }).click()
+    await page.getByRole('button', { name: 'add marker' }).click()
     await expect.poll(() => page.title()).toContain('(edited)')
 
     await emitOpenFile(app, projectPath)

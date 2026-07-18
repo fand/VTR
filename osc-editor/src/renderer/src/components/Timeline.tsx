@@ -1,4 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { BookmarkPlus, Magnet, ZoomIn, ZoomOut } from 'lucide-react'
 import {
   ClipInst,
   MIN_CLIP_LEN,
@@ -565,20 +566,31 @@ export function Timeline({
   return (
     <div className="timeline-panel">
       <div className="tl-header">
-        <button className="btn small" title="add marker at playhead" onClick={onAddMarker}>
-          + Marker
+        <button
+          className="btn small"
+          title="add marker at playhead"
+          aria-label="add marker"
+          onClick={onAddMarker}
+        >
+          <BookmarkPlus size={14} />
         </button>
         <button
           className={snap ? 'btn small snap active' : 'btn small snap'}
           title="snap clip move/trim to other clips' edges"
+          aria-label="snap"
           aria-pressed={snap}
           onClick={() => setSnap((s) => !s)}
         >
-          Snap
+          <Magnet size={14} />
         </button>
         <div className="spacer" />
-        <button className="btn small" onClick={() => onZoom(1 / 1.5)} title="zoom out">
-          −
+        <button
+          className="btn small"
+          onClick={() => onZoom(1 / 1.5)}
+          title="zoom out"
+          aria-label="zoom out"
+        >
+          <ZoomOut size={14} />
         </button>
         <input
           className="zoom-slider"
@@ -590,8 +602,13 @@ export function Timeline({
           aria-label="zoom"
           onChange={(e) => onPxPerSecChange(sliderToZoom(Number(e.target.value), minPxPerSec))}
         />
-        <button className="btn small" onClick={() => onZoom(1.5)} title="zoom in">
-          +
+        <button
+          className="btn small"
+          onClick={() => onZoom(1.5)}
+          title="zoom in"
+          aria-label="zoom in"
+        >
+          <ZoomIn size={14} />
         </button>
       </div>
       <div

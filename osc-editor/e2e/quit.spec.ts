@@ -38,7 +38,7 @@ async function launchDirty(
   const page = await app.firstWindow()
   await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
   // Dirty the doc with a marker; wait for the dirty state to reach main.
-  await page.getByRole('button', { name: '+ Marker' }).click()
+  await page.getByRole('button', { name: 'add marker' }).click()
   await expect.poll(() => page.title()).toContain('(edited)')
   return { app, workdir }
 }

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { Circle, Pause, Play, Square } from 'lucide-react'
 import {
   DEFAULT_DURATION,
   DEFAULT_PORTS,
@@ -1216,7 +1217,11 @@ function App(): React.JSX.Element {
             aria-label={recording ? 'Stop' : 'Rec'}
             title={recording ? 'Stop' : 'Rec'}
           >
-            {recording ? '■' : '●'}
+            {recording ? (
+              <Square size={14} fill="currentColor" />
+            ) : (
+              <Circle size={14} fill="currentColor" />
+            )}
           </button>
           <button
             className={playing ? 'btn-icon play active' : 'btn-icon play'}
@@ -1225,7 +1230,11 @@ function App(): React.JSX.Element {
             aria-label={playing ? 'Pause' : 'Play'}
             title={playing ? 'Pause' : 'Play'}
           >
-            {playing ? '⏸' : '▶'}
+            {playing ? (
+              <Pause size={14} fill="currentColor" />
+            ) : (
+              <Play size={14} fill="currentColor" />
+            )}
           </button>
         </div>
         <div className="header-right">
