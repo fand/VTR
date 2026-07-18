@@ -36,3 +36,29 @@ test('garbage line mid-file is skipped', () => {
   const data = readClip(path)
   expect(data.events.map((e) => e.t)).toEqual([0.5, 1.5])
 })
+
+test('summary line yields health counters and is not an event', () => {
+  const summary =
+    '{"type":"summary","t":2,"events":2,"dropped":3,"write_errors":1,"write_error":"disk full"}'
+  const end = '{"type":"session_end","t":2}'
+  const path = tmpClip(`${START}\n${EV1}\n${EV2}\n${summary}\n${end}\n`)
+  const data = readClip(path)
+  expect(data.events.map((e) => e.t)).toEqual([0.5, 1.5])
+  expect(data.dropped).toBe(3)
+  expect(data.writeErrors).toBe(1)
+  expect(data.writeError).toBe('disk full')
+})
+
+test('clip without summary reads as clean', () => {
+  const path = tmpClip(`${START}\n${EV1}\n`)
+  const data = readClip(path)
+  expect(data.dropped).toBe(0)
+  expect(data.writeErrors).toBe(0)
+  expect(data.writeError).toBeNull()
+})
+
+test('unknown typed line is skipped, not counted as an event', () => {
+  const path = tmpClip(`${START}\n${EV1}\n{"type":"future_thing","x":1}\n${EV2}\n`)
+  const data = readClip(path)
+  expect(data.events.map((e) => e.t)).toEqual([0.5, 1.5])
+})

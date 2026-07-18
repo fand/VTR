@@ -84,6 +84,12 @@ test('record → clip on track → drag → delete → persisted', async () => {
     await expect(clip).toHaveCount(1)
     await expect(page.locator('.clip-meta')).toContainText('15 ev')
 
+    // Header stats: the rx rate chip is live and nothing was dropped, so
+    // the clip carries no data-loss warning.
+    await expect(page.locator('.chip', { hasText: /^rx / })).toBeVisible()
+    await expect(page.locator('.chip', { hasText: 'dropped 0' })).toBeVisible()
+    await expect(clip).not.toHaveClass(/warn/)
+
     // The new clip marks the project edited; save clears the suffix.
     await expect.poll(() => page.title()).toBe('VTR - project.json (edited)')
     // macOS proxy icon carries the full path + the native edited dot.

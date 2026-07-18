@@ -6,7 +6,8 @@ import {
   TrackState,
   clipLen,
   contentEnd,
-  formatRulerLabel
+  formatRulerLabel,
+  recordingWarning
 } from '../timeline/model'
 
 export interface PlayingState {
@@ -61,7 +62,7 @@ interface TimelineProps {
   duration: number
   selectedIds: number[]
   selectedTrackIds: number[]
-  recordingRow: { events: number } | null
+  recordingRow: { events: number; warning: string | null } | null
   playhead: number
   playing: PlayingState | null
   onSeek: (sec: number) => void
@@ -727,58 +728,70 @@ export function Timeline({
               {/* Empty-lane pointerdowns bubble to the scroll area: a drag
                   marquee-selects, a plain click seeks on pointer-up. */}
               <div className="track-lane" style={{ width: widthPx }}>
-                {track.clips.map((clip) => (
-                  <div
-                    key={clip.id}
-                    className={
-                      'clip' +
-                      (selectedIds.includes(clip.id) ? ' selected' : '') +
-                      (clip.muted ? ' muted' : '') +
-                      (clip.missing ? ' missing' : '')
-                    }
-                    style={{
-                      left: clip.offset * pxPerSec,
-                      width: Math.max(clipLen(clip) * pxPerSec, 12),
-                      ...(dragRow?.clipIds.includes(clip.id) && {
-                        transform: `translateY(${dragRow.delta * TRACK_HEIGHT}px)`,
-                        zIndex: 10
-                      })
-                    }}
-                    onPointerDown={(e) => onClipPointerDown(e, clip, trackIdx)}
-                    onPointerMove={onClipPointerMove}
-                    onPointerUp={onClipPointerUp}
-                    onPointerCancel={onClipPointerCancel}
-                    // Pointer capture retargets the dblclick from the label
-                    // span to this div, so the rename trigger lives here.
-                    onDoubleClick={() => setRenaming({ kind: 'clip', id: clip.id })}
-                    onContextMenu={(e) => {
-                      e.preventDefault()
-                      // Keep a multi-selection: the menu acts on it.
-                      if (!selectedIds.includes(clip.id)) onSelect(clip.id)
-                      setMenu({ x: e.clientX, y: e.clientY, clip })
-                    }}
-                  >
-                    <span className="clip-name">
-                      <EditableLabel
-                        value={clip.name}
-                        placeholder={clip.file}
-                        ariaLabel={`rename clip ${clip.file}`}
-                        editing={renaming?.kind === 'clip' && renaming.id === clip.id}
-                        onEditStart={() => setRenaming({ kind: 'clip', id: clip.id })}
-                        onEditEnd={() => setRenaming(null)}
-                        onRename={(name) => onRenameClip(clip.id, name)}
-                      />
-                    </span>
-                    <span className="clip-meta">
-                      {clip.missing
-                        ? 'missing file'
-                        : `${clipLen(clip).toFixed(1)}s · ${clip.summary.events} ev`}
-                      {clip.summary.tlOffset != null && ' · tl'}
-                    </span>
-                    <div className="trim-handle trim-in" />
-                    <div className="trim-handle trim-out" />
-                  </div>
-                ))}
+                {track.clips.map((clip) => {
+                  const warning = clip.missing
+                    ? null
+                    : recordingWarning(
+                        clip.summary.dropped,
+                        clip.summary.writeErrors,
+                        clip.summary.writeError
+                      )
+                  return (
+                    <div
+                      key={clip.id}
+                      title={warning ?? undefined}
+                      className={
+                        'clip' +
+                        (selectedIds.includes(clip.id) ? ' selected' : '') +
+                        (clip.muted ? ' muted' : '') +
+                        (clip.missing ? ' missing' : '') +
+                        (warning != null ? ' warn' : '')
+                      }
+                      style={{
+                        left: clip.offset * pxPerSec,
+                        width: Math.max(clipLen(clip) * pxPerSec, 12),
+                        ...(dragRow?.clipIds.includes(clip.id) && {
+                          transform: `translateY(${dragRow.delta * TRACK_HEIGHT}px)`,
+                          zIndex: 10
+                        })
+                      }}
+                      onPointerDown={(e) => onClipPointerDown(e, clip, trackIdx)}
+                      onPointerMove={onClipPointerMove}
+                      onPointerUp={onClipPointerUp}
+                      onPointerCancel={onClipPointerCancel}
+                      // Pointer capture retargets the dblclick from the label
+                      // span to this div, so the rename trigger lives here.
+                      onDoubleClick={() => setRenaming({ kind: 'clip', id: clip.id })}
+                      onContextMenu={(e) => {
+                        e.preventDefault()
+                        // Keep a multi-selection: the menu acts on it.
+                        if (!selectedIds.includes(clip.id)) onSelect(clip.id)
+                        setMenu({ x: e.clientX, y: e.clientY, clip })
+                      }}
+                    >
+                      <span className="clip-name">
+                        <EditableLabel
+                          value={clip.name}
+                          placeholder={clip.file}
+                          ariaLabel={`rename clip ${clip.file}`}
+                          editing={renaming?.kind === 'clip' && renaming.id === clip.id}
+                          onEditStart={() => setRenaming({ kind: 'clip', id: clip.id })}
+                          onEditEnd={() => setRenaming(null)}
+                          onRename={(name) => onRenameClip(clip.id, name)}
+                        />
+                      </span>
+                      <span className="clip-meta">
+                        {clip.missing
+                          ? 'missing file'
+                          : `${clipLen(clip).toFixed(1)}s · ${clip.summary.events} ev`}
+                        {clip.summary.tlOffset != null && ' · tl'}
+                        {warning != null && <span className="clip-warn"> ⚠</span>}
+                      </span>
+                      <div className="trim-handle trim-in" />
+                      <div className="trim-handle trim-out" />
+                    </div>
+                  )
+                })}
               </div>
             </div>
           ))}
@@ -787,9 +800,16 @@ export function Timeline({
             <div className="track" style={{ height: TRACK_HEIGHT }}>
               <div className="track-label">Track {tracks.length + 1}</div>
               <div className="track-lane" style={{ width: widthPx }}>
-                <div className="clip recording" style={{ left: 0, width: 160 }}>
+                <div
+                  className={'clip recording' + (recordingRow.warning != null ? ' warn' : '')}
+                  title={recordingRow.warning ?? undefined}
+                  style={{ left: 0, width: 160 }}
+                >
                   <span className="clip-name">recording…</span>
-                  <span className="clip-meta">{recordingRow.events} ev</span>
+                  <span className="clip-meta">
+                    {recordingRow.events} ev
+                    {recordingRow.warning != null && <span className="clip-warn"> ⚠</span>}
+                  </span>
                 </div>
               </div>
             </div>

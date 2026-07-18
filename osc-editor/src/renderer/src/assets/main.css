@@ -254,8 +254,8 @@ body {
 }
 
 /* Header status area, two rows:
-   tap chip    in    [10010]  out [10011]
-   clock chip  clock [10012]  (dropped) */
+   tap chip    in    [10010]   out [10011]
+   clock chip  clock [10012]   rx 120/s  dropped 0 */
 .status-grid {
   display: grid;
   grid-template-columns: repeat(5, auto);
@@ -626,6 +626,16 @@ body {
 .ctx-menu button:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+/* The recording lost data (dropped packets / write failures). The border
+   stays warning-colored even when selected; details in the title tooltip. */
+.clip.warn {
+  border-color: #e0a93e;
+}
+
+.clip-warn {
+  color: #e0a93e;
 }
 
 .clip.recording {

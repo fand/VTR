@@ -26,6 +26,7 @@ import {
   MarkerState,
   TrackState,
   alignClip,
+  recordingWarning,
   clipLen,
   contentEnd,
   markersFromProject,
@@ -243,6 +244,9 @@ function App(): React.JSX.Element {
   const splitDrag = useRef<{ y: number; h: number } | null>(null)
   const [status, setStatus] = useState<TapStatus | null>(null)
   const [statusError, setStatusError] = useState<string | null>(null)
+  /** Incoming packets/s, from received deltas between polls. */
+  const [rxRate, setRxRate] = useState<number | null>(null)
+  const lastRx = useRef<{ received: number; at: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [info, setInfo] = useState<string | null>(null)
   // Async preview socket/send failures from main land in the error banner.
@@ -478,6 +482,16 @@ function App(): React.JSX.Element {
         .then((s) => {
           setStatus(s)
           setStatusError(null)
+          // A stale launchd tap may predate the received field.
+          if (typeof s.received === 'number') {
+            const now = performance.now()
+            const prev = lastRx.current
+            lastRx.current = { received: s.received, at: now }
+            // A negative delta means osc-tap restarted; skip that sample.
+            if (prev && now > prev.at && s.received >= prev.received) {
+              setRxRate(((s.received - prev.received) * 1000) / (now - prev.at))
+            }
+          }
           // Disk full mid-performance must not fail silently: the latch
           // keeps this banner up until the next recording starts.
           if (s.write_error) {
@@ -1130,7 +1144,7 @@ function App(): React.JSX.Element {
           </button>
         </div>
         <div className="header-right">
-          {/* Row 1: tap status + in/out ports. Row 2: clock status + clock port. */}
+          {/* Row 1: tap status + in/out ports. Row 2: clock status + clock port + rx/dropped stats. */}
           <div className="status-grid">
             <span className={statusError ? 'chip bad' : status ? 'chip ok' : 'chip'}>
               tap {statusError ? 'down' : status ? 'up' : '…'}
@@ -1170,8 +1184,18 @@ function App(): React.JSX.Element {
               parse={parsePort}
               onCommit={(beacon) => changePorts({ ...ports, beacon })}
             />
-            {status != null && status.dropped > 0 && (
-              <span className="chip bad">dropped {status.dropped}</span>
+            {status != null && (
+              <span className="chip" title="incoming OSC packets per second">
+                rx {rxRate == null ? '–' : rxRate < 10 ? rxRate.toFixed(1) : Math.round(rxRate)}/s
+              </span>
+            )}
+            {status != null && (
+              <span
+                className={status.dropped > 0 ? 'chip bad' : 'chip'}
+                title="packets lost to writer backlog since this clip started"
+              >
+                dropped {status.dropped}
+              </span>
             )}
           </div>
           <button
@@ -1199,7 +1223,16 @@ function App(): React.JSX.Element {
         duration={duration}
         selectedIds={selectedIds}
         selectedTrackIds={selectedTrackIds}
-        recordingRow={recording ? { events: status?.events ?? 0 } : null}
+        recordingRow={
+          recording
+            ? {
+                events: status?.events ?? 0,
+                warning: status
+                  ? recordingWarning(status.dropped, status.write_errors, status.write_error)
+                  : null
+              }
+            : null
+        }
         playhead={playhead}
         playing={playing}
         onSeek={onSeek}

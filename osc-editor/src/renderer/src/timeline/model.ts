@@ -47,6 +47,27 @@ export function clipLen(c: ClipInst): number {
   return c.trimOut - c.trimIn
 }
 
+/**
+ * Human-readable "this recording lost data" line, or null for a clean clip.
+ * Shared by the live recording row (from TapStatus) and recorded clips
+ * (from the clip's summary line).
+ */
+export function recordingWarning(
+  dropped: number,
+  writeErrors: number,
+  writeError: string | null
+): string | null {
+  if (dropped === 0 && writeErrors === 0) return null
+  const parts: string[] = []
+  if (dropped > 0) parts.push(`${dropped} dropped`)
+  if (writeErrors > 0) {
+    parts.push(`${writeErrors} write failure${writeErrors === 1 ? '' : 's'}`)
+  }
+  let text = `recording lost data: ${parts.join(', ')}`
+  if (writeError) text += ` — ${writeError}`
+  return text
+}
+
 /** Timeline second where the last clip ends. */
 export function contentEnd(tracks: TrackState[]): number {
   let end = 0

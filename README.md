@@ -66,7 +66,10 @@ Clip and `session.jsonl` event lines share one schema:
   editor-added events; fall back to guessing (`i` if integral, else `f`).
 
 Session files wrap events in `{"type":"session_start",...}` /
-`{"type":"session_end","t":...}` marker lines.
+`{"type":"session_end","t":...}` marker lines. Clips recorded by osc-tap also
+carry a `{"type":"summary","t":...,"events":N,"dropped":N,"write_errors":N,"write_error":"..."}`
+line right before `session_end`: the clip's health at stop time (`write_error`
+is omitted when the clip is clean). Readers should skip unknown `type` lines.
 
 ## Process model
 
