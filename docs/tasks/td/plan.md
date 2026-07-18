@@ -1,6 +1,6 @@
 # Plan: TouchDesigner component (vtr.tox)
 
-Status: not started. Spec: [spec.md](spec.md).
+Status: steps 1–4 & 6 implemented (2026-07-18); step 5 (manual verification in TD, which also generates and commits `vtr.tox`) pending — checklist in `td/README.md`. Spec: [spec.md](spec.md).
 
 ## Shape
 
