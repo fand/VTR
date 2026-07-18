@@ -160,6 +160,31 @@ test('beacon → tl recorded → clip auto-aligned at record stop', async () => 
   }
 })
 
+test('OSC /rec/start & /rec/stop drive recording without touching the UI', async () => {
+  const { app, page } = await launchApp()
+  const sock = dgram.createSocket('udp4')
+  try {
+    // Remote start: the REC indicator flips with no UI interaction.
+    sock.send(oscMessage('/rec/start', []), BEACON_PORT, '127.0.0.1')
+    await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible({ timeout: 5000 })
+
+    for (let i = 0; i < 5; i++) {
+      sock.send(oscMessage('/x', [i]), LISTEN_PORT, '127.0.0.1')
+      await sleep(100)
+    }
+
+    // Remote stop: the finished clip imports as a track.
+    sock.send(oscMessage('/rec/stop', []), BEACON_PORT, '127.0.0.1')
+    await expect(page.getByRole('button', { name: 'Rec' })).toBeVisible({ timeout: 5000 })
+    const clip = page.locator('.clip:not(.recording)')
+    await expect(clip).toHaveCount(1)
+    await expect(page.locator('.clip-meta')).toContainText('5 ev')
+  } finally {
+    sock.close()
+    await app.close()
+  }
+})
+
 test('boot: no CLI arg → empty project; broken arg → error + empty project', async () => {
   const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   // A project.json in the cwd is NOT auto-loaded anymore.

@@ -24,6 +24,7 @@ import {
   type LoadedProject,
   type PortConfig,
   type ProjectFile,
+  type TapPush,
   type UndoEntry
 } from '../shared/types'
 
@@ -329,6 +330,15 @@ app.whenReady().then(() => {
     })
     tap = new TapManager(bin, dataDir, stagingDir, mode, ports)
     tap.spawnTap()
+    // Recording state flows renderer-ward through this one channel: events
+    // and baseline/reset snapshots alike (snapshot-apply lives there).
+    const pushTap = (msg: TapPush): void => {
+      BrowserWindow.getAllWindows()[0]?.webContents.send('tap:event', msg)
+    }
+    void tap.runEventLoop(
+      (event) => pushTap({ type: 'event', event }),
+      (status) => pushTap({ type: 'reset', status })
+    )
   } catch (e) {
     tapError = (e as Error).message
     console.error(tapError)
@@ -338,11 +348,9 @@ app.whenReady().then(() => {
   ipcMain.handle('tap:start', () =>
     requireTap().start(projectDir ? join(projectDir, 'clips') : undefined)
   )
-  ipcMain.handle('tap:stop', async (_e, clipPath: string) => {
-    await requireTap().stop()
-    return clipSummary(ensureWithin(clipRoots(), clipPath))
-  })
+  ipcMain.handle('tap:stop', () => requireTap().stop())
   ipcMain.handle('tap:status', () => requireTap().status())
+  ipcMain.handle('clip:summary', (_e, path: string) => clipSummary(ensureWithin(clipRoots(), path)))
   ipcMain.handle('tap:setPorts', (_e, ports: PortConfig) => requireTap().setPorts(ports))
   ipcMain.handle('app:workdir', () => workdir)
   // macOS: proxy icon in the title bar carries the full path; the edited

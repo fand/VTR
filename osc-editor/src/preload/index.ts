@@ -6,6 +6,7 @@ import type {
   OscEvent,
   PortConfig,
   ProjectFile,
+  TapPush,
   TapStatus,
   UndoEntry
 } from '../shared/types'
@@ -13,12 +14,19 @@ import type {
 const api = {
   tap: {
     start: (): Promise<string> => ipcRenderer.invoke('tap:start'),
-    stop: (clipPath: string): Promise<ClipSummary> => ipcRenderer.invoke('tap:stop', clipPath),
+    stop: (): Promise<void> => ipcRenderer.invoke('tap:stop'),
     status: (): Promise<TapStatus> => ipcRenderer.invoke('tap:status'),
-    setPorts: (ports: PortConfig): Promise<void> => ipcRenderer.invoke('tap:setPorts', ports)
+    setPorts: (ports: PortConfig): Promise<void> => ipcRenderer.invoke('tap:setPorts', ports),
+    /** Recording events and baseline/reset snapshots from the tap wait loop. */
+    onEvent: (cb: (msg: TapPush) => void): (() => void) => {
+      const listener = (_e: unknown, msg: TapPush): void => cb(msg)
+      ipcRenderer.on('tap:event', listener)
+      return () => ipcRenderer.removeListener('tap:event', listener)
+    }
   },
   clip: {
     events: (path: string): Promise<OscEvent[]> => ipcRenderer.invoke('clip:events', path),
+    summary: (path: string): Promise<ClipSummary> => ipcRenderer.invoke('clip:summary', path),
     reveal: (file: string): Promise<void> => ipcRenderer.invoke('clip:reveal', file)
   },
   project: {

@@ -1,8 +1,8 @@
 # TODO
 
-- VJアプリ側からrecordのstart, stopもコントロール出来るようにしたい
-  - clock用のportでclock以外も受け取れるようにする (`/rec/start`, `/rec/stop` など？もっと良いアイデアあれば教えて)
-  - これらのイベントにclock情報も含めるようにすることで、rec開始時からsyncできそう
+- [x] VJアプリ側からrecordのstart, stopもコントロール出来るようにしたい
+  - clockポートで `/rec/start [tl] [rate]` / `/rec/stop` を受信 (editorが死んでいても録画可)
+  - `/rec/start` のtl引数でrec開始時からsync。設計: `docs/tasks/rec-msg/spec.md`
 - [x] GitHub Actionsでビルド/テストしたい
   - `.github/workflows/ci.yml`: cargo test (macOS) / lint+typecheck+unit (Linux) / playwright e2e (macOS)
 - [x] README更新
