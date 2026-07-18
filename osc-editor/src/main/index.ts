@@ -350,9 +350,7 @@ app.whenReady().then(() => {
   )
   ipcMain.handle('tap:stop', () => requireTap().stop())
   ipcMain.handle('tap:status', () => requireTap().status())
-  ipcMain.handle('clip:summary', (_e, path: string) =>
-    clipSummary(ensureWithin(clipRoots(), path))
-  )
+  ipcMain.handle('clip:summary', (_e, path: string) => clipSummary(ensureWithin(clipRoots(), path)))
   ipcMain.handle('tap:setPorts', (_e, ports: PortConfig) => requireTap().setPorts(ports))
   ipcMain.handle('app:workdir', () => workdir)
   // macOS: proxy icon in the title bar carries the full path; the edited

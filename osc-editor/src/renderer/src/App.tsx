@@ -344,6 +344,7 @@ function App(): React.JSX.Element {
   // project. A broken project file reports the error and falls back to empty.
   // The undo log only applies to the loaded project.
   const booted = useRef(false)
+  const [bootDone, setBootDone] = useState(false)
   useEffect(() => {
     if (booted.current) return
     booted.current = true
@@ -357,7 +358,9 @@ function App(): React.JSX.Element {
       const log = loaded ? await window.api.undo.load() : []
       applyLoaded(loaded?.path ?? null, loaded?.project ?? null, log)
     }
-    boot().catch((e: Error) => setError(e.message))
+    boot()
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setBootDone(true))
   }, [applyLoaded])
 
   const saveTo = useCallback(
@@ -491,13 +494,33 @@ function App(): React.JSX.Element {
     return () => clearInterval(iv)
   }, [])
 
-  const toggleRecord = useCallback(async () => {
-    if (busy) return
-    setBusy(true)
-    try {
-      if (recording) {
-        await window.api.tap.stop()
-        const summary = await window.api.clip.summary(recording.path)
+  // Recording state is event-driven: local and remote (OSC /rec) start/stops
+  // flow through the same tap:event channel. Local commands only fire and
+  // report errors.
+
+  // Latest tracks for the import guard, without resubscribing per edit.
+  const tracksRef = useRef(tracks)
+  useEffect(() => {
+    tracksRef.current = tracks
+  }, [tracks])
+  // Clips imported (or found referenced) this session, by file name: a reset
+  // snapshot must not re-import a clip whose track the user deleted.
+  const importedClips = useRef(new Set<string>())
+
+  const maybeImportClip = useCallback(
+    async (clipPath: string): Promise<void> => {
+      const name = clipPath.split(/[\\/]/).pop() ?? clipPath
+      if (importedClips.current.has(name)) return
+      // By name, not path: save collects staging clips into the bundle, so a
+      // track can reference this clip under a different path.
+      if (tracksRef.current.some((t) => t.clips.some((c) => c.file === name))) {
+        importedClips.current.add(name)
+        return
+      }
+      // Mark before the await so a racing event/snapshot pair imports once.
+      importedClips.current.add(name)
+      try {
+        const summary = await window.api.clip.summary(clipPath)
         const track: TrackState = {
           id: newId(),
           clips: [
@@ -515,18 +538,93 @@ function App(): React.JSX.Element {
         commit('record clip', (d) => {
           d.tracks.push(track)
         })
-        setRecording(null)
-      } else {
-        const path = await window.api.tap.start()
-        setRecording({ path, startedAt: performance.now() })
+      } catch (e) {
+        // Collected into a bundle (staged source deleted) or otherwise gone:
+        // nothing to import, not an error.
+        console.warn(`clip import skipped: ${(e as Error).message}`)
       }
+    },
+    [commit, newId]
+  )
+
+  // Apply a status snapshot (startup baseline / tap reset), idempotently.
+  const applySnapshot = useCallback(
+    (s: TapStatus): void => {
+      if (s.recording && s.clip) {
+        const clip = s.clip
+        const recT = s.rec_t ?? 0
+        setRecording((prev) =>
+          prev && prev.path === clip
+            ? prev
+            : { path: clip, startedAt: performance.now() - recT * 1000 }
+        )
+      } else {
+        // Tap crashed or stopped while we weren't looking: clear stale REC.
+        setRecording(null)
+      }
+      if (s.last_clip) void maybeImportClip(s.last_clip)
+    },
+    [maybeImportClip]
+  )
+
+  useEffect(() => {
+    return window.api.tap.onEvent((msg) => {
+      if (msg.type === 'reset') {
+        applySnapshot(msg.status)
+        return
+      }
+      const e = msg.event
+      if (e.ev === 'rec_started') {
+        // A snapshot may already have applied this; keep startedAt then.
+        setRecording((prev) =>
+          prev && prev.path === e.clip ? prev : { path: e.clip, startedAt: performance.now() }
+        )
+      } else {
+        setRecording(null)
+        void maybeImportClip(e.clip)
+      }
+    })
+  }, [applySnapshot, maybeImportClip])
+
+  // Startup baseline: events forwarded before this window existed are gone; a
+  // status snapshot recovers the state. After boot, so a lingering last_clip
+  // dedupes against the loaded project instead of racing it.
+  useEffect(() => {
+    if (!bootDone) return
+    let stop = false
+    let timer: number | undefined
+    const baseline = (): void => {
+      window.api.tap
+        .status()
+        .then((s) => {
+          if (!stop) applySnapshot(s)
+        })
+        .catch(() => {
+          if (!stop) timer = window.setTimeout(baseline, 1000)
+        })
+    }
+    baseline()
+    return () => {
+      stop = true
+      window.clearTimeout(timer)
+    }
+  }, [bootDone, applySnapshot])
+
+  const toggleRecord = useCallback(async () => {
+    if (busy) return
+    setBusy(true)
+    try {
+      if (recording) await window.api.tap.stop()
+      else await window.api.tap.start()
       setError(null)
     } catch (e) {
-      setError((e as Error).message)
+      const msg = (e as Error).message
+      // A remote stop won the race; its event already handled it.
+      if (!msg.includes('not recording')) setError(msg)
     } finally {
       setBusy(false)
     }
-  }, [recording, busy, newId])
+  }, [recording, busy])
 
   // Tracks live independently of clips: emptying one no longer removes it.
   // Drags stream transient docs and commit once on release (one undo entry).

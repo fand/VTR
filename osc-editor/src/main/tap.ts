@@ -109,11 +109,16 @@ export class TapManager {
 
   private tapArgs(): string[] {
     return [
-      '--listen', String(this._ports.listen),
-      '--forward', `127.0.0.1:${this._ports.forward}`,
-      '--beacon', String(this._ports.beacon),
-      '--outdir', this.outdir,
-      '--control', this.sockPath
+      '--listen',
+      String(this._ports.listen),
+      '--forward',
+      `127.0.0.1:${this._ports.forward}`,
+      '--beacon',
+      String(this._ports.beacon),
+      '--outdir',
+      this.outdir,
+      '--control',
+      this.sockPath
     ]
   }
 

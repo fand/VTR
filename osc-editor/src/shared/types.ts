@@ -20,8 +20,7 @@ export interface TapStatus {
 
 /** Recording transition from osc-tap's event log. */
 export type TapEvent =
-  | { ev: 'rec_started'; clip: string; tl?: number }
-  | { ev: 'rec_stopped'; clip: string }
+  { ev: 'rec_started'; clip: string; tl?: number } | { ev: 'rec_stopped'; clip: string }
 
 /** Reply to the control-socket wait cmd. */
 export interface TapWaitReply {
