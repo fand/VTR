@@ -133,8 +133,12 @@ fn records_events_with_types_and_session_lines() {
     assert_eq!(lines[0]["type"], "session_start");
     assert!(lines[0]["wall"].is_string());
     assert_eq!(lines.last().unwrap()["type"], "session_end");
+    let summary = &lines[lines.len() - 2];
+    assert_eq!(summary["type"], "summary");
+    assert_eq!(summary["events"], 5);
+    assert_eq!(summary["dropped"], 0);
 
-    let events = &lines[1..lines.len() - 1];
+    let events = &lines[1..lines.len() - 2];
     assert_eq!(events.len(), 5);
     assert_eq!(events[0]["a"], "/fader");
     assert!((events[0]["args"][0].as_f64().unwrap() - 0.42).abs() < 1e-9);

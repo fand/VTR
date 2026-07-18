@@ -27,6 +27,7 @@ import {
   MarkerState,
   TrackState,
   alignClip,
+  recordingWarning,
   clipLen,
   contentEnd,
   markersFromProject,
@@ -179,11 +180,15 @@ function NumField({
 function FileMenu({
   onOpen,
   onSave,
-  onSaveAs
+  onSaveAs,
+  onExport,
+  exportDisabled
 }: {
   onOpen: () => void
   onSave: () => void
   onSaveAs: () => void
+  onExport: () => void
+  exportDisabled: boolean
 }): React.JSX.Element {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -195,9 +200,15 @@ function FileMenu({
     window.addEventListener('pointerdown', onDown)
     return () => window.removeEventListener('pointerdown', onDown)
   }, [open])
-  const item = (label: string, shortcut: string, fn: () => void): React.JSX.Element => (
+  const item = (
+    label: string,
+    shortcut: string,
+    fn: () => void,
+    disabled = false
+  ): React.JSX.Element => (
     <button
       className="file-menu-item"
+      disabled={disabled}
       onClick={() => {
         setOpen(false)
         fn()
@@ -217,6 +228,7 @@ function FileMenu({
           {item('Open…', '⌘O', onOpen)}
           {item('Save', '⌘S', onSave)}
           {item('Save As…', '⇧⌘S', onSaveAs)}
+          {item('Export', '', onExport, exportDisabled)}
         </div>
       )}
     </div>
@@ -244,6 +256,9 @@ function App(): React.JSX.Element {
   const splitDrag = useRef<{ y: number; h: number } | null>(null)
   const [status, setStatus] = useState<TapStatus | null>(null)
   const [statusError, setStatusError] = useState<string | null>(null)
+  /** Incoming packets/s, from received deltas between polls. */
+  const [rxRate, setRxRate] = useState<number | null>(null)
+  const lastRx = useRef<{ received: number; at: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [info, setInfo] = useState<string | null>(null)
   // Async preview socket/send failures from main land in the error banner.
@@ -482,6 +497,16 @@ function App(): React.JSX.Element {
         .then((s) => {
           setStatus(s)
           setStatusError(null)
+          // A stale launchd tap may predate the received field.
+          if (typeof s.received === 'number') {
+            const now = performance.now()
+            const prev = lastRx.current
+            lastRx.current = { received: s.received, at: now }
+            // A negative delta means osc-tap restarted; skip that sample.
+            if (prev && now > prev.at && s.received >= prev.received) {
+              setRxRate(((s.received - prev.received) * 1000) / (now - prev.at))
+            }
+          }
           // Disk full mid-performance must not fail silently: the latch
           // keeps this banner up until the next recording starts.
           if (s.write_error) {
@@ -1179,7 +1204,13 @@ function App(): React.JSX.Element {
           <div className="header-left-grid">
             <div className="logo-row">
               <span className="logo">VTR</span>
-              <FileMenu onOpen={openProject} onSave={saveProject} onSaveAs={saveProjectAs} />
+              <FileMenu
+                onOpen={openProject}
+                onSave={saveProject}
+                onSaveAs={saveProjectAs}
+                onExport={doExport}
+                exportDisabled={tracks.length === 0 || !!recording}
+              />
             </div>
             <div className="header-duration">
               <NumField
@@ -1238,11 +1269,10 @@ function App(): React.JSX.Element {
           </button>
         </div>
         <div className="header-right">
-          {/* Row 1: tap status + in/out ports. Row 2: clock status + clock port. */}
+          {/* Row 1: in/out ports + tap on/off + recv rate.
+              Row 2: ctrl port + sync on/off + drop count.
+              The first stat column carries the ports/stats divider. */}
           <div className="status-grid">
-            <span className={statusError ? 'chip bad' : status ? 'chip ok' : 'chip'}>
-              tap {statusError ? 'down' : status ? 'up' : '…'}
-            </span>
             <NumField
               label="in"
               ariaLabel="in port"
@@ -1259,40 +1289,57 @@ function App(): React.JSX.Element {
               parse={parsePort}
               onCommit={(forward) => changePorts({ ...ports, forward })}
             />
-            <span className={status?.beacon_tl != null ? 'chip ok' : 'chip'}>
-              {status?.beacon_tl != null
-                ? `clock tl=${status.beacon_tl.toFixed(2)}s` +
-                  (status.beacon_rate === 0
-                    ? ' (paused)'
-                    : status.beacon_rate != null && status.beacon_rate !== 1
-                      ? ` ×${status.beacon_rate}`
-                      : '') +
-                  ` (${status.beacon_age?.toFixed(1)}s ago)`
-                : 'no clock'}
+            <span className="stat divider" title="osc-tap process status">
+              <span>tap:</span>
+              <span className={statusError ? 'bad' : status ? 'ok' : ''}>
+                {statusError ? 'off' : status ? 'on' : '…'}
+              </span>
+            </span>
+            <span className="stat" title="incoming OSC packets per second">
+              <span>recv:</span>
+              <span>
+                {status == null || rxRate == null
+                  ? '–'
+                  : `${rxRate < 10 ? rxRate.toFixed(1) : Math.round(rxRate)}/s`}
+              </span>
             </span>
             <NumField
-              label="clock"
-              ariaLabel="clock port"
+              label="ctrl"
+              ariaLabel="ctrl port"
               value={ports.beacon}
               disabled={!!recording || !!playing}
               parse={parsePort}
               onCommit={(beacon) => changePorts({ ...ports, beacon })}
             />
-            {status != null && status.dropped > 0 && (
-              <span className="chip bad">dropped {status.dropped}</span>
-            )}
+            <span />
+            <span />
+            <span
+              className="stat divider"
+              title={
+                status?.beacon_tl != null
+                  ? `tl=${status.beacon_tl.toFixed(2)}s` +
+                    (status.beacon_rate === 0
+                      ? ' (paused)'
+                      : status.beacon_rate != null && status.beacon_rate !== 1
+                        ? ` ×${status.beacon_rate}`
+                        : '') +
+                    ` (${status.beacon_age?.toFixed(1)}s ago)`
+                  : 'no /clock beacon received'
+              }
+            >
+              <span>sync:</span>
+              <span className={status?.beacon_tl != null ? 'ok' : ''}>
+                {status?.beacon_tl != null ? 'on' : 'off'}
+              </span>
+            </span>
+            <span
+              className={status != null && status.dropped > 0 ? 'stat bad' : 'stat'}
+              title="packets lost to writer backlog since this clip started"
+            >
+              <span>drop:</span>
+              <span>{status?.dropped ?? '–'}</span>
+            </span>
           </div>
-          <button
-            className="btn"
-            onClick={alignAll}
-            disabled={!hasTl}
-            title="place clips at their TD timeline position (tl)"
-          >
-            Align
-          </button>
-          <button className="btn" onClick={doExport} disabled={tracks.length === 0 || !!recording}>
-            Export
-          </button>
         </div>
       </header>
 
@@ -1307,7 +1354,16 @@ function App(): React.JSX.Element {
         duration={duration}
         selectedIds={selectedIds}
         selectedTrackIds={selectedTrackIds}
-        recordingRow={recording ? { events: status?.events ?? 0 } : null}
+        recordingRow={
+          recording
+            ? {
+                events: status?.events ?? 0,
+                warning: status
+                  ? recordingWarning(status.dropped, status.write_errors, status.write_error)
+                  : null
+              }
+            : null
+        }
         playhead={playhead}
         playing={playing}
         onSeek={onSeek}
@@ -1318,6 +1374,8 @@ function App(): React.JSX.Element {
         onDragCancel={abortTransient}
         onAddTrack={addTrack}
         onAddMarker={addMarker}
+        onAlign={alignAll}
+        canAlign={hasTl}
         onDeleteTrack={deleteTrack}
         onRenameTrack={renameTrack}
         onRenameClip={renameClip}

@@ -53,7 +53,7 @@ test('clip multi-select: shift-click, group duplicate/delete/drag', async () => 
   })
   try {
     const page = await app.firstWindow()
-    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
 
     const lefts = async (sel: string): Promise<number[]> =>
       (

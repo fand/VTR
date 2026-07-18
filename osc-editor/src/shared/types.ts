@@ -9,6 +9,8 @@ export interface TapStatus {
   beacon_rate: number | null
   /** Packets dropped since the current clip started. */
   dropped: number
+  /** Packets received since osc-tap started (recording or not). */
+  received: number
   /** First write failure since the current clip started (latched). */
   write_error: string | null
   write_errors: number
@@ -61,6 +63,13 @@ export interface ClipSummary {
   events: number
   /** median(tl - t) over events that carry tl; null if no beacon. */
   tlOffset: number | null
+  /**
+   * Recording health from the clip's summary line. Zero/null for clips
+   * recorded before the summary record existed.
+   */
+  dropped: number
+  writeErrors: number
+  writeError: string | null
 }
 
 /** osc-tap port configuration. */

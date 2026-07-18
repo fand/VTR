@@ -59,7 +59,7 @@ test('undo/redo: one entry per drag, survives restart, linear truncation', async
 
   let app = await launch(workdir)
   let page = await app.firstWindow()
-  await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+  await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
 
   // Drag the clip +100px = +5s at 20px/s → one undo entry.
   const dragClip = async (px: number): Promise<void> => {
@@ -88,7 +88,7 @@ test('undo/redo: one entry per drag, survives restart, linear truncation', async
   await app.close()
   app = await launch(workdir)
   page = await app.firstWindow()
-  await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+  await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
   await expect.poll(async () => (await page.locator('.clip').boundingBox())!.x).toBeGreaterThan(100)
   await page.keyboard.press(`${MOD}+z`)
   await page.keyboard.press('ControlOrMeta+s')
@@ -134,7 +134,7 @@ test('redo survives a relaunch: entries past undoSeq become the redo stack', asy
 
   let app = await launch(workdir)
   let page = await app.firstWindow()
-  await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+  await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
   const dragClip = async (px: number): Promise<void> => {
     const box = (await page.locator('.clip').boundingBox())!
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
@@ -156,7 +156,7 @@ test('redo survives a relaunch: entries past undoSeq become the redo stack', asy
   // Relaunch: seq 2 must come back as redo.
   app = await launch(workdir)
   page = await app.firstWindow()
-  await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+  await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
   await page.keyboard.press(`${MOD}+Shift+z`)
   await page.keyboard.press('ControlOrMeta+s')
   await expect.poll(() => savedOffset(workdir)).toBeGreaterThan(9)
@@ -201,7 +201,7 @@ test('divergent undo entry drops history and says so in the banner', async () =>
   const app = await launch(workdir)
   try {
     const page = await app.firstWindow()
-    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
     await page.keyboard.press(`${MOD}+z`)
     await expect(page.locator('.error-banner')).toContainText('history')
     // The log is truncated and the doc untouched.
@@ -242,7 +242,7 @@ test('undo log stays with its project: opening A never replays B', async () => {
   // Edit and save B → one undo entry in B's log.
   let app = await launch(workdir, join(workdir, 'b', 'project.json'))
   let page = await app.firstWindow()
-  await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+  await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
   const box = (await page.locator('.clip').boundingBox())!
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
   await page.mouse.down()
@@ -259,7 +259,7 @@ test('undo log stays with its project: opening A never replays B', async () => {
   // Open A: Cmd+Z must be a no-op, not apply B's inverse patches to A.
   app = await launch(workdir, join(workdir, 'a', 'project.json'))
   page = await app.firstWindow()
-  await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+  await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
   await page.keyboard.press(`${MOD}+z`)
   await page.keyboard.press('ControlOrMeta+s')
   await expect.poll(() => savedSeq(join(workdir, 'a'))).toBe(0)
@@ -292,7 +292,7 @@ test('undo mid-drag is ignored; the gesture and the stack survive', async () => 
   const app = await launch(workdir)
   try {
     const page = await app.firstWindow()
-    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
     const save = (): Promise<void> => page.keyboard.press('ControlOrMeta+s')
 
     // First drag commits one entry: offset 0 → 5 (+100px at 20px/s).

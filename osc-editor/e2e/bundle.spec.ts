@@ -42,7 +42,7 @@ async function launch(
     }
   })
   const page = await app.firstWindow()
-  await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+  await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
   return { app, page }
 }
 
@@ -114,6 +114,7 @@ test('bundle: rec into project clips/, Save As collects into .oscproj, reopen + 
     expect(clipFiles(join(bundle, 'clips'))).toHaveLength(2)
 
     // Export defaults next to the bundle, not inside it.
+    await page2.getByRole('button', { name: 'File' }).click()
     await page2.getByRole('button', { name: 'Export' }).click()
     await expect(page2.locator('.info-banner')).toContainText('exported')
     const lines = readFileSync(join(workdir, 'session.jsonl'), 'utf8')

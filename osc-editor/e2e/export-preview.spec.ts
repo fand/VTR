@@ -46,7 +46,7 @@ async function launchApp(): Promise<{ app: ElectronApplication; page: Page; work
     }
   })
   const page = await app.firstWindow()
-  await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+  await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
   return { app, page, workdir }
 }
 
@@ -65,6 +65,7 @@ test('export writes merged session.jsonl', async () => {
   const sock = dgram.createSocket('udp4')
   try {
     await recordClip(page, sock, 10)
+    await page.getByRole('button', { name: 'File' }).click()
     await page.getByRole('button', { name: 'Export' }).click()
     await expect(page.locator('.info-banner')).toContainText('exported')
 

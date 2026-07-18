@@ -128,7 +128,10 @@ export function loadProject(projectPath: string, stagingDir: string): LoadedProj
             wall: null,
             duration: clip.trimOut,
             events: 0,
-            tlOffset: null
+            tlOffset: null,
+            dropped: 0,
+            writeErrors: 0,
+            writeError: null
           }
         }
       }

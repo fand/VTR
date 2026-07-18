@@ -53,7 +53,7 @@ test('launchd agent: crash restart + bootout on quit', async () => {
   })
   try {
     const page = await app.firstWindow()
-    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
     expect(jobLoaded()).toBe(true)
     const pid1 = tapPid()
     expect(pid1).not.toBeNull()
@@ -69,7 +69,7 @@ test('launchd agent: crash restart + bootout on quit', async () => {
     expect(pid2).not.toBeNull()
     expect(pid2).not.toBe(pid1)
     // Editor reconnects through its control socket.
-    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
   } finally {
     await app.close()
   }

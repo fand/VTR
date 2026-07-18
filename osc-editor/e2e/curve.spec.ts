@@ -59,7 +59,7 @@ test('curve panel: properties per address/arg, visibility toggle', async () => {
   })
   try {
     const page = await app.firstWindow()
-    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
 
     // Nothing selected yet.
     await expect(page.locator('.curve-empty')).toBeVisible()
@@ -181,7 +181,7 @@ test('curve panel: filter input narrows the property list and drawn curves', asy
   })
   try {
     const page = await app.firstWindow()
-    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
     await page.locator('.clip').click()
     await expect(page.locator('.curve-prop-name')).toHaveText(['/fader', '/xy[0]', '/xy[1]'])
     await expectCurveCount(page, 3)
@@ -241,7 +241,7 @@ test('curve panel: property list sorted by address', async () => {
   })
   try {
     const page = await app.firstWindow()
-    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
     await page.locator('.clip').click()
     await expect(page.locator('.curve-prop-name')).toHaveText([
       '/fader',
@@ -289,7 +289,7 @@ test('curve panel: selecting a property dims other curves and hides their points
   })
   try {
     const page = await app.firstWindow()
-    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
     await page.locator('.clip').click()
     // 3 fader + 2 xy points.
     await expectPointCount(page, 5)
@@ -347,7 +347,7 @@ test('curve panel: clicking a curve line selects its property', async () => {
   })
   try {
     const page = await app.firstWindow()
-    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
     await page.locator('.clip').click()
     // 3 fader + 2 xy points.
     await expectPointCount(page, 5)
@@ -426,7 +426,7 @@ test('curve panel: multi-select shows every selected clip, timeline time axis', 
   })
   try {
     const page = await app.firstWindow()
-    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
 
     // One clip: its 2 points, no clip-range overlay.
     await page.locator('.clip').first().click()
@@ -493,7 +493,7 @@ test('curve panel: drag and delete points, edits persisted to sidecar', async ()
   })
   try {
     const page = await app.firstWindow()
-    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
     await page.locator('.clip').click()
     await expectPointCount(page, 3)
 
@@ -578,7 +578,7 @@ test('curve panel: transform box moves and scales the selected points', async ()
   })
   try {
     const page = await app.firstWindow()
-    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
     await page.locator('.clip').click()
     await expectPointCount(page, 3)
 
@@ -687,7 +687,7 @@ test('curve panel: double-click / cmd+click on a curve inserts a point', async (
   })
   try {
     const page = await app.firstWindow()
-    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
     await page.locator('.clip').click()
     await expectPointCount(page, 3)
 
@@ -735,6 +735,7 @@ test('curve panel: double-click / cmd+click on a curve inserts a point', async (
     await expectPointCount(page, 4)
 
     // The added point reaches the export.
+    await page.getByRole('button', { name: 'File' }).click()
     await page.getByRole('button', { name: 'Export' }).click()
     await expect(page.locator('.info-banner')).toContainText('exported')
     const events = readFileSync(join(workdir, 'session.jsonl'), 'utf8')
@@ -782,7 +783,7 @@ test('curve header: snap locks drags to the grid, Box toggles the transform box'
   })
   try {
     const page = await app.firstWindow()
-    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
     await page.locator('.clip').click()
     await expectPointCount(page, 3)
 
@@ -870,7 +871,7 @@ test('curve header: pencil clicks add points to the selected curve', async () =>
   })
   try {
     const page = await app.firstWindow()
-    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
     await page.locator('.clip').click()
     await expectPointCount(page, 3)
 
@@ -976,7 +977,7 @@ test('curve panel: marquee selects multiple points, group drag and delete', asyn
   })
   try {
     const page = await app.firstWindow()
-    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
     await page.locator('.clip').click()
     await expectPointCount(page, 3)
 

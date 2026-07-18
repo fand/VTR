@@ -231,6 +231,10 @@ pub struct Status {
     /// Packets dropped because the writer backlog was full. Reset per clip
     /// start so drops attribute to the current recording.
     pub dropped: u64,
+    /// Packets received on the listen socket since process start, recording
+    /// or not. `events` only moves while recording, so a live receive rate
+    /// must be derived from deltas of this counter instead.
+    pub received: u64,
     /// First write failure since the last clip start (latched).
     pub write_error: Option<String>,
     /// Write failures since the last clip start.
@@ -288,6 +292,7 @@ impl Tap {
 
         let beacon: BeaconState = Arc::new(Mutex::new(None));
         let dropped = Arc::new(AtomicU64::new(0));
+        let received = Arc::new(AtomicU64::new(0));
         let event_log = EventLog::new();
         let (tx, rx) = mpsc::sync_channel::<Msg>(CHANNEL_CAP);
 
@@ -296,6 +301,7 @@ impl Tap {
             let beacon = beacon.clone();
             let tx = tx.clone();
             let dropped = dropped.clone();
+            let received = received.clone();
             thread::Builder::new().name("recv".into()).spawn(move || {
                 let mut buf = [0u8; MAX_DATAGRAM];
                 // TD down turns every forward into an error (~120/s); throttle.
@@ -310,6 +316,7 @@ impl Tap {
                         }
                     };
                     let t = Instant::now();
+                    received.fetch_add(1, Ordering::Relaxed);
                     if let Err(e) = forward.send(&buf[..n]) {
                         fwd_log.log(&format!("forward error: {e}"));
                     }
@@ -410,25 +417,23 @@ impl Tap {
 
         // writer thread
         {
-            let outdir = config.outdir.clone();
-            let beacon = beacon.clone();
-            let dropped = dropped.clone();
-            let listen_port = listen_addr.port();
-            let forward_addr = config.forward;
-            let beacon_max_age_s = config.beacon_max_age_s;
-            let event_log = event_log.clone();
-            thread::Builder::new().name("writer".into()).spawn(move || {
-                writer_loop(
-                    rx,
-                    outdir,
-                    listen_port,
-                    forward_addr,
-                    beacon,
-                    dropped,
-                    beacon_max_age_s,
-                    event_log,
-                )
-            })?;
+            let writer = Writer {
+                outdir: config.outdir.clone(),
+                listen_port: listen_addr.port(),
+                forward_addr: config.forward,
+                beacon: beacon.clone(),
+                dropped: dropped.clone(),
+                received: received.clone(),
+                beacon_max_age_s: config.beacon_max_age_s,
+                event_log: event_log.clone(),
+                rec: None,
+                last_clip: None,
+                write_error: None,
+                write_errors: 0,
+            };
+            thread::Builder::new()
+                .name("writer".into())
+                .spawn(move || writer_loop(rx, writer))?;
         }
 
         Ok(Tap {
@@ -450,30 +455,7 @@ struct Recording {
     events: u64,
 }
 
-#[allow(clippy::too_many_arguments)]
-fn writer_loop(
-    rx: mpsc::Receiver<Msg>,
-    outdir: PathBuf,
-    listen_port: u16,
-    forward_addr: SocketAddr,
-    beacon: BeaconState,
-    dropped: Arc<AtomicU64>,
-    beacon_max_age_s: f64,
-    event_log: EventLog,
-) {
-    let mut w = Writer {
-        outdir,
-        listen_port,
-        forward_addr,
-        beacon,
-        dropped,
-        beacon_max_age_s,
-        event_log,
-        rec: None,
-        last_clip: None,
-        write_error: None,
-        write_errors: 0,
-    };
+fn writer_loop(rx: mpsc::Receiver<Msg>, mut w: Writer) {
     for msg in rx {
         w.handle(msg);
     }
@@ -486,6 +468,7 @@ struct Writer {
     forward_addr: SocketAddr,
     beacon: BeaconState,
     dropped: Arc<AtomicU64>,
+    received: Arc<AtomicU64>,
     beacon_max_age_s: f64,
     event_log: EventLog,
     rec: Option<Recording>,
@@ -602,6 +585,22 @@ impl Writer {
             Msg::Stop { reply } => match self.rec.take() {
                 Some(mut r) => {
                     let t = round6(r.epoch.elapsed().as_secs_f64());
+                    // The per-clip counters reset on the next Start; the
+                    // summary line is the only durable record that this
+                    // clip lost data.
+                    let mut s = serde_json::Map::new();
+                    s.insert("type".into(), json!("summary"));
+                    s.insert("t".into(), json!(t));
+                    s.insert("events".into(), json!(r.events));
+                    s.insert(
+                        "dropped".into(),
+                        json!(self.dropped.load(Ordering::Relaxed)),
+                    );
+                    s.insert("write_errors".into(), json!(self.write_errors));
+                    if let Some(e) = &self.write_error {
+                        s.insert("write_error".into(), json!(e));
+                    }
+                    self.write(&mut r.file, &Value::Object(s));
                     self.write(&mut r.file, &json!({"type": "session_end", "t": t}));
                     let _ = reply.send(Ok(()));
                     self.last_clip = Some(r.path.clone());
@@ -629,6 +628,7 @@ impl Writer {
                     beacon_age,
                     beacon_rate,
                     dropped: self.dropped.load(Ordering::Relaxed),
+                    received: self.received.load(Ordering::Relaxed),
                     write_error: self.write_error.clone(),
                     write_errors: self.write_errors,
                     rec_t: self
@@ -789,6 +789,7 @@ mod tests {
             forward_addr: "127.0.0.1:9".parse().unwrap(),
             beacon: Arc::new(Mutex::new(None)),
             dropped: Arc::new(AtomicU64::new(0)),
+            received: Arc::new(AtomicU64::new(0)),
             beacon_max_age_s: 5.0,
             event_log: EventLog::new(),
             rec: None,
@@ -1099,6 +1100,66 @@ mod tests {
         let text = std::fs::read_to_string(&path).unwrap();
         let header: Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
         assert!(header.get("tl").is_none());
+    }
+
+    #[test]
+    fn stop_writes_summary_before_session_end() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut w = test_writer(tmp.path());
+        let path = start_clip(&mut w);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        w.handle(packet_msg());
+        w.dropped.store(3, Ordering::Relaxed);
+
+        let (tx, rx) = mpsc::channel();
+        w.handle(Msg::Stop { reply: tx });
+        rx.recv().unwrap().unwrap();
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<Value> = text
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        let summary = &lines[lines.len() - 2];
+        assert_eq!(summary["type"], json!("summary"));
+        assert_eq!(summary["events"], json!(1));
+        assert_eq!(summary["dropped"], json!(3));
+        assert_eq!(summary["write_errors"], json!(0));
+        assert!(
+            summary.get("write_error").is_none(),
+            "clean clip must omit write_error"
+        );
+        assert_eq!(lines.last().unwrap()["type"], json!("session_end"));
+    }
+
+    #[test]
+    fn summary_carries_write_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut w = test_writer(tmp.path());
+        let path = start_clip(&mut w);
+        // Fail one packet write on a read-only handle, then restore the
+        // real handle so the summary itself can be written.
+        let good = std::mem::replace(
+            &mut w.rec.as_mut().unwrap().file,
+            File::open(&path).unwrap(),
+        );
+        w.handle(packet_msg());
+        w.rec.as_mut().unwrap().file = good;
+
+        let (tx, rx) = mpsc::channel();
+        w.handle(Msg::Stop { reply: tx });
+        rx.recv().unwrap().unwrap();
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        let summary: Value = serde_json::from_str(
+            text.lines()
+                .find(|l| l.contains("\"summary\""))
+                .expect("summary line"),
+        )
+        .unwrap();
+        assert_eq!(summary["write_errors"], json!(1));
+        assert!(summary["write_error"].as_str().is_some());
+        assert_eq!(summary["events"], json!(0));
     }
 
     #[test]

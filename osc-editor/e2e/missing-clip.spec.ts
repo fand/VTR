@@ -30,7 +30,7 @@ async function launch(
     }
   })
   const page = await app.firstWindow()
-  await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+  await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
   return { app, page }
 }
 

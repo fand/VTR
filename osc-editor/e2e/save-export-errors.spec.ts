@@ -60,7 +60,7 @@ test('cancelled Save As dialog saves nothing and shows no error', async () => {
   const app = await launch(workdir, { OSC_EDITOR_DIALOG_PATH: '' })
   try {
     const page = await app.firstWindow()
-    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
 
     // Dirty the doc, then Save As → cancel.
     const box = (await page.locator('.clip').boundingBox())!
@@ -90,7 +90,8 @@ test('export write failure lands in the error banner', async () => {
   const app = await launch(workdir)
   try {
     const page = await app.firstWindow()
-    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
+    await page.getByRole('button', { name: 'File' }).click()
     await page.getByRole('button', { name: 'Export' }).click()
     await expect(page.locator('.error-banner')).toBeVisible()
     await expect(page.locator('.info-banner')).toHaveCount(0)

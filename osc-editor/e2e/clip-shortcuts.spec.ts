@@ -46,7 +46,7 @@ test('clip keyboard shortcuts: Cmd+C / Cmd+V copy-paste at playhead', async () =
   })
   try {
     const page = await app.firstWindow()
-    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
 
     // Copy the clip, seek to ~8s (160px at 20 px/s), paste.
     await page.locator('.clip').click()

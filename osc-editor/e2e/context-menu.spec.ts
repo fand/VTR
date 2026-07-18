@@ -48,7 +48,7 @@ test('clip context menu: mute, copy, paste, duplicate, split at playhead', async
   })
   try {
     const page = await app.firstWindow()
-    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
 
     const readSession = (): { t?: number; type?: string }[] | null => {
       try {
@@ -87,6 +87,7 @@ test('clip context menu: mute, copy, paste, duplicate, split at playhead', async
     await page.locator('.clip').click({ button: 'right' })
     await page.getByRole('menuitem', { name: 'Mute' }).click()
     await expect(page.locator('.clip.muted')).toHaveCount(1)
+    await page.getByRole('button', { name: 'File' }).click()
     await page.getByRole('button', { name: 'Export' }).click()
     await expect.poll(() => readSession()?.length ?? 0).toBe(2) // start + end only
 
@@ -94,6 +95,7 @@ test('clip context menu: mute, copy, paste, duplicate, split at playhead', async
     await page.locator('.clip').click({ button: 'right' })
     await page.getByRole('menuitem', { name: 'Unmute' }).click()
     await expect(page.locator('.clip.muted')).toHaveCount(0)
+    await page.getByRole('button', { name: 'File' }).click()
     await page.getByRole('button', { name: 'Export' }).click()
     await expect.poll(() => readSession()?.length ?? 0).toBe(5)
 

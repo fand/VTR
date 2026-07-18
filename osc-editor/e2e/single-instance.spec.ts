@@ -41,7 +41,7 @@ test('second instance forwards its project arg to the first and quits', async ()
   app.process().stderr?.on('data', (d) => console.log(`[main!] ${d.toString().trimEnd()}`))
   try {
     const page = await app.firstWindow()
-    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
     await expect.poll(() => page.title()).toBe('VTR')
 
     // Second launch on the same userData: must exit, first must load the arg.

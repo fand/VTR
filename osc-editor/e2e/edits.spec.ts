@@ -53,8 +53,9 @@ test('edits sidecar: applied on export, survives save round-trip', async () => {
   })
   try {
     const page = await app.firstWindow()
-    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
 
+    await page.getByRole('button', { name: 'File' }).click()
     await page.getByRole('button', { name: 'Export' }).click()
     await expect(page.locator('.info-banner')).toContainText('exported')
 
