@@ -53,7 +53,7 @@ test('track rename: double-click, persisted, undoable', async () => {
   })
   try {
     const page = await app.firstWindow()
-    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
 
     const label = page.locator('.track-label .editable-label')
     await expect(label).toHaveText('Track 1')

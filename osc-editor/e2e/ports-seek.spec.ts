@@ -46,7 +46,7 @@ async function launchApp(): Promise<{ app: ElectronApplication; page: Page; work
     }
   })
   const page = await app.firstWindow()
-  await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+  await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
   return { app, page, workdir }
 }
 
@@ -99,18 +99,18 @@ test('seek: ruler click, lane click, scrub', async () => {
   }
 })
 
-test('clock port editable; beacon received on new port', async () => {
+test('ctrl port editable; beacon received on new port', async () => {
   const { app, page } = await launchApp()
   const sock = dgram.createSocket('udp4')
   try {
-    await page.getByLabel('clock port').fill('12012')
-    await page.getByLabel('clock port').press('Enter')
+    await page.getByLabel('ctrl port').fill('12012')
+    await page.getByLabel('ctrl port').press('Enter')
     await sleep(2500) // tap restart
     const beacon = setInterval(() => {
       sock.send(oscMessage('/clock', [50, 1.0]), 12012, '127.0.0.1')
     }, 100)
     try {
-      await expect(page.locator('.chip', { hasText: 'clock tl=' })).toBeVisible({
+      await expect(page.locator('.stat', { hasText: 'sync:' })).toHaveText(/on/, {
         timeout: 15_000
       })
     } finally {
@@ -214,7 +214,7 @@ test('ports editable in header; tap restarts on new ports', async () => {
 
     // tap restarts (child respawn ~1s); wait until it records on the new port.
     await sleep(2500)
-    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
 
     await page.getByRole('button', { name: 'Rec' }).click()
     for (let i = 0; i < 5; i++) {

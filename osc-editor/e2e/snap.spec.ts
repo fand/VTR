@@ -54,7 +54,7 @@ test("snap toggle: clip move and trim snap to other clips' edges", async () => {
   })
   try {
     const page = await app.firstWindow()
-    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
 
     const left = (i: number): Promise<number> =>
       page

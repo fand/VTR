@@ -149,6 +149,12 @@ body {
   background: #2e333d;
 }
 
+.file-menu-item:disabled {
+  color: var(--text-dim);
+  cursor: default;
+  background: none;
+}
+
 .file-menu-shortcut {
   color: var(--text-dim);
   font-family: var(--mono);
@@ -254,16 +260,51 @@ body {
 }
 
 /* Header status area, two rows:
-   tap chip    in    [10010]   out [10011]
-   clock chip  clock [10012]   rx 120/s  dropped 0 */
+   in    [10010]   out [10011]   | tap:  on   recv: 120/s
+   ctrl  [10012]                 | sync: on   drop:     0 */
 .status-grid {
   display: grid;
-  grid-template-columns: repeat(5, auto);
+  grid-template-columns: repeat(6, auto);
   column-gap: 8px;
   row-gap: 4px;
   align-items: center;
   font-family: var(--mono);
   font-size: 11px;
+}
+
+.status-grid .stat {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 84px;
+  align-self: stretch;
+  align-items: center;
+  color: var(--text-dim);
+}
+
+/* Ports/stats separator, on the first stat column only. */
+.status-grid .stat.divider {
+  min-width: 64px;
+  border-left: 1px solid var(--border);
+  padding-left: 10px;
+  margin-left: 4px;
+}
+
+/* Wider gap between the tap/sync column and the recv/drop column. */
+.status-grid .stat:not(.divider) {
+  margin-left: 16px;
+}
+
+.status-grid .stat .ok {
+  color: #6fcf97;
+}
+
+.status-grid .stat .bad {
+  color: #ff9599;
+}
+
+.status-grid .stat.bad {
+  color: #ff9599;
 }
 
 .status-grid .port-field {
@@ -272,10 +313,6 @@ body {
 
 .status-grid .port-field input {
   padding: 1px 6px;
-}
-
-.status-grid .chip {
-  justify-self: start;
 }
 
 .toolbar-unit {
@@ -942,19 +979,3 @@ body {
   font-size: 12px;
 }
 
-.chip {
-  padding: 2px 8px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  color: var(--text-dim);
-}
-
-.chip.ok {
-  color: #6fcf97;
-  border-color: #2c4a3a;
-}
-
-.chip.bad {
-  color: #ff9599;
-  border-color: #5c2a2e;
-}

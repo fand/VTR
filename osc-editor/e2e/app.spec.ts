@@ -56,7 +56,7 @@ async function launchApp(): Promise<Launched> {
   app.process().stderr?.on('data', (d) => console.log(`[main!] ${d.toString().trimEnd()}`))
   const page = await app.firstWindow()
   page.on('console', (msg) => console.log(`[renderer] ${msg.text()}`))
-  await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+  await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
   return { app, page, workdir }
 }
 
@@ -84,10 +84,10 @@ test('record → clip on track → drag → delete → persisted', async () => {
     await expect(clip).toHaveCount(1)
     await expect(page.locator('.clip-meta')).toContainText('15 ev')
 
-    // Header stats: the rx rate chip is live and nothing was dropped, so
+    // Header stats: the recv rate is live and nothing was dropped, so
     // the clip carries no data-loss warning.
-    await expect(page.locator('.chip', { hasText: /^rx / })).toBeVisible()
-    await expect(page.locator('.chip', { hasText: 'dropped 0' })).toBeVisible()
+    await expect(page.locator('.stat', { hasText: 'recv:' })).not.toContainText('–')
+    await expect(page.locator('.stat', { hasText: 'drop:' })).toHaveText(/drop:\s*0/)
     await expect(clip).not.toHaveClass(/warn/)
 
     // The new clip marks the project edited; save clears the suffix.
@@ -143,7 +143,7 @@ test('beacon → tl recorded → clip auto-aligned at record stop', async () => 
     sock.send(oscMessage('/clock', [tl, 1.0]), BEACON_PORT, '127.0.0.1')
   }, 100)
   try {
-    await expect(page.locator('.chip', { hasText: 'clock tl=' })).toBeVisible({
+    await expect(page.locator('.stat', { hasText: 'sync:' })).toHaveText(/on/, {
       timeout: 5000
     })
     await page.getByRole('button', { name: 'Rec' }).click()

@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { BookmarkPlus, Magnet, ZoomIn, ZoomOut } from 'lucide-react'
+import { AlignStartVertical, BookmarkPlus, Magnet, ZoomIn, ZoomOut } from 'lucide-react'
 import {
   ClipInst,
   MIN_CLIP_LEN,
@@ -79,6 +79,10 @@ interface TimelineProps {
   onAddTrack: () => void
   /** Add a marker at the playhead. */
   onAddMarker: () => void
+  /** Place all clips at their TD timeline position (tl). */
+  onAlign: () => void
+  /** False disables Align (no clip has a tl). */
+  canAlign: boolean
   onDeleteTrack: (trackId: number) => void
   onRenameTrack: (trackId: number, name: string) => void
   onRenameClip: (clipId: number, name: string) => void
@@ -215,6 +219,8 @@ export function Timeline({
   onDragCancel,
   onAddTrack,
   onAddMarker,
+  onAlign,
+  canAlign,
   onDeleteTrack,
   onRenameTrack,
   onRenameClip,
@@ -583,6 +589,15 @@ export function Timeline({
           onClick={() => setSnap((s) => !s)}
         >
           <Magnet size={14} />
+        </button>
+        <button
+          className="btn small"
+          onClick={onAlign}
+          disabled={!canAlign}
+          title="place clips at their TD timeline position (tl)"
+          aria-label="align clips"
+        >
+          <AlignStartVertical size={14} />
         </button>
         <div className="spacer" />
         <button

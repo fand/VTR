@@ -51,7 +51,7 @@ test('timeline marquee: drag-select clips, shift adds, click deselects and seeks
   })
   try {
     const page = await app.firstWindow()
-    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
     await expect(page.locator('.clip')).toHaveCount(4)
 
     const lane = (await page.locator('.track-lane').first().boundingBox())!

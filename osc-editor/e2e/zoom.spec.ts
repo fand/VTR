@@ -46,7 +46,7 @@ test('timeline pinch zoom (ctrl+wheel) scales around the cursor', async () => {
   })
   try {
     const page = await app.firstWindow()
-    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
 
     const width = async (): Promise<number> => (await page.locator('.clip').boundingBox())!.width
 
@@ -144,7 +144,7 @@ test('curve editor x/y zoom sliders scale the axes; y zoom scrolls vertically', 
   })
   try {
     const page = await app.firstWindow()
-    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
     await page.locator('.clip').click()
 
     const svg = page.locator('.curve-scroll svg.curve-under')
@@ -206,7 +206,7 @@ test('min zoom fits a long timeline in the window', async () => {
   })
   try {
     const page = await app.firstWindow()
-    await expect(page.locator('.chip').first()).toHaveText('tap up', { timeout: 15_000 })
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
 
     // Slider to minimum → the whole 40-min timeline fits, no horizontal scroll.
     // exact: the curve editor has its own "x zoom" / "y zoom" sliders.
