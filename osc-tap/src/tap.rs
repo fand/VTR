@@ -332,13 +332,18 @@ impl Tap {
             })?;
         }
 
-        // beacon thread
+        // beacon thread: /clock beacons plus /rec/start & /rec/stop.
         {
             let beacon = beacon.clone();
+            let handle = Handle {
+                tx: tx.clone(),
+                log: event_log.clone(),
+            };
             thread::Builder::new().name("beacon".into()).spawn(move || {
                 let mut buf = [0u8; MAX_DATAGRAM];
                 let mut recv_log = RateLimitedLog::new();
                 let mut arg_log = RateLimitedLog::new();
+                let mut rec_log = RateLimitedLog::new();
                 loop {
                     let n = match beacon_sock.recv(&mut buf) {
                         Ok(n) => n,
@@ -354,25 +359,50 @@ impl Tap {
                     let mut msgs = Vec::new();
                     flatten(packet, &mut msgs);
                     for m in msgs {
-                        if m.addr != "/clock" {
-                            continue;
+                        match m.addr.as_str() {
+                            "/clock" => {
+                                // Silently dropping these left all clips without tl
+                                // and no hint why; say what arrived instead.
+                                let Some(t) = arg_as_f64(m.args.first()) else {
+                                    arg_log.log(&format!(
+                                        "warn: /clock arg not numeric ({:?}), beacon ignored",
+                                        m.args.first()
+                                    ));
+                                    continue;
+                                };
+                                let rate = arg_as_f64(m.args.get(1)).unwrap_or(1.0);
+                                // NaN/inf would serialize tl as null and poison
+                                // every later extrapolation; drop the beacon.
+                                if !t.is_finite() || !rate.is_finite() {
+                                    continue;
+                                }
+                                *beacon.lock().unwrap() = Some(Beacon { t, rate, at: now });
+                            }
+                            "/rec/start" => {
+                                // Optional [tl] [rate]: update the beacon first so
+                                // the clip starts with a correct tl (the official
+                                // sync mechanism). Bad args: ignore, still start.
+                                let tl = arg_as_f64(m.args.first()).filter(|v| v.is_finite());
+                                if let Some(t) = tl {
+                                    let rate = arg_as_f64(m.args.get(1))
+                                        .filter(|v| v.is_finite())
+                                        .unwrap_or(1.0);
+                                    *beacon.lock().unwrap() =
+                                        Some(Beacon { t, rate, at: now });
+                                }
+                                match handle.start_clip(None) {
+                                    Ok(path) => eprintln!("osc-tap: /rec/start -> {path:?}"),
+                                    // Idempotent: already recording is a no-op.
+                                    Err(e) => rec_log.log(&format!("/rec/start ignored: {e}")),
+                                }
+                            }
+                            "/rec/stop" => match handle.stop_clip() {
+                                Ok(()) => eprintln!("osc-tap: /rec/stop"),
+                                // Idempotent: not recording is a no-op.
+                                Err(e) => rec_log.log(&format!("/rec/stop ignored: {e}")),
+                            },
+                            _ => {}
                         }
-                        // Silently dropping these left all clips without tl
-                        // and no hint why; say what arrived instead.
-                        let Some(t) = arg_as_f64(m.args.first()) else {
-                            arg_log.log(&format!(
-                                "warn: /clock arg not numeric ({:?}), beacon ignored",
-                                m.args.first()
-                            ));
-                            continue;
-                        };
-                        let rate = arg_as_f64(m.args.get(1)).unwrap_or(1.0);
-                        // NaN/inf would serialize tl as null and poison
-                        // every later extrapolation; drop the beacon.
-                        if !t.is_finite() || !rate.is_finite() {
-                            continue;
-                        }
-                        *beacon.lock().unwrap() = Some(Beacon { t, rate, at: now });
                     }
                 }
             })?;
@@ -536,10 +566,21 @@ impl Writer {
                     let _ = reply.send(Err("already recording".into()));
                     return;
                 }
+                // Timeline position at clip start, same age filter as packet
+                // stamping; into the session_start header and the event.
+                let now = Instant::now();
+                let tl = self
+                    .beacon
+                    .lock()
+                    .unwrap()
+                    .filter(|b| signed_secs_since(now, b.at) <= self.beacon_max_age_s)
+                    .map(|b| round6(b.tl_at(now)))
+                    .filter(|v| v.is_finite());
                 match start_recording(
                     dir.as_deref().unwrap_or(&self.outdir),
                     self.listen_port,
                     self.forward_addr,
+                    tl,
                 ) {
                     Ok(r) => {
                         // Fresh counters: errors and drops attribute to THIS clip.
@@ -549,7 +590,7 @@ impl Writer {
                         let _ = reply.send(Ok(r.path.clone()));
                         self.event_log.push(Event::RecStarted {
                             clip: r.path.clone(),
-                            tl: None,
+                            tl,
                         });
                         self.rec = Some(r);
                     }
@@ -605,6 +646,7 @@ fn start_recording(
     outdir: &std::path::Path,
     listen_port: u16,
     forward_addr: SocketAddr,
+    tl: Option<f64>,
 ) -> Result<Recording> {
     std::fs::create_dir_all(outdir).with_context(|| format!("create dir {outdir:?}"))?;
     let now = chrono::Local::now();
@@ -616,13 +658,17 @@ fn start_recording(
         i += 1;
     }
     let mut file = File::create_new(&path).with_context(|| format!("create {path:?}"))?;
-    let header = json!({
+    let mut header = json!({
         "type": "session_start",
         "t": 0.0,
         "wall": now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
         "host": forward_addr.ip().to_string(),
         "routes": [format!("{}->{}", listen_port, forward_addr.port())],
     });
+    // Omit when unknown, like the per-event tl.
+    if let Some(tl) = tl {
+        header["tl"] = json!(tl);
+    }
     // Header write failure surfaces on the first packet write instead.
     let _ = write_line(&mut file, &header);
     Ok(Recording {
@@ -1024,6 +1070,35 @@ mod tests {
         w.handle(Msg::Start { dir: None, reply: tx });
         assert!(rx.recv().unwrap().is_err());
         assert_eq!(w.event_log.newest(), 3);
+    }
+
+    #[test]
+    fn start_stamps_tl_into_header_and_event() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut w = test_writer(tmp.path());
+        *w.beacon.lock().unwrap() = Some(Beacon {
+            t: 42.0,
+            rate: 0.0,
+            at: Instant::now(),
+        });
+        let path = start_clip(&mut w);
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        let header: Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
+        assert_eq!(header["type"], "session_start");
+        assert_eq!(header["tl"], json!(42.0));
+
+        let r = w.event_log.wait_since(0, Duration::ZERO);
+        let ev = serde_json::to_value(&r.events[0]).unwrap();
+        assert_eq!(ev["tl"], json!(42.0));
+
+        // Stale beacon: tl omitted, like per-event stamping.
+        stop_clip(&mut w);
+        w.beacon_max_age_s = -1.0;
+        let path = start_clip(&mut w);
+        let text = std::fs::read_to_string(&path).unwrap();
+        let header: Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
+        assert!(header.get("tl").is_none());
     }
 
     #[test]
