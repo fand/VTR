@@ -1,6 +1,7 @@
 # TODO
 
+- custom title bar
+- Open Recentが消えてしまった？
+- button hover時のtooltipが出てくるまでの時間が長すぎ 0.3sくらいで出てほしい
 - TouchDesignerで使用するスクリプト/tox作成
   - 再生用と記録用が必要？
-- osc-tapの本番相当の計測方法(現状: soakテストで 120Hz gap中央値 8.333ms / p99 8.371ms / ロス0)
-- title bar改善
