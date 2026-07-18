@@ -1,12 +1,13 @@
+use std::collections::VecDeque;
 use std::fs::File;
 use std::io::Write as _;
 use std::net::{SocketAddr, UdpSocket};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender, SyncSender, TrySendError};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use rosc::{OscMessage, OscPacket, OscType};
@@ -72,6 +73,119 @@ impl Beacon {
 
 type BeaconState = Arc<Mutex<Option<Beacon>>>;
 
+/// Recording transitions, in order. Local (control socket) and remote (OSC)
+/// start/stops emit the same events.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "ev", rename_all = "snake_case")]
+pub enum Event {
+    RecStarted {
+        clip: PathBuf,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tl: Option<f64>,
+    },
+    RecStopped {
+        clip: PathBuf,
+    },
+}
+
+/// Rec transitions are rare; 64 outlives any realistic wait gap.
+const EVENT_LOG_CAP: usize = 64;
+
+struct LogState {
+    /// seq of the next event to be pushed; starts at 1, only grows.
+    next_seq: u64,
+    events: VecDeque<(u64, Event)>,
+}
+
+/// Ring buffer of `(seq, Event)` shared between the writer thread (push)
+/// and control-socket wait threads (wait_since).
+#[derive(Clone)]
+pub struct EventLog {
+    inner: Arc<(Mutex<LogState>, Condvar)>,
+}
+
+pub struct WaitResult {
+    /// Newest seq the caller should wait from next.
+    pub seq: u64,
+    pub events: Vec<Event>,
+    /// The caller's cursor is unusable (overflowed past or from another
+    /// process); it must re-baseline from a status snapshot.
+    pub reset: bool,
+}
+
+impl EventLog {
+    fn new() -> Self {
+        Self {
+            inner: Arc::new((
+                Mutex::new(LogState {
+                    next_seq: 1,
+                    events: VecDeque::new(),
+                }),
+                Condvar::new(),
+            )),
+        }
+    }
+
+    fn push(&self, event: Event) {
+        let (lock, cvar) = &*self.inner;
+        let mut st = lock.lock().unwrap();
+        let seq = st.next_seq;
+        st.next_seq += 1;
+        st.events.push_back((seq, event));
+        while st.events.len() > EVENT_LOG_CAP {
+            st.events.pop_front();
+        }
+        cvar.notify_all();
+    }
+
+    /// Newest seq (0 when nothing was ever pushed).
+    pub fn newest(&self) -> u64 {
+        self.inner.0.lock().unwrap().next_seq - 1
+    }
+
+    /// Block until an event with seq > n exists, then return everything
+    /// after n. Timeout returns empty events with the cursor unchanged.
+    /// With buffered seqs oldest..=newest, serving needs n >= oldest-1;
+    /// n < oldest-1 (overflow) or n > newest (other process) is a reset.
+    pub fn wait_since(&self, n: u64, timeout: Duration) -> WaitResult {
+        let (lock, cvar) = &*self.inner;
+        let deadline = Instant::now() + timeout;
+        let mut st = lock.lock().unwrap();
+        loop {
+            let newest = st.next_seq - 1;
+            let lost = st.events.front().is_some_and(|&(oldest, _)| n + 1 < oldest);
+            if n > newest || lost {
+                return WaitResult {
+                    seq: newest,
+                    events: Vec::new(),
+                    reset: true,
+                };
+            }
+            if newest > n {
+                return WaitResult {
+                    seq: newest,
+                    events: st
+                        .events
+                        .iter()
+                        .filter(|(s, _)| *s > n)
+                        .map(|(_, e)| e.clone())
+                        .collect(),
+                    reset: false,
+                };
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                return WaitResult {
+                    seq: n,
+                    events: Vec::new(),
+                    reset: false,
+                };
+            }
+            st = cvar.wait_timeout(st, deadline - now).unwrap().0;
+        }
+    }
+}
+
 pub struct Tap {
     pub listen_addr: SocketAddr,
     pub beacon_addr: SocketAddr,
@@ -81,6 +195,7 @@ pub struct Tap {
 #[derive(Clone)]
 pub struct Handle {
     tx: SyncSender<Msg>,
+    log: EventLog,
 }
 
 enum Msg {
@@ -120,6 +235,10 @@ pub struct Status {
     pub write_error: Option<String>,
     /// Write failures since the last clip start.
     pub write_errors: u64,
+    /// Seconds since the current clip started.
+    pub rec_t: Option<f64>,
+    /// Most recently finished clip.
+    pub last_clip: Option<PathBuf>,
 }
 
 impl Handle {
@@ -146,6 +265,10 @@ impl Handle {
             .map_err(|_| "writer thread gone".to_string())?;
         rx.recv().map_err(|_| "writer thread gone".to_string())
     }
+
+    pub fn event_log(&self) -> &EventLog {
+        &self.log
+    }
 }
 
 impl Tap {
@@ -165,6 +288,7 @@ impl Tap {
 
         let beacon: BeaconState = Arc::new(Mutex::new(None));
         let dropped = Arc::new(AtomicU64::new(0));
+        let event_log = EventLog::new();
         let (tx, rx) = mpsc::sync_channel::<Msg>(CHANNEL_CAP);
 
         // recv thread: stamp, forward raw, hand off to writer. No parsing here.
@@ -262,6 +386,7 @@ impl Tap {
             let listen_port = listen_addr.port();
             let forward_addr = config.forward;
             let beacon_max_age_s = config.beacon_max_age_s;
+            let event_log = event_log.clone();
             thread::Builder::new().name("writer".into()).spawn(move || {
                 writer_loop(
                     rx,
@@ -271,6 +396,7 @@ impl Tap {
                     beacon,
                     dropped,
                     beacon_max_age_s,
+                    event_log,
                 )
             })?;
         }
@@ -278,7 +404,7 @@ impl Tap {
         Ok(Tap {
             listen_addr,
             beacon_addr,
-            handle: Handle { tx },
+            handle: Handle { tx, log: event_log },
         })
     }
 
@@ -294,6 +420,7 @@ struct Recording {
     events: u64,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn writer_loop(
     rx: mpsc::Receiver<Msg>,
     outdir: PathBuf,
@@ -302,6 +429,7 @@ fn writer_loop(
     beacon: BeaconState,
     dropped: Arc<AtomicU64>,
     beacon_max_age_s: f64,
+    event_log: EventLog,
 ) {
     let mut w = Writer {
         outdir,
@@ -310,7 +438,9 @@ fn writer_loop(
         beacon,
         dropped,
         beacon_max_age_s,
+        event_log,
         rec: None,
+        last_clip: None,
         write_error: None,
         write_errors: 0,
     };
@@ -327,7 +457,9 @@ struct Writer {
     beacon: BeaconState,
     dropped: Arc<AtomicU64>,
     beacon_max_age_s: f64,
+    event_log: EventLog,
     rec: Option<Recording>,
+    last_clip: Option<PathBuf>,
     /// First write failure since the last clip start; disk-full mid-show
     /// must show up in status, not only on stderr.
     write_error: Option<String>,
@@ -415,6 +547,10 @@ impl Writer {
                         self.write_errors = 0;
                         self.dropped.store(0, Ordering::Relaxed);
                         let _ = reply.send(Ok(r.path.clone()));
+                        self.event_log.push(Event::RecStarted {
+                            clip: r.path.clone(),
+                            tl: None,
+                        });
                         self.rec = Some(r);
                     }
                     Err(e) => {
@@ -427,6 +563,8 @@ impl Writer {
                     let t = round6(r.epoch.elapsed().as_secs_f64());
                     self.write(&mut r.file, &json!({"type": "session_end", "t": t}));
                     let _ = reply.send(Ok(()));
+                    self.last_clip = Some(r.path.clone());
+                    self.event_log.push(Event::RecStopped { clip: r.path });
                 }
                 None => {
                     let _ = reply.send(Err("not recording".into()));
@@ -452,6 +590,11 @@ impl Writer {
                     dropped: self.dropped.load(Ordering::Relaxed),
                     write_error: self.write_error.clone(),
                     write_errors: self.write_errors,
+                    rec_t: self
+                        .rec
+                        .as_ref()
+                        .map(|r| round6(r.epoch.elapsed().as_secs_f64())),
+                    last_clip: self.last_clip.clone(),
                 });
             }
         }
@@ -601,7 +744,9 @@ mod tests {
             beacon: Arc::new(Mutex::new(None)),
             dropped: Arc::new(AtomicU64::new(0)),
             beacon_max_age_s: 5.0,
+            event_log: EventLog::new(),
             rec: None,
+            last_clip: None,
             write_error: None,
             write_errors: 0,
         }
@@ -748,6 +893,137 @@ mod tests {
         .unwrap();
         assert_eq!(line["types"], json!("fi"));
         assert_eq!(line["args"], json!([1.5, 2]));
+    }
+
+    fn stop_clip(w: &mut Writer) {
+        let (tx, rx) = mpsc::channel();
+        w.handle(Msg::Stop { reply: tx });
+        rx.recv().unwrap().unwrap();
+    }
+
+    #[test]
+    fn event_log_serves_after_cursor() {
+        let log = EventLog::new();
+        for i in 0..3 {
+            log.push(Event::RecStopped {
+                clip: PathBuf::from(format!("{i}.jsonl")),
+            });
+        }
+        let r = log.wait_since(0, Duration::ZERO);
+        assert!(!r.reset);
+        assert_eq!(r.seq, 3);
+        assert_eq!(r.events.len(), 3);
+
+        let r = log.wait_since(2, Duration::ZERO);
+        assert_eq!(r.events.len(), 1);
+        assert_eq!(r.seq, 3);
+    }
+
+    #[test]
+    fn event_log_timeout_keeps_cursor() {
+        let log = EventLog::new();
+        log.push(Event::RecStopped { clip: "a".into() });
+        let r = log.wait_since(1, Duration::from_millis(5));
+        assert!(!r.reset);
+        assert_eq!(r.seq, 1);
+        assert!(r.events.is_empty());
+    }
+
+    #[test]
+    fn event_log_overflow_resets() {
+        let log = EventLog::new();
+        for _ in 0..(EVENT_LOG_CAP as u64 + 5) {
+            log.push(Event::RecStopped { clip: "a".into() });
+        }
+        // Cursor 0 predates the buffer: events were lost.
+        let r = log.wait_since(0, Duration::ZERO);
+        assert!(r.reset);
+        assert_eq!(r.seq, EVENT_LOG_CAP as u64 + 5);
+        assert!(r.events.is_empty());
+        // Oldest still-served cursor.
+        let r = log.wait_since(5, Duration::ZERO);
+        assert!(!r.reset);
+        assert_eq!(r.events.len(), EVENT_LOG_CAP);
+    }
+
+    #[test]
+    fn event_log_cursor_ahead_resets() {
+        // A cursor from a previous process: newest here is 0.
+        let log = EventLog::new();
+        let r = log.wait_since(7, Duration::ZERO);
+        assert!(r.reset);
+        assert_eq!(r.seq, 0);
+    }
+
+    #[test]
+    fn event_log_push_wakes_blocked_wait() {
+        let log = EventLog::new();
+        let waiter = {
+            let log = log.clone();
+            std::thread::spawn(move || log.wait_since(0, Duration::from_secs(5)))
+        };
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        log.push(Event::RecStarted {
+            clip: "a".into(),
+            tl: Some(1.5),
+        });
+        let r = waiter.join().unwrap();
+        assert!(!r.reset);
+        assert_eq!(r.seq, 1);
+        assert_eq!(r.events.len(), 1);
+    }
+
+    #[test]
+    fn event_serialization_shape() {
+        let started = serde_json::to_value(Event::RecStarted {
+            clip: "a.jsonl".into(),
+            tl: Some(42.0),
+        })
+        .unwrap();
+        assert_eq!(
+            started,
+            json!({"ev": "rec_started", "clip": "a.jsonl", "tl": 42.0})
+        );
+        let no_tl = serde_json::to_value(Event::RecStarted {
+            clip: "a.jsonl".into(),
+            tl: None,
+        })
+        .unwrap();
+        assert_eq!(no_tl, json!({"ev": "rec_started", "clip": "a.jsonl"}));
+        let stopped = serde_json::to_value(Event::RecStopped { clip: "a.jsonl".into() }).unwrap();
+        assert_eq!(stopped, json!({"ev": "rec_stopped", "clip": "a.jsonl"}));
+    }
+
+    #[test]
+    fn start_stop_emit_events_and_status_fields() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut w = test_writer(tmp.path());
+        assert_eq!(status_of(&mut w).rec_t, None);
+
+        let path = start_clip(&mut w);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let st = status_of(&mut w);
+        assert!(st.rec_t.is_some_and(|t| t > 0.0));
+        assert_eq!(st.last_clip, None);
+
+        stop_clip(&mut w);
+        let st = status_of(&mut w);
+        assert_eq!(st.rec_t, None);
+        assert_eq!(st.last_clip, Some(path.clone()));
+
+        let r = w.event_log.wait_since(0, Duration::ZERO);
+        assert_eq!(r.seq, 2);
+        let json = serde_json::to_value(&r.events).unwrap();
+        assert_eq!(json[0]["ev"], "rec_started");
+        assert_eq!(json[1]["ev"], "rec_stopped");
+        assert_eq!(json[1]["clip"], json!(path));
+
+        // Failed start (already recording) must not emit an event.
+        start_clip(&mut w);
+        let (tx, rx) = mpsc::channel();
+        w.handle(Msg::Start { dir: None, reply: tx });
+        assert!(rx.recv().unwrap().is_err());
+        assert_eq!(w.event_log.newest(), 3);
     }
 
     #[test]
