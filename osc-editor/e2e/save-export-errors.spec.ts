@@ -94,7 +94,7 @@ test('export write failure lands in the error banner', async () => {
     await page.getByRole('button', { name: 'File' }).click()
     await page.getByRole('button', { name: 'Export' }).click()
     await expect(page.locator('.error-banner')).toBeVisible()
-    await expect(page.locator('.info-banner')).toHaveCount(0)
+    await expect(page.locator('.status-bar')).not.toContainText('Exported')
   } finally {
     await app.close()
   }

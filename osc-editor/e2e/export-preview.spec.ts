@@ -67,7 +67,7 @@ test('export writes merged session.jsonl', async () => {
     await recordClip(page, sock, 10)
     await page.getByRole('button', { name: 'File' }).click()
     await page.getByRole('button', { name: 'Export' }).click()
-    await expect(page.locator('.info-banner')).toContainText('exported')
+    await expect(page.locator('.sb-log')).toContainText('Exported')
 
     const lines = readFileSync(join(workdir, 'session.jsonl'), 'utf8')
       .split('\n')
