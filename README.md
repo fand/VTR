@@ -8,6 +8,7 @@ VJs' Timeline Recorder. Record, edit, and replay OSC for VJ performance archival
 
 - **osc-tap** (Rust): UDP proxy that forwards OSC unchanged to TD and logs parsed copies as JSONL. Stamps TD-timeline time (`tl`) from a `/clock` beacon; the same port takes `/rec/start` / `/rec/stop`. Default ports: listen 10010, forward 127.0.0.1:10011, control 10012.
 - **osc-editor** (Electron): DAW-style editor. Records clips via osc-tap, arranges them on tracks, previews to TD, exports a merged `session.jsonl`.
+- **td** (TouchDesigner): `vtr.tox` — drives rec start/stop + the `/clock` beacon from TD, and replays exported sessions back into the project (scrub / reverse / mid-session start). See [td/README.md](td/README.md).
 
 ## Quick start
 
@@ -33,6 +34,10 @@ npm run typecheck
 npm run test:unit             # vitest
 npm run test:e2e              # playwright e2e (needs osc-tap debug build)
 RUN_LAUNCHD=1 npx playwright test e2e/launchd.spec.ts   # launchd agent test
+
+# td (pure-Python core of vtr.tox)
+cd td
+uv run pytest
 ```
 
 CI (GitHub Actions) runs `cargo test` on macOS, plus editor lint / typecheck / unit tests on Linux and the Playwright e2e suite on macOS, for every push to `main` and every pull request.
