@@ -21,6 +21,13 @@ export interface OscEvent {
   port: number
   a: string
   args: unknown[]
+  /**
+   * OSC type tag string, one char per args element (e.g. "ff").
+   * Absent in clips recorded before the field existed and in
+   * editor-added events; consumers then fall back to guessing.
+   * An `h` tag may carry its arg as a decimal string (int64 > 2^53).
+   */
+  types?: string
 }
 
 /** Parsed clip metadata used by the editor. */

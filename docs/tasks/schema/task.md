@@ -1,7 +1,9 @@
 # Clip JSONL drops OSC type tags
 
-Status: open. Documented in `osc-editor/src/main/osc.ts` header (2026-07-17);
-fix planned for a separate session.
+Status: done (2026-07-17). Fixed on `feat/schema-types`: osc-tap records a
+`types` tag string per event, the editor carries it through merge/export and
+encodes preview OSC by it. See [plan.md](plan.md); schema documented in the
+README.
 
 ## Problem
 

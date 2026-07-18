@@ -25,7 +25,7 @@ export function exportSession(
     })
   ]
   for (const e of events) {
-    lines.push(JSON.stringify({ t: e.t, port: e.port, a: e.a, args: e.args }))
+    lines.push(JSON.stringify({ t: e.t, port: e.port, a: e.a, types: e.types, args: e.args }))
   }
   lines.push(JSON.stringify({ type: 'session_end', t: duration }))
 

@@ -69,7 +69,7 @@ export class Preview {
     while (this.idx < this.events.length && this.events[this.idx].t <= pos + LOOKAHEAD_S) {
       const e = this.events[this.idx++]
       try {
-        this.sock.send(encodeOscMessage(e.a, e.args), this.targetPort, TARGET_HOST, (err) => {
+        this.sock.send(encodeOscMessage(e.a, e.args, e.types), this.targetPort, TARGET_HOST, (err) => {
           // Async failure: count every one, surface the first per playback.
           if (err && this.sendErrors++ === 0) {
             console.error(`preview send failed: ${err.message}`)

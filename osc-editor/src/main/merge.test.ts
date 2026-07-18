@@ -50,6 +50,22 @@ test('a t edit decides trim membership: moved out drops, moved in appears', () =
   expect(events[0].t).toBe(11) // offset + (1.5 - trimIn)
 })
 
+test('types survives merge; absent stays absent', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vtr-merge-'))
+  writeFileSync(
+    join(dir, 'e.jsonl'),
+    '{"t":0.5,"port":10000,"a":"/x","types":"fi","args":[0.5,2]}\n' +
+      '{"t":1.0,"port":10000,"a":"/y","args":[1]}\n'
+  )
+  const project: ProjectFile = {
+    version: 1,
+    tracks: [{ clips: [{ file: 'e.jsonl', offset: 0, trimIn: 0, trimOut: 5 }] }]
+  }
+  const { events } = mergeProject((f) => join(dir, f), project)
+  expect(events[0].types).toBe('fi')
+  expect('types' in events[1] && events[1].types !== undefined).toBe(false)
+})
+
 test('edits on added events merge like recorded ones', () => {
   const dir = mkdtempSync(join(tmpdir(), 'vtr-merge-'))
   writeFileSync(join(dir, 'd.jsonl'), '{"t":0.0,"port":10000,"a":"/x","args":[1]}\n')
