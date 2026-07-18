@@ -1,6 +1,6 @@
 # Plan: record OSC type tags in clip JSONL (`types` field)
 
-Status: planned. Task: [task.md](task.md).
+Status: done. Task: [task.md](task.md).
 
 ## Decision
 

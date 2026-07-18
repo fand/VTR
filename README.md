@@ -45,6 +45,29 @@ userData (`~/Library/Application Support/VTR/recordings/`) and move
 into the bundle on save. The control socket and undo log live in userData
 too — the editor writes nothing to its cwd.
 
+## JSONL schema
+
+Clip and `session.jsonl` event lines share one schema:
+
+```json
+{"t":0.5,"tl":12.3,"port":10000,"a":"/fader","types":"ff","args":[0.42,2.0]}
+```
+
+- `t` seconds from recording start; `tl` TD-timeline seconds (omitted when
+  unknown); `port` listen port; `a` OSC address.
+- `types` is the OSC type tag string without the leading `,`: one char per
+  `args` element (`f` f32, `d` f64, `i` int32, `h` int64, `s` string,
+  `r` color `"#rrggbbaa"`, `I` impulse `"<impulse>"`, `T`/`F` bool, `N` nil).
+  Replay scripts should encode by these tags, not by guessing from the JSON
+  value. Blob args are dropped at record time (no tag, no value).
+- An `h` arg beyond ±2^53 is written as a decimal **string** so JSON parsers
+  with f64 numbers can't round it; parse it back via the tag.
+- `types` is absent in clips recorded before the field existed and in
+  editor-added events; fall back to guessing (`i` if integral, else `f`).
+
+Session files wrap events in `{"type":"session_start",...}` /
+`{"type":"session_end","t":...}` marker lines.
+
 ## Process model
 
 osc-tap runs as a child process in dev. Packaged builds on macOS run it as a
