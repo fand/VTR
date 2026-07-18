@@ -7,16 +7,16 @@
 
 :root {
   --bg: #16181d;
-  --bg-raised: #1f2229;
+  --bg-raised: #1b1e24;
   --bg-lane: #1a1d23;
   --border: #2c313a;
   --text: #d7dae0;
   --text-dim: #8b919c;
-  --accent: #4da3ff;
+  --accent: #ddee00;
   --rec: #e5484d;
   --clip: #2c4a6e;
   --clip-border: #4da3ff;
-  --mono: ui-monospace, 'SF Mono', Menlo, monospace;
+  --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 }
 
 html,
@@ -28,7 +28,7 @@ body,
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: var(--mono);
   font-size: 13px;
   user-select: none;
 }
@@ -403,9 +403,59 @@ body {
   margin: 1px 0;
 }
 
+/* Panel-header tool buttons: flat squares, bg only on hover/active. */
+.tl-header .btn.small,
+.curve-header .btn.small,
+.add-track .btn.small {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: none;
+  border-color: transparent;
+}
+
+.tl-header .btn.small:hover:not(:disabled),
+.curve-header .btn.small:hover:not(:disabled),
+.add-track .btn.small:hover:not(:disabled) {
+  background: #2e333d;
+}
+
+/* Add Track spans the whole label column, "+" centered. */
+.add-track .btn.small {
+  width: 100%;
+}
+
+/* Keep the accent bg when hovering an active toggle. */
+.tl-header .btn.snap.active:hover,
+.curve-header .btn.snap.active:hover {
+  background: var(--accent);
+}
+
+/* shadcn-style slider: white thumb on an accent/muted split track.
+   --val (set inline from React) is the fill percentage. */
 .zoom-slider {
+  -webkit-appearance: none;
+  appearance: none;
   width: 140px;
-  accent-color: var(--accent);
+  height: 16px;
+  background: none;
+  cursor: pointer;
+}
+
+.zoom-slider::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(to right, var(--accent) var(--val, 50%), #3a3f4a var(--val, 50%));
+}
+
+.zoom-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -4px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
 }
 
 .zoom-slider.curve-zoom {
@@ -421,7 +471,7 @@ body {
 .btn.snap.active {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: #111;
 }
 
 /* Above the sticky ruler (z 20) so the head shows inside it. */
@@ -430,7 +480,7 @@ body {
   top: 0;
   bottom: 0;
   width: 1px;
-  background: #ffd24d;
+  background: var(--accent);
   z-index: 21;
   pointer-events: none;
 }
@@ -442,7 +492,7 @@ body {
   width: 11px;
   height: 10px;
   margin-left: -5px;
-  background: #ffd24d;
+  background: var(--accent);
   clip-path: polygon(0 0, 100% 0, 50% 100%);
 }
 
@@ -735,7 +785,7 @@ body {
 
 .ctx-menu button:hover:not(:disabled) {
   background: var(--accent);
-  color: #fff;
+  color: #111;
 }
 
 .ctx-menu button:disabled {
@@ -787,9 +837,9 @@ body {
   cursor: ns-resize;
   touch-action: none;
   z-index: 25;
-  background: #262a32;
-  border-top: 1px solid #3d4450;
-  border-bottom: 1px solid #3d4450;
+  background: #1b1e24;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -800,7 +850,7 @@ body {
   width: 48px;
   height: 3px;
   border-radius: 2px;
-  background: #4d5666;
+  background: #3a404c;
 }
 
 .panel-splitter:hover,
@@ -988,14 +1038,14 @@ body {
 
 .tl-marquee {
   position: absolute;
-  background: rgba(77, 163, 255, 0.15);
+  background: rgba(221, 238, 0, 0.12);
   border: 1px dashed var(--accent);
   pointer-events: none;
   z-index: 12;
 }
 
 .curve-marquee {
-  fill: rgba(77, 163, 255, 0.15);
+  fill: rgba(221, 238, 0, 0.12);
   stroke: var(--accent);
   stroke-dasharray: 3 2;
   pointer-events: none;
@@ -1013,7 +1063,7 @@ body {
 }
 
 .curve-xform-box {
-  fill: rgba(77, 163, 255, 0.06);
+  fill: rgba(221, 238, 0, 0.06);
   stroke: var(--accent);
   pointer-events: none;
 }
@@ -1054,4 +1104,3 @@ body {
   color: var(--text-dim);
   font-size: 12px;
 }
-

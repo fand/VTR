@@ -1043,6 +1043,7 @@ export function CurvePanel({
           max={100}
           step={1}
           value={zoomToSlider(zoomX)}
+          style={{ '--val': `${zoomToSlider(zoomX)}%` } as React.CSSProperties}
           aria-label="x zoom"
           onChange={(e) => setZoomX(sliderToZoom(Number(e.target.value)))}
         />
@@ -1054,6 +1055,7 @@ export function CurvePanel({
           max={100}
           step={1}
           value={zoomToSlider(zoomY)}
+          style={{ '--val': `${zoomToSlider(zoomY)}%` } as React.CSSProperties}
           aria-label="y zoom"
           onChange={(e) => setZoomY(sliderToZoom(Number(e.target.value)))}
         />

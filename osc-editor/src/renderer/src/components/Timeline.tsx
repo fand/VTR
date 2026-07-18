@@ -130,7 +130,11 @@ export function EditableLabel({
   const cancelled = useRef(false)
   if (!editing) {
     return (
-      <span className="editable-label" data-tip="double-click to rename" onDoubleClick={onEditStart}>
+      <span
+        className="editable-label"
+        data-tip="double-click to rename"
+        onDoubleClick={onEditStart}
+      >
         {value ?? placeholder}
       </span>
     )
@@ -615,6 +619,7 @@ export function Timeline({
           max={100}
           step={1}
           value={zoomToSlider(pxPerSec, minPxPerSec)}
+          style={{ '--val': `${zoomToSlider(pxPerSec, minPxPerSec)}%` } as React.CSSProperties}
           aria-label="zoom"
           onChange={(e) => onPxPerSecChange(sliderToZoom(Number(e.target.value), minPxPerSec))}
         />
@@ -850,10 +855,12 @@ export function Timeline({
           <div className="add-track">
             <button
               className="btn small"
+              data-tip="Add Track"
+              aria-label="add track"
               onPointerDown={(e) => e.stopPropagation()}
               onClick={onAddTrack}
             >
-              + Track
+              +
             </button>
           </div>
 

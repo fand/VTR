@@ -26,6 +26,7 @@
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
+    "@fontsource/ibm-plex-mono": "5.2.7",
     "immer": "11.1.11",
     "lucide-react": "1.24.0"
   },

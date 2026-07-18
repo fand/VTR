@@ -229,7 +229,7 @@ test('boot: no CLI arg → empty project; broken arg → error + empty project',
   const page2 = await app2.firstWindow()
   await expect(page2.locator('.error-banner')).toContainText('failed to open project')
   await expect(page2.locator('.track')).toHaveCount(0)
-  await page2.getByRole('button', { name: '+ Track' }).click()
+  await page2.getByRole('button', { name: 'add track' }).click()
   await expect(page2.locator('.track')).toHaveCount(1)
   await expect.poll(() => page2.title()).toBe('VTR (edited)')
   await app2.close()
@@ -238,8 +238,8 @@ test('boot: no CLI arg → empty project; broken arg → error + empty project',
 test('tracks can be added and deleted without clips', async () => {
   const { app, page, workdir } = await launchApp()
   try {
-    await page.getByRole('button', { name: '+ Track' }).click()
-    await page.getByRole('button', { name: '+ Track' }).click()
+    await page.getByRole('button', { name: 'add track' }).click()
+    await page.getByRole('button', { name: 'add track' }).click()
     await expect(page.locator('.track')).toHaveCount(2)
     await save(page)
     await expect.poll(() => readProject(workdir).tracks.length).toBe(2)
