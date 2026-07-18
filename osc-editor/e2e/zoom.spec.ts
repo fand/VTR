@@ -163,8 +163,11 @@ test('curve editor x/y zoom sliders scale the axes; y zoom scrolls vertically', 
       page.locator('.curve-scroll').evaluate((el) => el.scrollHeight - el.clientHeight)
     expect(await overflow()).toBeGreaterThan(100)
 
-    // Back to 1×: no vertical overflow.
+    // Back to 1×: no vertical overflow. Reset x too — on machines with
+    // always-visible scrollbars (e.g. mouseless CI runners) a horizontal
+    // bar would eat ~15px of clientHeight and read as vertical overflow.
     await page.getByLabel('y zoom').fill('0')
+    await page.getByLabel('x zoom').fill('0')
     await expect.poll(overflow).toBeLessThanOrEqual(1)
   } finally {
     await app.close()
