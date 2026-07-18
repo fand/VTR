@@ -7,3 +7,6 @@ undo.jsonl
 session.jsonl
 project.json
 test-results/
+.venv/
+.pytest_cache/
+__pycache__/
