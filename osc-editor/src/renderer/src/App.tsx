@@ -496,7 +496,8 @@ function App(): React.JSX.Element {
     setBusy(true)
     try {
       if (recording) {
-        const summary = await window.api.tap.stop(recording.path)
+        await window.api.tap.stop()
+        const summary = await window.api.clip.summary(recording.path)
         const track: TrackState = {
           id: newId(),
           clips: [

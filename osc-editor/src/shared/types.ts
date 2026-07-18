@@ -12,7 +12,28 @@ export interface TapStatus {
   /** First write failure since the current clip started (latched). */
   write_error: string | null
   write_errors: number
+  /** Seconds since the current clip started; null when idle. */
+  rec_t: number | null
+  /** Most recently finished clip (absolute path). */
+  last_clip: string | null
 }
+
+/** Recording transition from osc-tap's event log. */
+export type TapEvent =
+  | { ev: 'rec_started'; clip: string; tl?: number }
+  | { ev: 'rec_stopped'; clip: string }
+
+/** Reply to the control-socket wait cmd. */
+export interface TapWaitReply {
+  seq: number
+  events: TapEvent[]
+  /** Cursor unusable (overflow/tap restart) or baseline: re-apply `status`. */
+  reset?: boolean
+  status?: TapStatus
+}
+
+/** What main forwards to the renderer on the tap:event channel. */
+export type TapPush = { type: 'event'; event: TapEvent } | { type: 'reset'; status: TapStatus }
 
 /** One OSC event line in a clip/session JSONL file. */
 export interface OscEvent {

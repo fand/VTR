@@ -3,12 +3,22 @@ import { mkdirSync, rmSync, writeFileSync } from 'fs'
 import net from 'net'
 import { homedir } from 'os'
 import { dirname, join } from 'path'
-import { DEFAULT_PORTS, type PortConfig, type TapStatus } from '../shared/types'
+import {
+  DEFAULT_PORTS,
+  type PortConfig,
+  type TapEvent,
+  type TapStatus,
+  type TapWaitReply
+} from '../shared/types'
 
 const REQUEST_TIMEOUT_MS = 3000
 const CONNECT_DEADLINE_MS = 5000
 const RESPAWN_DELAY_MS = 1000
 const RESPAWN_DELAY_MAX_MS = 10_000
+/** Above the tap's 25s server-side wait timeout: quiet waits return empty. */
+const WAIT_TIMEOUT_MS = 30_000
+const WAIT_RETRY_MS = 500
+const WAIT_RETRY_MAX_MS = 5000
 
 /**
  * child: osc-tap is our child process; we respawn it on crash.
@@ -47,6 +57,8 @@ export class TapManager {
   private restarting = false
   private respawnDelay = RESPAWN_DELAY_MS
   private spawnedAt = 0
+  /** Bumped on every dropped connection; wait cursors from before are stale. */
+  private dropGen = 0
 
   private _ports: PortConfig
 
@@ -230,9 +242,47 @@ ${programArgs}
     return r.status as unknown as TapStatus
   }
 
+  /**
+   * Long-poll loop over the tap's event log. Baselines on every connection —
+   * `since` never survives a disconnect, because seq is per-process: a
+   * restarted tap could otherwise replay old events or serve another epoch's
+   * seqs as a continuation. Retries forever while the tap is down.
+   */
+  async runEventLoop(
+    onEvent: (event: TapEvent) => void,
+    onReset: (status: TapStatus) => void
+  ): Promise<void> {
+    let since: number | null = null
+    let sinceGen = -1
+    let backoff = WAIT_RETRY_MS
+    while (!this.stopping) {
+      if (sinceGen !== this.dropGen) since = null
+      const gen = this.dropGen
+      try {
+        const r = (await this.request(
+          'wait',
+          since == null ? undefined : { since },
+          WAIT_TIMEOUT_MS
+        )) as unknown as TapWaitReply
+        backoff = WAIT_RETRY_MS
+        // Reply raced a disconnect: its seq may belong to a dead process.
+        if (this.dropGen !== gen) continue
+        if (r.reset && r.status) onReset(r.status)
+        for (const e of r.events ?? []) onEvent(e)
+        since = r.seq
+        sinceGen = gen
+      } catch {
+        if (this.stopping) return
+        await new Promise((res) => setTimeout(res, backoff))
+        backoff = Math.min(backoff * 2, WAIT_RETRY_MAX_MS)
+      }
+    }
+  }
+
   private async request(
     cmd: string,
-    extra?: Record<string, unknown>
+    extra?: Record<string, unknown>,
+    timeoutMs = this.requestTimeoutMs
   ): Promise<Record<string, unknown>> {
     const sock = await this.connect()
     const id = this.nextId++
@@ -250,7 +300,7 @@ ${programArgs}
         timer: setTimeout(() => {
           this.pending.delete(id)
           reject(new Error(`osc-tap ${cmd}: timed out`))
-        }, this.requestTimeoutMs)
+        }, timeoutMs)
       }
       this.pending.set(id, entry)
       sock.write(JSON.stringify({ id, cmd, ...extra }) + '\n')
@@ -320,6 +370,7 @@ ${programArgs}
   }
 
   private dropConnection(err: Error): void {
+    this.dropGen++
     this.sock?.destroy()
     this.sock = null
     this.buf = ''
