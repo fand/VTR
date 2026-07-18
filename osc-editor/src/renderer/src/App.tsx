@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Circle, Pause, Play, Square } from 'lucide-react'
 import {
   DEFAULT_DURATION,
@@ -191,9 +191,11 @@ function FileMenu({
   exportDisabled: boolean
 }): React.JSX.Element {
   const [open, setOpen] = useState(false)
+  const [recents, setRecents] = useState<{ path: string; label: string }[]>([])
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!open) return
+    window.api.recents.list().then(setRecents)
     const onDown = (e: PointerEvent): void => {
       if (!ref.current?.contains(e.target as Node)) setOpen(false)
     }
@@ -226,11 +228,109 @@ function FileMenu({
       {open && (
         <div className="file-menu-dropdown">
           {item('Open…', '⌘O', onOpen)}
+          <div className="file-menu-sub">
+            <div className="file-menu-item">
+              <span>Open Recent</span>
+              <span className="file-menu-shortcut">▸</span>
+            </div>
+            <div className="file-menu-dropdown file-menu-flyout">
+              {recents.map((r) => (
+                <button
+                  key={r.path}
+                  className="file-menu-item"
+                  onClick={() => {
+                    setOpen(false)
+                    window.api.recents.open(r.path)
+                  }}
+                >
+                  <span>{r.label}</span>
+                </button>
+              ))}
+              {recents.length > 0 && <div className="file-menu-separator" />}
+              {item(
+                'Clear Menu',
+                '',
+                () => {
+                  window.api.recents.clear()
+                },
+                recents.length === 0
+              )}
+            </div>
+          </div>
           {item('Save', '⌘S', onSave)}
           {item('Save As…', '⇧⌘S', onSaveAs)}
           {item('Export', '', onExport, exportDisabled)}
         </div>
       )}
+    </div>
+  )
+}
+
+const TOOLTIP_DELAY_MS = 500
+
+/**
+ * Singleton hover tooltip for [data-tip] elements. Replaces native title=
+ * tooltips, whose ~1s delay can't be configured.
+ */
+function TooltipLayer(): React.JSX.Element | null {
+  const [tip, setTip] = useState<{ text: string; x: number; top: number; bottom: number } | null>(
+    null
+  )
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    let timer = 0
+    let current: Element | null = null
+    const hide = (): void => {
+      window.clearTimeout(timer)
+      current = null
+      setTip(null)
+    }
+    const onOver = (e: PointerEvent): void => {
+      const el = (e.target as Element | null)?.closest?.('[data-tip]') ?? null
+      if (el === current) return
+      window.clearTimeout(timer)
+      setTip(null)
+      current = el
+      if (!el) return
+      timer = window.setTimeout(() => {
+        // Read at show time: warning tips change while hovered.
+        const text = (el as HTMLElement).dataset.tip
+        if (!text) return
+        const r = el.getBoundingClientRect()
+        setTip({ text, x: r.left + r.width / 2, top: r.top, bottom: r.bottom })
+      }, TOOLTIP_DELAY_MS)
+    }
+    const onOut = (e: PointerEvent): void => {
+      // Left the window entirely; element-to-element moves go through onOver.
+      if (e.relatedTarget == null) hide()
+    }
+    document.addEventListener('pointerover', onOver)
+    document.addEventListener('pointerout', onOut)
+    document.addEventListener('pointerdown', hide, true)
+    document.addEventListener('scroll', hide, true)
+    return () => {
+      window.clearTimeout(timer)
+      document.removeEventListener('pointerover', onOver)
+      document.removeEventListener('pointerout', onOut)
+      document.removeEventListener('pointerdown', hide, true)
+      document.removeEventListener('scroll', hide, true)
+    }
+  }, [])
+  // Position after render: the box size is unknown until the text is laid out.
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el || !tip) return
+    const left = Math.min(Math.max(tip.x - el.offsetWidth / 2, 4), window.innerWidth - el.offsetWidth - 4)
+    const below = tip.bottom + 6
+    const top =
+      below + el.offsetHeight > window.innerHeight - 4 ? tip.top - el.offsetHeight - 6 : below
+    el.style.left = `${left}px`
+    el.style.top = `${top}px`
+  }, [tip])
+  if (!tip) return null
+  return (
+    <div className="app-tooltip" role="tooltip" ref={ref}>
+      {tip.text}
     </div>
   )
 }
@@ -443,14 +543,20 @@ function App(): React.JSX.Element {
   useEffect(() => window.api.project.onOpenPath(openPath), [openPath])
 
   // Window title: "VTR - <file> (edited)"; parts drop off when there is
-  // no open file / no unsaved change. The macOS proxy icon (via setFile)
-  // carries the full path and the native edited dot.
+  // no open file / no unsaved change. macOS hides the native bar (custom
+  // title bar) but the title still names the window in Mission Control;
+  // setFile keeps the edited dot on the close button.
   const dirty = history.seq !== savedState.seq || ports !== savedState.ports
+  const fileName = projectFile?.split(/[\\/]/).pop()
   useEffect(() => {
-    const name = projectFile?.split(/[\\/]/).pop()
-    document.title = `VTR${name ? ` - ${name}` : ''}${dirty ? ' (edited)' : ''}`
+    document.title = `VTR${fileName ? ` - ${fileName}` : ''}${dirty ? ' (edited)' : ''}`
     window.api.window.setFile(projectFile ?? null, dirty)
-  }, [projectFile, dirty])
+  }, [projectFile, fileName, dirty])
+
+  // macOS layout: the header is the drag region and clears the traffic lights.
+  useEffect(() => {
+    document.body.classList.toggle('mac', window.api.platform === 'darwin')
+  }, [])
 
   // File menu actions + a keydown fallback for synthetic input (e2e), same
   // pattern as undo/redo below.
@@ -1211,6 +1317,11 @@ function App(): React.JSX.Element {
                 onExport={doExport}
                 exportDisabled={tracks.length === 0 || !!recording}
               />
+              {/* The hidden native title bar used to carry these. */}
+              <span className="header-file">
+                {fileName ?? 'Untitled'}
+                {dirty && ' •'}
+              </span>
             </div>
             <div className="header-duration">
               <NumField
@@ -1246,7 +1357,7 @@ function App(): React.JSX.Element {
             onClick={toggleRecord}
             disabled={busy}
             aria-label={recording ? 'Stop' : 'Rec'}
-            title={recording ? 'Stop' : 'Rec'}
+            data-tip={recording ? 'Stop' : 'Rec'}
           >
             {recording ? (
               <Square size={14} fill="currentColor" />
@@ -1259,7 +1370,7 @@ function App(): React.JSX.Element {
             onClick={togglePlay}
             disabled={busy || !!recording || tracks.length === 0}
             aria-label={playing ? 'Pause' : 'Play'}
-            title={playing ? 'Pause' : 'Play'}
+            data-tip={playing ? 'Pause' : 'Play'}
           >
             {playing ? (
               <Pause size={14} fill="currentColor" />
@@ -1289,13 +1400,13 @@ function App(): React.JSX.Element {
               parse={parsePort}
               onCommit={(forward) => changePorts({ ...ports, forward })}
             />
-            <span className="stat divider" title="osc-tap process status">
+            <span className="stat divider" data-tip="osc-tap process status">
               <span>tap:</span>
               <span className={statusError ? 'bad' : status ? 'ok' : ''}>
                 {statusError ? 'off' : status ? 'on' : '…'}
               </span>
             </span>
-            <span className="stat" title="incoming OSC packets per second">
+            <span className="stat" data-tip="incoming OSC packets per second">
               <span>recv:</span>
               <span>
                 {status == null || rxRate == null
@@ -1315,7 +1426,7 @@ function App(): React.JSX.Element {
             <span />
             <span
               className="stat divider"
-              title={
+              data-tip={
                 status?.beacon_tl != null
                   ? `tl=${status.beacon_tl.toFixed(2)}s` +
                     (status.beacon_rate === 0
@@ -1334,7 +1445,7 @@ function App(): React.JSX.Element {
             </span>
             <span
               className={status != null && status.dropped > 0 ? 'stat bad' : 'stat'}
-              title="packets lost to writer backlog since this clip started"
+              data-tip="packets lost to writer backlog since this clip started"
             >
               <span>drop:</span>
               <span>{status?.dropped ?? '–'}</span>
@@ -1419,6 +1530,7 @@ function App(): React.JSX.Element {
         onPointEdit={onPointEdit}
         onPointAdd={onPointAdd}
       />
+      <TooltipLayer />
     </div>
   )
 }

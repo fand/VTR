@@ -1009,7 +1009,7 @@ export function CurvePanel({
       <div className="curve-header">
         <button
           className={snap ? 'btn small snap active' : 'btn small snap'}
-          title="snap point edits to the grid"
+          data-tip="Snap"
           aria-label="snap"
           aria-pressed={snap}
           onClick={() => setSnap((s) => !s)}
@@ -1018,7 +1018,7 @@ export function CurvePanel({
         </button>
         <button
           className={useBox ? 'btn small snap active' : 'btn small snap'}
-          title="show a transform box around multi-selected points"
+          data-tip="Transform Box"
           aria-label="box"
           aria-pressed={useBox}
           onClick={() => setUseBox((b) => !b)}
@@ -1027,7 +1027,7 @@ export function CurvePanel({
         </button>
         <button
           className={pencil ? 'btn small snap active' : 'btn small snap'}
-          title="pencil: click in the editor adds points to the selected curve"
+          data-tip="Pencil tool"
           aria-label="pencil"
           aria-pressed={pencil}
           onClick={() => setPencil((p) => !p)}

@@ -59,7 +59,7 @@ test('clip with a lossy summary line loads with a persistent warning', async () 
     // The summary line itself must not count as an event.
     await expect(page.locator('.clip-meta')).toContainText('2 ev')
     await expect(clip).toHaveAttribute(
-      'title',
+      'data-tip',
       'recording lost data: 3 dropped, 1 write failure — disk full'
     )
   } finally {

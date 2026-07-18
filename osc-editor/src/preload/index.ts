@@ -48,6 +48,13 @@ const api = {
       return () => ipcRenderer.removeListener('project:openPath', listener)
     }
   },
+  recents: {
+    /** Recent projects, most recent first, with display labels. */
+    list: (): Promise<{ path: string; label: string }[]> => ipcRenderer.invoke('recents:list'),
+    /** Open a recent project (must be a path from list()). */
+    open: (path: string): Promise<void> => ipcRenderer.invoke('recents:open', path),
+    clear: (): Promise<void> => ipcRenderer.invoke('recents:clear')
+  },
   session: {
     /** Resolves null when the user cancels the save dialog. */
     export: (project: ProjectFile): Promise<ExportResult | null> =>
@@ -87,7 +94,9 @@ const api = {
     /** Quit prompt chose Save and the save succeeded: finish closing. */
     confirmClose: (): Promise<void> => ipcRenderer.invoke('window:confirmClose')
   },
-  workdir: (): Promise<string> => ipcRenderer.invoke('app:workdir')
+  workdir: (): Promise<string> => ipcRenderer.invoke('app:workdir'),
+  /** Renderer layout depends on it (macOS traffic-light inset). */
+  platform: process.platform
 }
 
 export type Api = typeof api

@@ -155,6 +155,9 @@ function createWindow(): void {
     height: 700,
     show: false,
     autoHideMenuBar: true,
+    // Custom title bar: the renderer header doubles as the drag region;
+    // traffic lights stay (inset), the native bar goes away.
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const } : {}),
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -353,6 +356,20 @@ app.whenReady().then(() => {
   ipcMain.handle('clip:summary', (_e, path: string) => clipSummary(ensureWithin(clipRoots(), path)))
   ipcMain.handle('tap:setPorts', (_e, ports: PortConfig) => requireTap().setPorts(ports))
   ipcMain.handle('app:workdir', () => workdir)
+  // In-window File menu mirrors the app menu's Open Recent.
+  ipcMain.handle('recents:list', () =>
+    loadRecents(dataDir).map((p) => ({ path: p, label: recentLabel(p) }))
+  )
+  // Only paths already in the recents list may be opened: opening grants the
+  // path, and a compromised renderer must not mint grants for arbitrary files.
+  ipcMain.handle('recents:open', (_e, path: string) => {
+    if (!loadRecents(dataDir).includes(path)) throw new Error(`not a recent project: ${path}`)
+    openRecent(path)
+  })
+  ipcMain.handle('recents:clear', () => {
+    clearRecents(dataDir)
+    installMenu()
+  })
   // macOS: proxy icon in the title bar carries the full path; the edited
   // state shows as a dot on the close button. No-ops on other platforms.
   ipcMain.handle('window:setFile', (e, path: string | null, dirty: boolean) => {

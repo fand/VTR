@@ -48,6 +48,23 @@ body {
   border-bottom: 1px solid var(--border);
 }
 
+/* macOS custom title bar: the native bar is hidden (titleBarStyle:
+   hiddenInset), the header doubles as the drag region, and the left
+   padding clears the inset traffic lights. */
+.mac .header {
+  -webkit-app-region: drag;
+  padding-left: 84px;
+}
+
+/* Interactive header controls must not start a window drag — and a drag
+   region swallows pointer events, which would also kill their tooltips. */
+.mac .header button,
+.mac .header input,
+.mac .header .file-menu,
+.mac .header .status-grid {
+  -webkit-app-region: no-drag;
+}
+
 /* Equal-flex side groups keep .header-center truly centered. */
 .header-left,
 .header-right {
@@ -96,6 +113,13 @@ body {
   font-family: var(--mono);
   font-weight: 700;
   color: var(--text-dim);
+}
+
+/* Open file name (+ dirty dot); replaces the hidden native title bar. */
+.header-file {
+  color: var(--text-dim);
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .file-menu {
@@ -159,6 +183,42 @@ body {
   color: var(--text-dim);
   font-family: var(--mono);
   font-size: 11px;
+}
+
+/* Open Recent: a hover flyout to the right of its row. */
+.file-menu-sub {
+  position: relative;
+}
+
+.file-menu-sub > .file-menu-item {
+  cursor: default;
+}
+
+.file-menu-sub:hover > .file-menu-item {
+  background: #2e333d;
+}
+
+.file-menu-flyout {
+  display: none;
+  top: -5px; /* line the first item up with the parent row (padding + border) */
+  left: 100%;
+  max-width: 320px;
+}
+
+.file-menu-sub:hover .file-menu-flyout {
+  display: block;
+}
+
+.file-menu-flyout .file-menu-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-menu-separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
 }
 
 .timecode {
@@ -684,7 +744,7 @@ body {
 }
 
 /* The recording lost data (dropped packets / write failures). The border
-   stays warning-colored even when selected; details in the title tooltip. */
+   stays warning-colored even when selected; details in the hover tooltip. */
 .clip.warn {
   border-color: #e0a93e;
 }
@@ -907,6 +967,22 @@ body {
   paint-order: stroke;
   stroke: rgba(12, 13, 16, 0.85);
   stroke-width: 3px;
+  pointer-events: none;
+}
+
+/* Hover tooltip for [data-tip] elements (TooltipLayer positions it). */
+.app-tooltip {
+  position: fixed;
+  z-index: 1000;
+  max-width: 320px;
+  padding: 3px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
   pointer-events: none;
 }
 

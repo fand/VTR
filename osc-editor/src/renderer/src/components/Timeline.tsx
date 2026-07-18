@@ -130,7 +130,7 @@ export function EditableLabel({
   const cancelled = useRef(false)
   if (!editing) {
     return (
-      <span className="editable-label" title="double-click to rename" onDoubleClick={onEditStart}>
+      <span className="editable-label" data-tip="double-click to rename" onDoubleClick={onEditStart}>
         {value ?? placeholder}
       </span>
     )
@@ -575,7 +575,7 @@ export function Timeline({
       <div className="tl-header">
         <button
           className="btn small"
-          title="add marker at playhead"
+          data-tip="Add Marker"
           aria-label="add marker"
           onClick={onAddMarker}
         >
@@ -583,7 +583,7 @@ export function Timeline({
         </button>
         <button
           className={snap ? 'btn small snap active' : 'btn small snap'}
-          title="snap clip move/trim to other clips' edges"
+          data-tip="Snap"
           aria-label="snap"
           aria-pressed={snap}
           onClick={() => setSnap((s) => !s)}
@@ -594,7 +594,7 @@ export function Timeline({
           className="btn small"
           onClick={onAlign}
           disabled={!canAlign}
-          title="place clips at their TD timeline position (tl)"
+          data-tip="Align with clock"
           aria-label="align clips"
         >
           <AlignStartVertical size={14} />
@@ -603,7 +603,7 @@ export function Timeline({
         <button
           className="btn small"
           onClick={() => onZoom(1 / 1.5)}
-          title="zoom out"
+          data-tip="zoom out"
           aria-label="zoom out"
         >
           <ZoomOut size={14} />
@@ -621,7 +621,7 @@ export function Timeline({
         <button
           className="btn small"
           onClick={() => onZoom(1.5)}
-          title="zoom in"
+          data-tip="zoom in"
           aria-label="zoom in"
         >
           <ZoomIn size={14} />
@@ -746,7 +746,7 @@ export function Timeline({
                 />
                 <button
                   className="track-del"
-                  title="delete track"
+                  data-tip="delete track"
                   aria-label={`delete track ${trackIdx + 1}`}
                   onPointerDown={(e) => e.stopPropagation()}
                   onClick={(e) => {
@@ -771,7 +771,7 @@ export function Timeline({
                   return (
                     <div
                       key={clip.id}
-                      title={warning ?? undefined}
+                      data-tip={warning ?? undefined}
                       className={
                         'clip' +
                         (selectedIds.includes(clip.id) ? ' selected' : '') +
@@ -834,7 +834,7 @@ export function Timeline({
               <div className="track-lane" style={{ width: widthPx }}>
                 <div
                   className={'clip recording' + (recordingRow.warning != null ? ' warn' : '')}
-                  title={recordingRow.warning ?? undefined}
+                  data-tip={recordingRow.warning ?? undefined}
                   style={{ left: 0, width: 160 }}
                 >
                   <span className="clip-name">recording…</span>
