@@ -57,7 +57,7 @@ test('edits sidecar: applied on export, survives save round-trip', async () => {
 
     await page.getByRole('button', { name: 'File' }).click()
     await page.getByRole('button', { name: 'Export' }).click()
-    await expect(page.locator('.info-banner')).toContainText('exported')
+    await expect(page.locator('.sb-log')).toContainText('Exported')
 
     // set(args), set(t) + re-sort, and del are all visible in the export.
     const lines = readFileSync(join(workdir, 'session.jsonl'), 'utf8')

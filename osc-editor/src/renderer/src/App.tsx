@@ -320,7 +320,10 @@ function TooltipLayer(): React.JSX.Element | null {
   useLayoutEffect(() => {
     const el = ref.current
     if (!el || !tip) return
-    const left = Math.min(Math.max(tip.x - el.offsetWidth / 2, 4), window.innerWidth - el.offsetWidth - 4)
+    const left = Math.min(
+      Math.max(tip.x - el.offsetWidth / 2, 4),
+      window.innerWidth - el.offsetWidth - 4
+    )
     const below = tip.bottom + 6
     const top =
       below + el.offsetHeight > window.innerHeight - 4 ? tip.top - el.offsetHeight - 6 : below
@@ -333,6 +336,34 @@ function TooltipLayer(): React.JSX.Element | null {
       {tip.text}
     </div>
   )
+}
+
+/**
+ * Bottom status bar. Left: cursor time on the timeline, selection.
+ * Right: the latest event log line (last action, transport, file ops).
+ */
+function StatusBar({
+  hoverTime,
+  selection,
+  log
+}: {
+  hoverTime: number | null
+  selection: string | null
+  log: string | null
+}): React.JSX.Element {
+  return (
+    <footer className="status-bar">
+      <span className="sb-time">{hoverTime != null ? formatTimecode(hoverTime) : ''}</span>
+      {selection && <span>{selection}</span>}
+      <span className="spacer" />
+      {log && <span className="sb-log">{log}</span>}
+    </footer>
+  )
+}
+
+/** "3 clips", "1 point" — count + pluralized noun for log lines. */
+function count(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? '' : 's'}`
 }
 
 /** True when a keyboard event comes from a text field; global shortcuts must ignore it. */
@@ -360,7 +391,8 @@ function App(): React.JSX.Element {
   const [rxRate, setRxRate] = useState<number | null>(null)
   const lastRx = useRef<{ received: number; at: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [info, setInfo] = useState<string | null>(null)
+  /** Latest event log line, shown at the right end of the status bar. */
+  const [log, setLog] = useState<string | null>(null)
   // Async preview socket/send failures from main land in the error banner.
   useEffect(() => window.api.preview.onError(setError), [])
   const [busy, setBusy] = useState(false)
@@ -395,10 +427,15 @@ function App(): React.JSX.Element {
     setSelectedPoints([])
   }, [])
 
+  const onHistoryLog = useCallback((kind: 'commit' | 'undo' | 'redo', label: string): void => {
+    setLog(kind === 'commit' ? label : `${kind === 'undo' ? 'Undo' : 'Redo'}: ${label}`)
+  }, [])
+
   const history = useHistory(
     { tracks: [], markers: [], duration: DEFAULT_DURATION, edits: {} },
     onRestore,
-    setError
+    setError,
+    onHistoryLog
   )
   const { reset, transient, commit, abortTransient, undo, redo } = history
   const { tracks, markers, duration, edits } = history.doc
@@ -487,6 +524,7 @@ function App(): React.JSX.Element {
       )
       setProjectFile(path)
       setSavedState({ seq: history.seq, ports })
+      setLog(`Saved ${path.split(/[\\/]/).pop()}`)
     },
     [tracks, markers, ports, duration, edits, history.seq]
   )
@@ -520,8 +558,9 @@ function App(): React.JSX.Element {
       try {
         const res = await window.api.project.loadPath(path)
         // The bundle carries its own undo log; restore it like boot does.
-        const log = await window.api.undo.load()
-        applyLoaded(res.path, res.project, log)
+        const undoLog = await window.api.undo.load()
+        applyLoaded(res.path, res.project, undoLog)
+        setLog(`Opened ${res.path.split(/[\\/]/).pop()}`)
       } catch (e) {
         setError((e as Error).message)
       }
@@ -667,7 +706,7 @@ function App(): React.JSX.Element {
             })
           ]
         }
-        commit('record clip', (d) => {
+        commit(`Recorded ${summary.name} (${summary.duration.toFixed(1)}s)`, (d) => {
           d.tracks.push(track)
         })
       } catch (e) {
@@ -711,8 +750,10 @@ function App(): React.JSX.Element {
         setRecording((prev) =>
           prev && prev.path === e.clip ? prev : { path: e.clip, startedAt: performance.now() }
         )
+        setLog('Record started')
       } else {
         setRecording(null)
+        setLog('Record stopped')
         void maybeImportClip(e.clip)
       }
     })
@@ -763,7 +804,7 @@ function App(): React.JSX.Element {
   const onTracksChange = useCallback(
     (next: TrackState[], isCommit: boolean) => {
       if (isCommit) {
-        commit('edit clips', (d) => {
+        commit('Clips edited', (d) => {
           d.tracks = next
         })
       } else {
@@ -777,21 +818,21 @@ function App(): React.JSX.Element {
 
   const addTrack = useCallback(() => {
     const id = newId()
-    commit('add track', (d) => {
+    commit('Track added', (d) => {
       d.tracks.push({ id, clips: [] })
     })
   }, [commit, newId])
 
   const addMarker = useCallback(() => {
     const id = newId()
-    commit('add marker', (d) => {
+    commit('Marker added', (d) => {
       d.markers.push({ id, time: playhead })
     })
   }, [commit, newId, playhead])
 
   const renameMarker = useCallback(
     (markerId: number, label: string) => {
-      commit('rename marker', (d) => {
+      commit('Marker renamed', (d) => {
         const m = d.markers.find((m) => m.id === markerId)
         if (!m) return
         if (label) m.label = label
@@ -805,7 +846,7 @@ function App(): React.JSX.Element {
   const onMarkersChange = useCallback(
     (next: MarkerState[], isCommit: boolean) => {
       if (isCommit) {
-        commit('move marker', (d) => {
+        commit('Marker moved', (d) => {
           d.markers = next
         })
       } else {
@@ -819,7 +860,7 @@ function App(): React.JSX.Element {
 
   const deleteMarker = useCallback(
     (markerId: number) => {
-      commit('delete marker', (d) => {
+      commit('Marker deleted', (d) => {
         d.markers = d.markers.filter((m) => m.id !== markerId)
       })
     },
@@ -828,7 +869,7 @@ function App(): React.JSX.Element {
 
   const deleteTrack = useCallback(
     (trackId: number) => {
-      commit('delete track', (d) => {
+      commit('Track deleted', (d) => {
         d.tracks = d.tracks.filter((t) => t.id !== trackId)
       })
       setSelectedIds([])
@@ -840,7 +881,7 @@ function App(): React.JSX.Element {
 
   const renameTrack = useCallback(
     (trackId: number, name: string) => {
-      commit('rename track', (d) => {
+      commit('Track renamed', (d) => {
         const t = d.tracks.find((t) => t.id === trackId)
         if (!t) return
         if (name) t.name = name
@@ -852,7 +893,7 @@ function App(): React.JSX.Element {
 
   const renameClip = useCallback(
     (clipId: number, name: string) => {
-      commit('rename clip', (d) => {
+      commit('Clip renamed', (d) => {
         for (const t of d.tracks) {
           const c = t.clips.find((c) => c.id === clipId)
           if (c) {
@@ -874,6 +915,7 @@ function App(): React.JSX.Element {
       if (items.length === 0) return
       clipClipboard.current = items
       setCanPaste(true)
+      setLog(`${count(items.length, 'clip')} copied`)
     },
     [tracks]
   )
@@ -889,7 +931,7 @@ function App(): React.JSX.Element {
       if (items.length === 0) return
       const base = Math.min(...items.map((it) => it.clip.offset))
       const ids = items.map(() => newId())
-      commit('paste clip', (d) => {
+      commit(`${count(items.length, 'clip')} pasted`, (d) => {
         items.forEach((it, i) => {
           const t =
             (items.length === 1 ? d.tracks.find((t) => t.id === targetTrackId) : undefined) ??
@@ -907,7 +949,7 @@ function App(): React.JSX.Element {
   const duplicateClips = useCallback(
     (clipIds: number[]) => {
       const pairs = clipIds.map((id) => ({ id, dupId: newId() }))
-      commit('duplicate clip', (d) => {
+      commit(`${count(pairs.length, 'clip')} duplicated`, (d) => {
         for (const { id, dupId } of pairs) {
           const t = d.tracks.find((t) => t.clips.some((c) => c.id === id))
           const c = t?.clips.find((c) => c.id === id)
@@ -930,7 +972,7 @@ function App(): React.JSX.Element {
         d.tracks.flatMap((t) => t.clips).find((c) => c.id === clipId)
       switch (action) {
         case 'mute':
-          commit(clip.muted ? 'unmute clip' : 'mute clip', (d) => {
+          commit(`${count(targetIds.length, 'clip')} ${clip.muted ? 'unmuted' : 'muted'}`, (d) => {
             for (const t of d.tracks) {
               for (const c of t.clips) {
                 if (!targetIds.includes(c.id)) continue
@@ -956,7 +998,7 @@ function App(): React.JSX.Element {
           const local = clip.trimIn + (playhead - clip.offset)
           if (local < clip.trimIn + MIN_CLIP_LEN || local > clip.trimOut - MIN_CLIP_LEN) return
           const id = newId()
-          commit('split clip', (d) => {
+          commit('Clip split', (d) => {
             const c = inDoc(d)
             if (!c) return
             const t = d.tracks.find((t) => t.clips.some((c) => c.id === clipId))
@@ -1074,7 +1116,7 @@ function App(): React.JSX.Element {
           }
         }
       }
-      if (isCommit) commit('edit points', apply)
+      if (isCommit) commit(`${count(patches.length, 'point')} edited`, apply)
       else transient(apply)
     },
     [commit, transient]
@@ -1091,7 +1133,7 @@ function App(): React.JSX.Element {
           ;((d.edits[sel.file] ??= {}).add ??= []).push(ev)
         }
       }
-      if (isCommit) commit('add points', apply)
+      if (isCommit) commit(`${count(adds.length, 'point')} added`, apply)
       else transient(apply)
       setSelectedPoints(adds.map((a) => a.sel))
     },
@@ -1100,7 +1142,7 @@ function App(): React.JSX.Element {
 
   const deleteSelectedPoints = useCallback(() => {
     if (selectedPoints.length === 0) return
-    commit('delete points', (d) => {
+    commit(`${count(selectedPoints.length, 'point')} deleted`, (d) => {
       for (const pt of selectedPoints) {
         const clipEdits = (d.edits[pt.file] ??= {})
         ;(clipEdits.del ??= {})[pt.eventIndex] = true
@@ -1126,6 +1168,7 @@ function App(): React.JSX.Element {
     } catch (e) {
       setError((e as Error).message)
     }
+    if (playing) setLog('Playback paused')
     setPlaying(null)
   }, [playing])
 
@@ -1146,6 +1189,7 @@ function App(): React.JSX.Element {
         playhead
       )
       setPlaying({ startPos: playhead, startedAt: performance.now(), duration: res.duration })
+      setLog('Playback started')
       setError(null)
     } catch (e) {
       setError((e as Error).message)
@@ -1177,19 +1221,12 @@ function App(): React.JSX.Element {
         serializeProject(tracks, markers, ports, duration, edits, history.seq)
       )
       if (!result) return // save dialog cancelled
-      setInfo(`exported ${result.path} (${result.events} events, ${result.duration.toFixed(1)}s)`)
+      setLog(`Exported ${result.path} (${result.events} events, ${result.duration.toFixed(1)}s)`)
       setError(null)
     } catch (e) {
       setError((e as Error).message)
     }
   }, [tracks, markers, ports, duration, edits])
-
-  // Info banner auto-hide.
-  useEffect(() => {
-    if (!info) return
-    const timer = setTimeout(() => setInfo(null), 5000)
-    return () => clearTimeout(timer)
-  }, [info])
 
   // Space toggles preview unless recording or typing in a field.
   useEffect(() => {
@@ -1214,7 +1251,7 @@ function App(): React.JSX.Element {
   }, [addMarker])
 
   const alignAll = useCallback(() => {
-    commit('align clips', (d) => {
+    commit('Clips aligned with clock', (d) => {
       for (const t of d.tracks) {
         for (const c of t.clips) c.offset = alignClip(c).offset
       }
@@ -1231,7 +1268,7 @@ function App(): React.JSX.Element {
         return
       }
       if (selectedIds.length === 0) return
-      commit('delete clip', (d) => {
+      commit(`${count(selectedIds.length, 'clip')} deleted`, (d) => {
         for (const t of d.tracks) t.clips = t.clips.filter((c) => !selectedIds.includes(c.id))
       })
       setSelectedIds([])
@@ -1302,6 +1339,24 @@ function App(): React.JSX.Element {
 
   const hasTl = tracks.some((t) => t.clips.some((c) => c.summary.tlOffset != null))
 
+  // Quantized to 10ms so mouse moves that keep the value only re-render then.
+  const [hoverTime, setHoverTime] = useState<number | null>(null)
+  const onHoverTime = useCallback((t: number | null): void => {
+    setHoverTime(t == null ? null : Math.round(t * 100) / 100)
+  }, [])
+
+  let selection: string | null = null
+  if (selectedPoints.length > 0) {
+    selection = `${selectedPoints.length} point${selectedPoints.length > 1 ? 's' : ''}`
+  } else if (selectedIds.length > 0) {
+    let len = 0
+    for (const t of tracks)
+      for (const c of t.clips) if (selectedIds.includes(c.id)) len += clipLen(c)
+    selection = `${selectedIds.length} clip${selectedIds.length > 1 ? 's' : ''} · ${len.toFixed(2)}s`
+  } else if (selectedTrackIds.length > 0) {
+    selection = `${selectedTrackIds.length} track${selectedTrackIds.length > 1 ? 's' : ''}`
+  }
+
   return (
     <div className="app">
       <header className="header">
@@ -1335,7 +1390,7 @@ function App(): React.JSX.Element {
                   })
                 }
                 onCommit={(n) =>
-                  commit('duration', (d) => {
+                  commit('Duration changed', (d) => {
                     d.duration = n
                   })
                 }
@@ -1455,7 +1510,6 @@ function App(): React.JSX.Element {
       </header>
 
       {error && <div className="error-banner">{error}</div>}
-      {info && <div className="info-banner">{info}</div>}
 
       <Timeline
         tracks={tracks}
@@ -1497,6 +1551,7 @@ function App(): React.JSX.Element {
         canPaste={canPaste}
         onZoom={zoom}
         onPxPerSecChange={setZoom}
+        onHoverTime={onHoverTime}
       />
 
       <div
@@ -1530,6 +1585,7 @@ function App(): React.JSX.Element {
         onPointEdit={onPointEdit}
         onPointAdd={onPointAdd}
       />
+      <StatusBar hoverTime={hoverTime} selection={selection} log={log} />
       <TooltipLayer />
     </div>
   )

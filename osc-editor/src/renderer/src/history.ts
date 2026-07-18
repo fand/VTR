@@ -37,7 +37,9 @@ export interface History {
 export function useHistory(
   initial: Doc,
   onRestore: (doc: Doc) => void,
-  onError: (message: string) => void
+  onError: (message: string) => void,
+  /** Fires when an entry is recorded, undone, or redone; labels feed the status bar log. */
+  onLog?: (kind: 'commit' | 'undo' | 'redo', label: string) => void
 ): History {
   const [doc, setDoc] = useState(initial)
   const docRef = useRef(doc)
@@ -105,8 +107,9 @@ export function useHistory(
       if (past.current.length > UNDO_CAP) past.current.shift()
       window.api.undo.append(entry).catch(persistError)
       install(next)
+      onLog?.('commit', label)
     },
-    [install, persistError]
+    [install, persistError, onLog]
   )
 
   const abortTransient = useCallback((): void => {
@@ -145,10 +148,11 @@ export function useHistory(
       const next = applyPatches(docRef.current, entry.inversePatches)
       future.current.unshift(entry)
       restore(next)
+      onLog?.('undo', entry.label)
     } catch {
       dropHistory()
     }
-  }, [restore, dropHistory])
+  }, [restore, dropHistory, onLog])
 
   const redo = useCallback((): void => {
     if (base.current) return
@@ -158,10 +162,11 @@ export function useHistory(
       const next = applyPatches(docRef.current, entry.patches)
       past.current.push(entry)
       restore(next)
+      onLog?.('redo', entry.label)
     } catch {
       dropHistory()
     }
-  }, [restore, dropHistory])
+  }, [restore, dropHistory, onLog])
 
   return {
     doc,

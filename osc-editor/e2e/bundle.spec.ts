@@ -116,7 +116,7 @@ test('bundle: rec into project clips/, Save As collects into .oscproj, reopen + 
     // Export defaults next to the bundle, not inside it.
     await page2.getByRole('button', { name: 'File' }).click()
     await page2.getByRole('button', { name: 'Export' }).click()
-    await expect(page2.locator('.info-banner')).toContainText('exported')
+    await expect(page2.locator('.sb-log')).toContainText('Exported')
     const lines = readFileSync(join(workdir, 'session.jsonl'), 'utf8')
       .split('\n')
       .filter(Boolean)

@@ -737,7 +737,7 @@ test('curve panel: double-click / cmd+click on a curve inserts a point', async (
     // The added point reaches the export.
     await page.getByRole('button', { name: 'File' }).click()
     await page.getByRole('button', { name: 'Export' }).click()
-    await expect(page.locator('.info-banner')).toContainText('exported')
+    await expect(page.locator('.sb-log')).toContainText('Exported')
     const events = readFileSync(join(workdir, 'session.jsonl'), 'utf8')
       .split('\n')
       .filter(Boolean)

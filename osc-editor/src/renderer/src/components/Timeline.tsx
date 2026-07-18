@@ -97,6 +97,8 @@ interface TimelineProps {
   onZoom: (factor: number) => void
   /** Absolute zoom from the header slider. The caller clamps. */
   onPxPerSecChange: (px: number) => void
+  /** Timeline time under the pointer; null when off the lanes/ruler. */
+  onHoverTime?: (sec: number | null) => void
 }
 
 export const LABEL_W = 96
@@ -234,7 +236,8 @@ export function Timeline({
   onClipAction,
   canPaste,
   onZoom,
-  onPxPerSecChange
+  onPxPerSecChange,
+  onHoverTime
 }: TimelineProps): React.JSX.Element {
   const drag = useRef<Drag | null>(null)
   // Snap on: clip move/trim locks onto other clips' edges.
@@ -637,9 +640,14 @@ export function Timeline({
         ref={scrollRef}
         onScroll={(e) => setScrollX(e.currentTarget.scrollLeft)}
         onPointerDown={onBgPointerDown}
-        onPointerMove={onBgPointerMove}
+        onPointerMove={(e) => {
+          onBgPointerMove(e)
+          const x = contentPos(e).x
+          onHoverTime?.(x >= LABEL_W ? Math.min(Math.max((x - LABEL_W) / pxPerSec, 0), end) : null)
+        }}
         onPointerUp={onBgPointerUp}
         onPointerCancel={onBgPointerCancel}
+        onPointerLeave={() => onHoverTime?.(null)}
       >
         <div className="tl-content" ref={contentRef} style={{ width: widthPx + 96 }}>
           <div className="ruler-row">
