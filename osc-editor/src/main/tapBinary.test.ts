@@ -9,7 +9,9 @@ const env = (over: Partial<TapBinaryEnv> = {}): TapBinaryEnv => ({
   ...over
 })
 
-const fakeFs = (files: Record<string, number>) => ({
+const fakeFs = (
+  files: Record<string, number>
+): { existsSync: (p: string) => boolean; statSync: (p: string) => { mtimeMs: number } } => ({
   existsSync: (p: string) => p in files,
   statSync: (p: string) => ({ mtimeMs: files[p] })
 })
