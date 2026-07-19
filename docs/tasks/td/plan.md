@@ -60,6 +60,11 @@ Status: steps 1–4 & 6 implemented (2026-07-18); step 5 (manual verification in
 - `README.md`: add a Components entry for `td/` (what the tox does, pointer to `td/README.md`).
 - `TODO.md`: drop the TouchDesigner line.
 
+## Follow-ups (agreed, not yet scheduled)
+
+- **Snapshot dedup in the resolver** — keep a last-emitted-value snapshot per address and skip emissions whose args equal it, so seeks/scrubs don't re-send unchanged values. Small change: track the snapshot in `Resolver` (update on every emit, compare in `_catchup`, clear on `reset()`); pump stays dedup-free to preserve full fidelity. Do after the current verification round. (2026-07-18 discussion.)
+- Deterministic non-realtime rendering: swap the emit layer from loopback OSC to direct dispatch, or query a Rust-side state server (osc-tap adjacency) — revisit when offline export becomes a real use case.
+
 ## Order & scopes
 
 Steps 1–2 are pure TDD and land first (scope: `td` — new conventional-commit scope, e.g. `feat(td): session loader`); 3–4 need TouchDesigner open for iteration; 5 needs osc-tap; 6 last.
