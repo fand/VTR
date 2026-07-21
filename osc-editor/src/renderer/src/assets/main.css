@@ -929,8 +929,67 @@ body {
   white-space: nowrap;
 }
 
+/* Right column: seekbar row on top, curves below, playhead across both. */
+.curve-main {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Curve seekbar: same look as the timeline ruler; click/drag seeks. */
+.curve-ruler {
+  position: relative;
+  flex: 0 0 22px;
+  overflow: hidden;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+  cursor: text;
+  touch-action: none;
+}
+
+.curve-ruler-content {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+}
+
+.curve-ruler .curve-ruler-mark {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  padding-left: 4px;
+  border-left: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 22px;
+  white-space: nowrap;
+}
+
+.curve-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--accent);
+  z-index: 3;
+  pointer-events: none;
+}
+
+.curve-playhead-head {
+  width: 11px;
+  height: 10px;
+  margin-left: -5px;
+  background: var(--accent);
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+}
+
 .curve-editor {
   flex: 1;
+  min-height: 0;
   position: relative;
   overflow: hidden;
   background: var(--bg-lane);

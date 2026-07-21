@@ -1582,6 +1582,9 @@ function App(): React.JSX.Element {
         clips={curveClips}
         height={curveHeight}
         edits={edits}
+        playhead={playhead}
+        playing={playing}
+        onSeek={onSeek}
         selectedPoints={selectedPoints}
         onSelectPoints={setSelectedPoints}
         onPointEdit={onPointEdit}

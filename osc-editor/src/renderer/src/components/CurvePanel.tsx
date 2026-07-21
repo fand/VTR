@@ -5,6 +5,7 @@ import type { ClipEdits, OscEvent } from '../../../shared/types'
 import { ClipInst, clipLen, formatRulerLabel } from '../timeline/model'
 import { PAD, hitCurve, hitPoint, tAt, vAt, visibleRange, xAt, yAt, type Scale } from './curveGeom'
 import { eventsCache } from './eventsCache'
+import type { PlayingState } from './Timeline'
 
 /** e2e hooks: curves/points are canvas pixels, not DOM nodes, so tests read
  *  their geometry (in client coordinates) from these. */
@@ -201,6 +202,38 @@ const HoverTooltip = React.memo(function HoverTooltip({
   )
 })
 
+/** Playhead line over the ruler + curves; rAF-follows playback like the
+ *  timeline's PlayheadLine. toPx maps timeline seconds to viewport px. */
+function CurvePlayhead({
+  playhead,
+  playing,
+  toPx
+}: {
+  playhead: number
+  playing: PlayingState | null
+  toPx: (sec: number) => number
+}): React.JSX.Element {
+  const [, force] = useState(0)
+  useEffect(() => {
+    if (!playing) return
+    let raf: number
+    const loop = (): void => {
+      force((x) => x + 1)
+      raf = requestAnimationFrame(loop)
+    }
+    raf = requestAnimationFrame(loop)
+    return () => cancelAnimationFrame(raf)
+  }, [playing])
+  const sec = playing
+    ? Math.min(playing.startPos + (performance.now() - playing.startedAt) / 1000, playing.duration)
+    : playhead
+  return (
+    <div className="curve-playhead" style={{ left: toPx(sec) }}>
+      <div className="curve-playhead-head" />
+    </div>
+  )
+}
+
 /** One numeric-arg edit: absolute clip-local t and/or value for args[argIndex]. */
 export interface PointPatch {
   file: string
@@ -214,6 +247,9 @@ export function CurvePanel({
   clips,
   edits,
   height,
+  playhead,
+  playing,
+  onSeek,
   selectedPoints,
   onSelectPoints,
   onPointEdit,
@@ -224,6 +260,9 @@ export function CurvePanel({
   edits: Record<string, ClipEdits>
   /** Panel height, px (the splitter above drives it). */
   height: number
+  playhead: number
+  playing: PlayingState | null
+  onSeek: (sec: number) => void
   selectedPoints: PointSel[]
   onSelectPoints: (pts: PointSel[]) => void
   /** Streams transient patches while dragging; isCommit on release. */
@@ -256,8 +295,10 @@ export function CurvePanel({
   const [zoomY, setZoomY] = useState(1)
   const innerW = w * zoomX
   const innerH = h * zoomY
-  // Scroll offset of .curve-scroll; pins the axis labels while it scrolls.
+  // Scroll offsets of .curve-scroll; scrollTop pins the value labels,
+  // scrollLeft keeps the ruler and playhead in sync with the curves.
   const [scrollTop, setScrollTop] = useState(0)
+  const [scrollLeft, setScrollLeft] = useState(0)
   // Normalized time position under the cursor at pinch start; scroll is
   // restored after the zoomed width renders so that point stays put.
   const pinchAnchor = useRef<{ norm: number; viewX: number } | null>(null)
@@ -889,21 +930,9 @@ export function CurvePanel({
     const lines: React.JSX.Element[] = []
     const tStep = gridStep(tRange, innerW - 2 * PAD, 50)
     for (let i = Math.ceil(tMin / tStep - 1e-6); i * tStep <= tMax + 1e-6; i++) {
-      const t = i * tStep
-      const px = x(t)
+      const px = x(i * tStep)
       lines.push(
-        <line key={`t${i}`} x1={px} y1={0} x2={px} y2={innerH} className="curve-grid-line" />,
-        // Top-aligned, ruler-style labels — same format as the timeline
-        // seekbar. scrollTop pins them to the top while the editor scrolls.
-        <text
-          key={`tl${i}`}
-          x={px + 4}
-          y={scrollTop + 13}
-          className="curve-grid-label"
-          fill="#8b919c"
-        >
-          {formatRulerLabel(t)}
-        </text>
+        <line key={`t${i}`} x1={px} y1={0} x2={px} y2={innerH} className="curve-grid-line" />
       )
     }
     lines.push(
@@ -915,6 +944,29 @@ export function CurvePanel({
   }
 
   const anyLoaded = clips.some((c) => loaded.has(c.path))
+
+  // Seekbar: labels sit on the same grid as the vertical time lines; click
+  // or drag seeks, clamped to the shown clips' span. Reads scrollLeft from
+  // the DOM so a scrub mid-scroll never uses a stale offset.
+  const rulerMarks = (): React.JSX.Element[] => {
+    const tStep = gridStep(tRange, innerW - 2 * PAD, 50)
+    const out: React.JSX.Element[] = []
+    for (let i = Math.ceil(tMin / tStep - 1e-6); i * tStep <= tMax + 1e-6; i++) {
+      const t = i * tStep
+      out.push(
+        <span key={i} className="curve-grid-label curve-ruler-mark" style={{ left: x(t) }}>
+          {formatRulerLabel(t)}
+        </span>
+      )
+    }
+    return out
+  }
+
+  const seekAt = (e: React.PointerEvent<HTMLDivElement>): void => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    const t = tAt(scale, e.clientX - rect.left + (scrollRef.current?.scrollLeft ?? 0))
+    onSeek(Math.min(Math.max(t, Math.max(tMin, 0)), tMax))
+  }
 
   // Canvas painter: viewport-sized, devicePixelRatio-aware. Draws the
   // step-after lines and ALL points, translated by the scroll offsets and
@@ -1091,160 +1143,191 @@ export function CurvePanel({
             <div className="curve-note">no numeric args</div>
           )}
         </div>
-        <div
-          className={pencil ? 'curve-editor pencil' : 'curve-editor'}
-          ref={editorRef}
-          onPointerDown={onEditorDown}
-          onPointerMove={onEditorMove}
-          onPointerUp={onEditorUp}
-          // Cancel acts like release: point/xform drags commit their last
-          // streamed values (never cancel-event coords), pencil commits its
-          // batch, a marquee just closes.
-          onPointerCancel={onEditorUp}
-          onDoubleClick={onEditorDoubleClick}
-          onPointerLeave={() => updateHover(null)}
-        >
-          {clips.length === 0 && (
-            <div className="curve-empty">Select a clip to see its curves.</div>
-          )}
-          {clips.length > 0 && w > 0 && (
-            <div
-              className="curve-scroll"
-              ref={scrollRef}
-              onScroll={(e) => {
-                setScrollTop(e.currentTarget.scrollTop)
-                paintRef.current()
-              }}
-            >
-              <div className="curve-content" style={{ width: innerW, height: innerH }}>
-                {/* Under-layer: grid + clip spans, below the curve canvas. */}
-                <svg className="curve-under" width={innerW} height={innerH}>
-                  {renderGrid()}
-                  {clips.length > 1 &&
-                    clips.map((c) => {
-                      const cx0 = x(c.offset)
-                      const cw = Math.max(x(c.offset + clipLen(c)) - cx0, 1)
-                      return (
-                        // Faint span per clip so curves read against their source clips.
-                        <g key={c.id} className="curve-clip-range">
-                          <rect
-                            className="curve-clip-fill"
-                            x={cx0}
-                            y={0}
-                            width={cw}
-                            height={innerH}
-                          />
-                          <rect className="curve-clip-bar" x={cx0} y={0} width={cw} height={3} />
-                        </g>
-                      )
-                    })}
-                </svg>
-                {/* Over-layer: interactive/selected elements only — the point
-                    cloud itself is painted on the canvas. */}
-                <svg className="curve-over" width={innerW} height={innerH}>
-                  {interactiveProps().flatMap((p) =>
-                    p.points
-                      .filter((pt) => selKeys.has(selKey(ptSel(pt))))
-                      .map((pt) => (
-                        <circle
-                          key={`${pt.clip.id}:${pt.eventIndex}:${pt.argIndex}`}
-                          className="curve-point selected"
-                          cx={x(pt.t)}
-                          cy={y(p, pt.v)}
-                          r={5}
-                          fill={p.color}
-                          stroke="#fff"
-                          strokeWidth={1.5}
-                        />
-                      ))
-                  )}
-                  {selBox && (
-                    <g className="curve-xform">
-                      <rect
-                        className="curve-xform-box"
-                        x={selBox.x}
-                        y={selBox.y}
-                        width={selBox.w}
-                        height={selBox.h}
-                      />
-                      {(
-                        [
-                          { mode: 'left', x: selBox.x - 3, y: selBox.y, w: 6, h: selBox.h },
-                          {
-                            mode: 'right',
-                            x: selBox.x + selBox.w - 3,
-                            y: selBox.y,
-                            w: 6,
-                            h: selBox.h
-                          },
-                          { mode: 'top', x: selBox.x, y: selBox.y - 3, w: selBox.w, h: 6 },
-                          {
-                            mode: 'bottom',
-                            x: selBox.x,
-                            y: selBox.y + selBox.h - 3,
-                            w: selBox.w,
-                            h: 6
-                          }
-                        ] as const
-                      ).map((s) => (
-                        <rect
-                          key={s.mode}
-                          className={`curve-xform-edge ${s.mode}`}
-                          x={s.x}
-                          y={s.y}
-                          width={s.w}
-                          height={s.h}
-                          onPointerDown={(e) => onEdgeDown(e, s.mode)}
-                        />
-                      ))}
-                      {(
-                        [
-                          { k: 'l', x: selBox.x, y: selBox.y + selBox.h / 2 },
-                          { k: 'r', x: selBox.x + selBox.w, y: selBox.y + selBox.h / 2 },
-                          { k: 't', x: selBox.x + selBox.w / 2, y: selBox.y },
-                          { k: 'b', x: selBox.x + selBox.w / 2, y: selBox.y + selBox.h }
-                        ] as const
-                      ).map((s) => (
-                        <rect
-                          key={s.k}
-                          className="curve-xform-handle"
-                          x={s.x - 3}
-                          y={s.y - 3}
-                          width={6}
-                          height={6}
-                        />
-                      ))}
-                    </g>
-                  )}
-                  <HoverTooltip subscribe={subscribeHover} />
-                  {marqueeRect && (
-                    <rect
-                      className="curve-marquee"
-                      x={marqueeRect.x}
-                      y={marqueeRect.y}
-                      width={marqueeRect.w}
-                      height={marqueeRect.h}
-                    />
-                  )}
-                </svg>
+        <div className="curve-main">
+          <div
+            className="curve-ruler"
+            onPointerDown={(e) => {
+              if (e.button !== 0 || clips.length === 0) return
+              e.currentTarget.setPointerCapture(e.pointerId)
+              seekAt(e)
+            }}
+            onPointerMove={(e) => {
+              if ((e.buttons & 1) === 0 || clips.length === 0) return
+              seekAt(e)
+            }}
+          >
+            {clips.length > 0 && w > 0 && (
+              <div
+                className="curve-ruler-content"
+                style={{ width: innerW, transform: `translateX(${-scrollLeft}px)` }}
+              >
+                {rulerMarks()}
               </div>
-            </div>
-          )}
+            )}
+          </div>
+          <div
+            className={pencil ? 'curve-editor pencil' : 'curve-editor'}
+            ref={editorRef}
+            onPointerDown={onEditorDown}
+            onPointerMove={onEditorMove}
+            onPointerUp={onEditorUp}
+            // Cancel acts like release: point/xform drags commit their last
+            // streamed values (never cancel-event coords), pencil commits its
+            // batch, a marquee just closes.
+            onPointerCancel={onEditorUp}
+            onDoubleClick={onEditorDoubleClick}
+            onPointerLeave={() => updateHover(null)}
+          >
+            {clips.length === 0 && (
+              <div className="curve-empty">Select a clip to see its curves.</div>
+            )}
+            {clips.length > 0 && w > 0 && (
+              <div
+                className="curve-scroll"
+                ref={scrollRef}
+                onScroll={(e) => {
+                  setScrollTop(e.currentTarget.scrollTop)
+                  setScrollLeft(e.currentTarget.scrollLeft)
+                  paintRef.current()
+                }}
+              >
+                <div className="curve-content" style={{ width: innerW, height: innerH }}>
+                  {/* Under-layer: grid + clip spans, below the curve canvas. */}
+                  <svg className="curve-under" width={innerW} height={innerH}>
+                    {renderGrid()}
+                    {clips.length > 1 &&
+                      clips.map((c) => {
+                        const cx0 = x(c.offset)
+                        const cw = Math.max(x(c.offset + clipLen(c)) - cx0, 1)
+                        return (
+                          // Faint span per clip so curves read against their source clips.
+                          <g key={c.id} className="curve-clip-range">
+                            <rect
+                              className="curve-clip-fill"
+                              x={cx0}
+                              y={0}
+                              width={cw}
+                              height={innerH}
+                            />
+                            <rect className="curve-clip-bar" x={cx0} y={0} width={cw} height={3} />
+                          </g>
+                        )
+                      })}
+                  </svg>
+                  {/* Over-layer: interactive/selected elements only — the point
+                    cloud itself is painted on the canvas. */}
+                  <svg className="curve-over" width={innerW} height={innerH}>
+                    {interactiveProps().flatMap((p) =>
+                      p.points
+                        .filter((pt) => selKeys.has(selKey(ptSel(pt))))
+                        .map((pt) => (
+                          <circle
+                            key={`${pt.clip.id}:${pt.eventIndex}:${pt.argIndex}`}
+                            className="curve-point selected"
+                            cx={x(pt.t)}
+                            cy={y(p, pt.v)}
+                            r={5}
+                            fill={p.color}
+                            stroke="#fff"
+                            strokeWidth={1.5}
+                          />
+                        ))
+                    )}
+                    {selBox && (
+                      <g className="curve-xform">
+                        <rect
+                          className="curve-xform-box"
+                          x={selBox.x}
+                          y={selBox.y}
+                          width={selBox.w}
+                          height={selBox.h}
+                        />
+                        {(
+                          [
+                            { mode: 'left', x: selBox.x - 3, y: selBox.y, w: 6, h: selBox.h },
+                            {
+                              mode: 'right',
+                              x: selBox.x + selBox.w - 3,
+                              y: selBox.y,
+                              w: 6,
+                              h: selBox.h
+                            },
+                            { mode: 'top', x: selBox.x, y: selBox.y - 3, w: selBox.w, h: 6 },
+                            {
+                              mode: 'bottom',
+                              x: selBox.x,
+                              y: selBox.y + selBox.h - 3,
+                              w: selBox.w,
+                              h: 6
+                            }
+                          ] as const
+                        ).map((s) => (
+                          <rect
+                            key={s.mode}
+                            className={`curve-xform-edge ${s.mode}`}
+                            x={s.x}
+                            y={s.y}
+                            width={s.w}
+                            height={s.h}
+                            onPointerDown={(e) => onEdgeDown(e, s.mode)}
+                          />
+                        ))}
+                        {(
+                          [
+                            { k: 'l', x: selBox.x, y: selBox.y + selBox.h / 2 },
+                            { k: 'r', x: selBox.x + selBox.w, y: selBox.y + selBox.h / 2 },
+                            { k: 't', x: selBox.x + selBox.w / 2, y: selBox.y },
+                            { k: 'b', x: selBox.x + selBox.w / 2, y: selBox.y + selBox.h }
+                          ] as const
+                        ).map((s) => (
+                          <rect
+                            key={s.k}
+                            className="curve-xform-handle"
+                            x={s.x - 3}
+                            y={s.y - 3}
+                            width={6}
+                            height={6}
+                          />
+                        ))}
+                      </g>
+                    )}
+                    <HoverTooltip subscribe={subscribeHover} />
+                    {marqueeRect && (
+                      <rect
+                        className="curve-marquee"
+                        x={marqueeRect.x}
+                        y={marqueeRect.y}
+                        width={marqueeRect.w}
+                        height={marqueeRect.h}
+                      />
+                    )}
+                  </svg>
+                </div>
+              </div>
+            )}
+            {clips.length > 0 && w > 0 && (
+              <canvas className="curve-canvas" ref={canvasRef} style={{ width: w, height: h }} />
+            )}
+            {clips.length > 0 && w > 0 && yGrid.length > 0 && (
+              <div className="curve-ylabels">
+                {yGrid.map(({ py, label }, i) => (
+                  <span
+                    key={i}
+                    className="curve-grid-label"
+                    style={{ top: py - scrollTop, color: gridProp?.color }}
+                  >
+                    {label}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
           {clips.length > 0 && w > 0 && (
-            <canvas className="curve-canvas" ref={canvasRef} style={{ width: w, height: h }} />
-          )}
-          {clips.length > 0 && w > 0 && yGrid.length > 0 && (
-            <div className="curve-ylabels">
-              {yGrid.map(({ py, label }, i) => (
-                <span
-                  key={i}
-                  className="curve-grid-label"
-                  style={{ top: py - scrollTop, color: gridProp?.color }}
-                >
-                  {label}
-                </span>
-              ))}
-            </div>
+            <CurvePlayhead
+              playhead={playhead}
+              playing={playing}
+              toPx={(sec) => x(sec) - scrollLeft}
+            />
           )}
         </div>
       </div>
