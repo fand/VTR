@@ -1155,7 +1155,9 @@ body {
   font-size: 12px;
 }
 
-/* Bottom status bar: mirrors the header's raised surface. */
+/* Bottom status bar: mirrors the header's raised surface.
+   Fixed height so the bar doesn't collapse (and shift the panels above)
+   when all of its fields are empty. */
 .status-bar {
   display: flex;
   align-items: center;
@@ -1164,9 +1166,12 @@ body {
   background: var(--bg-raised);
   border-top: 1px solid var(--border);
   font-size: 11px;
-  color: var(--text-dim);
+  line-height: 15px;
+  height: 22px;
+  flex: none;
   white-space: nowrap;
   overflow: hidden;
+  color: var(--text-dim);
 }
 
 /* Fixed slot so the row doesn't shift when the cursor leaves the timeline. */
