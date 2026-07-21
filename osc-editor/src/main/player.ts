@@ -1,7 +1,7 @@
 import { ChildProcess, spawn } from 'child_process'
 import net from 'net'
 import { join } from 'path'
-import { RELAY_PORT, type PlayerStatus } from '../shared/types'
+import { RELAY_PORT, type OscEvent, type PlayerStatus } from '../shared/types'
 
 const REQUEST_TIMEOUT_MS = 3000
 const CONNECT_DEADLINE_MS = 5000
@@ -114,6 +114,28 @@ export class PlayerManager {
   async status(): Promise<PlayerStatus> {
     const r = await this.request('status')
     return r.status as unknown as PlayerStatus
+  }
+
+  /**
+   * Inline-load the current merged project (no file involved) so sync
+   * clients (the TD tox) resolve against what the editor is playing.
+   * No routes: the player's own push transport stays silent — the editor
+   * keeps pushing preview OSC to the app itself.
+   */
+  async loadInline(events: OscEvent[], duration: number): Promise<void> {
+    await this.request('load', { events, duration, name: '(editor)' })
+  }
+
+  async play(): Promise<void> {
+    await this.request('play')
+  }
+
+  async stopTransport(): Promise<void> {
+    await this.request('stop')
+  }
+
+  async seek(t: number): Promise<void> {
+    await this.request('seek', { t })
   }
 
   private async request(

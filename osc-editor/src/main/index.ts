@@ -516,11 +516,26 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('preview:play', (_e, project: ProjectFile, fromSec: number) => {
     const merged = mergeProject(resolveClip, project)
+    const duration = Math.max(merged.duration, project.duration ?? 0)
     preview.play(merged.events, fromSec, tap?.ports.forward ?? DEFAULT_PORTS.forward)
-    return { duration: Math.max(merged.duration, project.duration ?? 0) }
+    // Mirror into vtr-player (inline session + transport) so sync clients
+    // (the TD tox in follow mode) track the preview. Best-effort: preview
+    // itself must not fail when the player is down.
+    void player
+      ?.loadInline(merged.events, duration)
+      .then(() => player?.seek(fromSec))
+      .then(() => player?.play())
+      .catch((e) => console.log(`preview player sync failed: ${(e as Error).message}`))
+    return { duration }
   })
-  ipcMain.handle('preview:seek', (_e, fromSec: number) => ({ seeked: preview.seek(fromSec) }))
-  ipcMain.handle('preview:stop', () => ({ position: preview.stop() }))
+  ipcMain.handle('preview:seek', (_e, fromSec: number) => {
+    player?.seek(fromSec).catch(() => {})
+    return { seeked: preview.seek(fromSec) }
+  })
+  ipcMain.handle('preview:stop', () => {
+    player?.stopTransport().catch(() => {})
+    return { position: preview.stop() }
+  })
 
   createWindow()
 

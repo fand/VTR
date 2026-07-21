@@ -95,3 +95,22 @@ test('echo port change drops the connection; same port is a no-op', async () => 
   await player.status()
   expect(connections()).toBe(2)
 })
+
+test('preview sync methods send the control cmds', async () => {
+  const seen: Record<string, unknown>[] = []
+  const { player } = await setup((req, reply) => {
+    seen.push(req)
+    reply({ ok: true })
+  })
+  const events = [{ t: 0.5, port: 10010, a: '/x', types: 'f', args: [0.1] }]
+  await player.loadInline(events, 12.5)
+  await player.seek(2.5)
+  await player.play()
+  await player.stopTransport()
+
+  expect(seen.map((r) => r.cmd)).toEqual(['load', 'seek', 'play', 'stop'])
+  expect(seen[0]).toMatchObject({ cmd: 'load', events, duration: 12.5, name: '(editor)' })
+  expect(seen[0]).not.toHaveProperty('path')
+  expect(seen[0]).not.toHaveProperty('routes')
+  expect(seen[1]).toMatchObject({ cmd: 'seek', t: 2.5 })
+})
