@@ -76,6 +76,32 @@ impl Beacon {
 
 type BeaconState = Arc<Mutex<Option<Beacon>>>;
 
+/// Fire-and-forget rec-transition OSC to the TD tox (`--td-notify`). Plain,
+/// unwrapped messages — not the `"v1 <origin>"` relay framing — so a TD
+/// `oscin` DAT parses them natively.
+struct Notify {
+    sock: UdpSocket,
+    addr: SocketAddr,
+    log: RateLimitedLog,
+}
+
+impl Notify {
+    fn send(&mut self, addr: &str, args: Vec<OscType>) {
+        let packet = OscPacket::Message(OscMessage {
+            addr: addr.into(),
+            args,
+        });
+        match rosc::encoder::encode(&packet) {
+            Ok(buf) => {
+                if let Err(e) = self.sock.send_to(&buf, self.addr) {
+                    self.log.log(&format!("td-notify send error: {e}"));
+                }
+            }
+            Err(e) => self.log.log(&format!("td-notify encode error: {e}")),
+        }
+    }
+}
+
 /// Recording transitions, in order. Local (control socket) and remote (OSC)
 /// start/stops emit the same events.
 #[derive(Debug, Clone, Serialize)]
@@ -299,6 +325,14 @@ impl Tap {
             .connect(config.forward)
             .with_context(|| format!("connect forward {}", config.forward))?;
         let relay_sock = UdpSocket::bind("0.0.0.0:0").context("bind relay socket")?;
+        let notify = match config.td_notify {
+            Some(addr) => Some(Notify {
+                sock: UdpSocket::bind("0.0.0.0:0").context("bind td-notify socket")?,
+                addr,
+                log: RateLimitedLog::new(),
+            }),
+            None => None,
+        };
 
         let listen_addr = listen.local_addr()?;
         std::fs::create_dir_all(&config.outdir)?;
@@ -509,6 +543,7 @@ impl Tap {
                 received: received.clone(),
                 beacon_max_age_s: config.beacon_max_age_s,
                 event_log: event_log.clone(),
+                notify,
                 rec: None,
                 last_clip: None,
                 write_error: None,
@@ -553,6 +588,7 @@ struct Writer {
     received: Arc<AtomicU64>,
     beacon_max_age_s: f64,
     event_log: EventLog,
+    notify: Option<Notify>,
     rec: Option<Recording>,
     last_clip: Option<PathBuf>,
     /// First write failure since the last clip start; disk-full mid-show
@@ -644,14 +680,15 @@ impl Writer {
                     return;
                 }
                 // Timeline position at clip start, same age filter as packet
-                // stamping; into the session_start header and the event.
-                let tl = self
+                // stamping; into the session_start header, the event, and the
+                // TD notification (which also wants the beacon rate).
+                let fresh = self
                     .beacon
                     .lock()
                     .unwrap()
-                    .filter(|b| signed_secs_since(now, b.at) <= self.beacon_max_age_s)
-                    .map(|b| round6(b.tl_at(now)))
-                    .filter(|v| v.is_finite());
+                    .filter(|b| signed_secs_since(now, b.at) <= self.beacon_max_age_s);
+                let tl = fresh.map(|b| round6(b.tl_at(now))).filter(|v| v.is_finite());
+                let notify_rate = fresh.map(|b| b.rate).filter(|v| v.is_finite()).unwrap_or(1.0);
                 match start_recording(
                     dir.as_deref().unwrap_or(&self.outdir),
                     self.listen_port,
@@ -668,6 +705,17 @@ impl Writer {
                             clip: r.path.clone(),
                             tl,
                         });
+                        if let Some(n) = &mut self.notify {
+                            // Args omitted when the clock is unknown: the tox
+                            // then starts playback without seeking.
+                            let args = match tl {
+                                Some(tl) => {
+                                    vec![OscType::Double(tl), OscType::Double(notify_rate)]
+                                }
+                                None => vec![],
+                            };
+                            n.send("/vtr/rec/start", args);
+                        }
                         self.rec = Some(r);
                     }
                     Err(e) => {
@@ -698,6 +746,9 @@ impl Writer {
                     let _ = reply.send(Ok(()));
                     self.last_clip = Some(r.path.clone());
                     self.event_log.push(Event::RecStopped { clip: r.path });
+                    if let Some(n) = &mut self.notify {
+                        n.send("/vtr/rec/stop", vec![]);
+                    }
                 }
                 None => {
                     let _ = reply.send(Err("not recording".into()));
@@ -911,6 +962,7 @@ mod tests {
             received: Arc::new(AtomicU64::new(0)),
             beacon_max_age_s: 5.0,
             event_log: EventLog::new(),
+            notify: None,
             rec: None,
             last_clip: None,
             write_error: None,
@@ -1065,6 +1117,76 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         w.handle(Msg::Stop { reply: tx });
         rx.recv().unwrap().unwrap();
+    }
+
+    fn notify_receiver() -> (UdpSocket, Notify) {
+        let rx = UdpSocket::bind("127.0.0.1:0").unwrap();
+        rx.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let notify = Notify {
+            sock: UdpSocket::bind("127.0.0.1:0").unwrap(),
+            addr: rx.local_addr().unwrap(),
+            log: RateLimitedLog::new(),
+        };
+        (rx, notify)
+    }
+
+    fn recv_osc(rx: &UdpSocket) -> OscMessage {
+        let mut buf = [0u8; 1024];
+        let n = rx.recv(&mut buf).unwrap();
+        let (_, packet) = rosc::decoder::decode_udp(&buf[..n]).unwrap();
+        match packet {
+            OscPacket::Message(m) => m,
+            p => panic!("expected message, got {p:?}"),
+        }
+    }
+
+    #[test]
+    fn notify_sends_rec_transitions_with_seeded_clock() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut w = test_writer(tmp.path());
+        let (rx, notify) = notify_receiver();
+        w.notify = Some(notify);
+
+        let (tx, reply) = mpsc::channel();
+        w.handle(Msg::Start {
+            dir: None,
+            tl: Some(42.5),
+            rate: Some(2.0),
+            reply: tx,
+        });
+        reply.recv().unwrap().unwrap();
+        let m = recv_osc(&rx);
+        assert_eq!(m.addr, "/vtr/rec/start");
+        assert_eq!(m.args, vec![OscType::Double(42.5), OscType::Double(2.0)]);
+
+        // Redundant start fails and must not notify: the next datagram on
+        // the wire is the stop.
+        let (tx, reply) = mpsc::channel();
+        w.handle(Msg::Start {
+            dir: None,
+            tl: None,
+            rate: None,
+            reply: tx,
+        });
+        assert!(reply.recv().unwrap().is_err());
+
+        stop_clip(&mut w);
+        let m = recv_osc(&rx);
+        assert_eq!(m.addr, "/vtr/rec/stop");
+        assert!(m.args.is_empty());
+    }
+
+    #[test]
+    fn notify_omits_args_without_clock() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut w = test_writer(tmp.path());
+        let (rx, notify) = notify_receiver();
+        w.notify = Some(notify);
+
+        start_clip(&mut w);
+        let m = recv_osc(&rx);
+        assert_eq!(m.addr, "/vtr/rec/start");
+        assert!(m.args.is_empty(), "unknown clock must omit args");
     }
 
     #[test]
