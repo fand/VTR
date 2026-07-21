@@ -105,10 +105,21 @@ class VTRExt:
         self.OnFrame()
 
     def _schedule_heartbeat(self):
+        # delayMilliSeconds: capital S (the lowercase form is a tdError).
+        # delayRef=TDResources: its clock keeps counting while the main
+        # timeline is paused — the whole point of this heartbeat.
         try:
-            run("args[0].Heartbeat()", self, delayMilliseconds=HEARTBEAT_MS)  # noqa: F821
+            run(
+                "args[0].Heartbeat()",
+                self,
+                delayMilliSeconds=HEARTBEAT_MS,
+                delayRef=op.TDResources,  # noqa: F821
+            )
         except Exception:
-            pass  # shutting down
+            # A dead heartbeat must be loud: swallowing this hid the
+            # misspelled kwarg for a whole debugging round.
+            print("VTR: heartbeat scheduling failed:")
+            traceback.print_exc()
 
     def OnParChange(self, par):
         """Called from the Parameter Execute DAT."""
