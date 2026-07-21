@@ -6,6 +6,7 @@ import { dirname, join } from 'path'
 import {
   DEFAULT_PORTS,
   RELAY_PORT,
+  TD_NOTIFY_PORT,
   type PortConfig,
   type TapEvent,
   type TapStatus,
@@ -115,6 +116,10 @@ export class TapManager {
       `127.0.0.1:${this._ports.forward}`,
       '--relay',
       `127.0.0.1:${RELAY_PORT}`,
+      // UDP to a dead port is harmless, so this is on whether or not a
+      // TD tox is listening.
+      '--td-notify',
+      `127.0.0.1:${TD_NOTIFY_PORT}`,
       '--outdir',
       this.outdir,
       '--control',
