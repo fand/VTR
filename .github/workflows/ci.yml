@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   tap:
-    name: osc-tap (cargo test)
+    name: osc-tap + vtr-player (cargo test)
     runs-on: macos-latest
     timeout-minutes: 20
     steps:
@@ -65,7 +65,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: osc-tap
-      # e2e specs point OSC_TAP_BIN at the debug binary.
+      # e2e specs point OSC_TAP_BIN / VTR_PLAYER_BIN at the debug binaries;
+      # the workspace default-members build both.
       - run: cargo build
         working-directory: osc-tap
       - run: npm ci

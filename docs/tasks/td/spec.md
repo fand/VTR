@@ -30,6 +30,8 @@ Decisions from the design discussion:
 
 ### Play page
 
+> **Superseded (2026-07-20):** playback moved to the vtr-player process — see [../resolver-server/spec.md](../resolver-server/spec.md). The Play page becomes a sync-query client (`load` + per-frame `resolve`); the sections below stay as the resolver-semantics reference, ported to Rust with `td/src/vtr_core` as the conformance suite.
+
 - `File` (File) — an exported `session.jsonl`. On change: parse, build indexes (synchronously in v1; a huge file blocks the UI for a few seconds — acceptable, revisit only if it hurts).
 - `Locktotimeline` (Toggle, default ON) + `Offset` (Float, seconds) — playback position = root timeline seconds − Offset. Pausing the TD timeline and dragging it is scrubbing; no extra transport UI needed.
 - `Play` (Toggle) + `Rewind` (Pulse) — internal transport used when `Locktotimeline` is OFF; position advances with `absTime` while playing.
