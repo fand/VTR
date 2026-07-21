@@ -36,6 +36,20 @@ previews can drift slightly. Fine for preview; offline render uses the
 `timeline` source and is unaffected. Full pusher delegation (player emits
 to the app, editor pusher removed) stays a possible follow-up.
 
+## 2026-07-21 — CHOP output
+
+Requested after the first player-mode use ("tox から chop output もしてほしい"):
+the state DAT was the only numeric sink, forcing every project through a
+DAT-to-CHOP. Added a `chop_out` Script CHOP alongside it — one channel per
+numeric OSC argument, latest value held. `VTRExt._apply_chop` folds each
+delta's numeric args into a channel map (channel name = OSC address;
+multi-arg addresses fan out to `addr:0`, `addr:1`, …; string args skipped)
+and force-cooks the Script CHOP when something moved (pull-driven cook is
+cached, so a live output must be dirtied). `FillChop` is the `onCook` hook.
+Map resets with the state DAT on session load. Builder gains the
+`chop_out` scriptCHOP + `chop_callbacks` DAT. README output section and
+manual checklist updated. Same TD-only bring-up caveat: not runnable here.
+
 ## Remaining — step 6: manual verification in TD
 
 Not runnable here (needs TouchDesigner + `./run`). Procedure: build the tox

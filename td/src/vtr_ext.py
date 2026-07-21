@@ -292,6 +292,7 @@ class VTRExt:
         if not events:
             return
         self._apply_state(events)
+        self._apply_chop(events)
         self._fire_callbacks(events)
         if self.ownerComp.par.Emitosc.eval():
             for port, addr, args in events:
@@ -320,6 +321,46 @@ class VTRExt:
             return str(int(arg))
         return str(arg)
 
+    # ------------------------------------------------------------------- chop
+
+    def _apply_chop(self, events):
+        """Fold numeric args into the CHOP channel map, then re-cook.
+
+        The `chop_out` Script CHOP is the numeric sibling of the state DAT:
+        one channel per numeric OSC argument, holding its latest value —
+        wire it straight into TD without a DAT-to-CHOP. String args have no
+        CHOP representation and are skipped (read them from the state DAT).
+        Cooking a Script CHOP is pull-driven and TD caches it, so a live
+        output has to be dirtied every frame it changes — force the cook
+        here, only when something actually moved.
+        """
+        chop = self.ownerComp.op("chop_out")
+        if chop is None:
+            return
+        changed = False
+        for _port, addr, args in events:
+            nums = [a for a in args if isinstance(a, (int, float))]
+            if not nums:
+                continue
+            if len(nums) == 1:
+                self._chan[addr] = float(nums[0])
+            else:
+                # Multi-arg addresses fan out to addr:0, addr:1, … so a
+                # channel name never collides with a real sibling address.
+                for i, v in enumerate(nums):
+                    self._chan["{}:{}".format(addr, i)] = float(v)
+            changed = True
+        if changed:
+            chop.cook(force=True)
+
+    def FillChop(self, scriptOp):
+        """onCook hook for the `chop_out` Script CHOP: one sample per
+        channel, keyed by OSC address (last value wins across ports)."""
+        scriptOp.clear()
+        scriptOp.numSamples = 1
+        for name, val in self._chan.items():
+            scriptOp.appendChan(name)[0] = val
+
     def _fire_callbacks(self, events):
         dat = self.ownerComp.op("callbacks")
         if dat is None:
@@ -334,10 +375,14 @@ class VTRExt:
 
     def _reset_state(self):
         self._rows = {}
+        self._chan = {}
         dat = self.ownerComp.op("state")
         if dat is not None:
             dat.clear()
             dat.appendRow(["port", "addr"])
+        chop = self.ownerComp.op("chop_out")
+        if chop is not None:
+            chop.cook(force=True)
 
     # ------------------------------------------------------ player plumbing
 

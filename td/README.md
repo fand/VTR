@@ -33,9 +33,19 @@ One Base COMP, one `Mode` switch:
   - `internal` — the tox's own transport (`Play` / `Rewind`).
 
   Output lands in the `state` table DAT (one row per address:
-  `port addr args…`), the `callbacks` DAT's `onEvents(events)` hook
-  (ordered delta — use this for triggers), and optionally as re-emitted
-  OSC (`Emitosc`, one frame late, migration aid only).
+  `port addr args…`), the `chop_out` CHOP (numeric channels, see below),
+  the `callbacks` DAT's `onEvents(events)` hook (ordered delta — use this
+  for triggers), and optionally as re-emitted OSC (`Emitosc`, one frame
+  late, migration aid only).
+
+  `chop_out` is the numeric sibling of the state DAT: one channel per
+  numeric OSC argument, holding its latest value, so you can wire OSC
+  numbers straight into TD without a DAT-to-CHOP. Channel name = OSC
+  address (`/vtr/foo`); an address carrying more than one numeric arg fans
+  out to `/vtr/foo:0`, `/vtr/foo:1`, …. String args have no CHOP form and
+  are skipped — read those from the state DAT. Values persist (latest wins)
+  and reset on session load; if the same address arrives on two ports, the
+  last one applied wins the channel.
 
   Sync survives a **paused TD timeline**: `onFrameStart` stops firing on
   pause, so a delayed-run heartbeat (~20 Hz) takes over the tick (both the
@@ -89,7 +99,8 @@ and saves `td/vtr.tox`.
    `/vtr/rec/stop` leaves TD playing.
 3. Play: File load surfaces duration/counts in the `info` DAT; timeline
    drag scrubs (forward pump, backward coalesced catch-up); trigger
-   addresses fire on forward play only.
+   addresses fire on forward play only; numeric addresses show up as live
+   channels in `chop_out` and clear on reload.
 4. Editor follow: with `Positionmode` = `follow` and `File` empty, pressing
    play in the editor moves the `state` DAT in TD; scrubbing the editor
    seekbar scrubs TD; stop freezes it.
