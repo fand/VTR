@@ -9,24 +9,46 @@ use osc_tap::tap::{Handle, Tap};
 use rosc::{OscBundle, OscMessage, OscPacket, OscTime, OscType};
 use serde_json::Value;
 
-fn start_tap(outdir: &std::path::Path) -> (Tap, UdpSocket) {
+/// (tap, fake TD on the forward port, fake player on the relay port)
+fn start_tap(outdir: &std::path::Path) -> (Tap, UdpSocket, UdpSocket) {
     let td = UdpSocket::bind("127.0.0.1:0").unwrap();
     td.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    let player = UdpSocket::bind("127.0.0.1:0").unwrap();
+    player.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
     let tap = Tap::start(Config {
         listen: "127.0.0.1:0".parse().unwrap(),
         forward: td.local_addr().unwrap(),
-        beacon: "127.0.0.1:0".parse().unwrap(),
+        relay: player.local_addr().unwrap(),
         outdir: outdir.to_path_buf(),
         beacon_max_age_s: 5.0,
     })
     .unwrap();
-    (tap, td)
+    (tap, td, player)
 }
 
 fn encode_msg(addr: &str, args: Vec<OscType>) -> Vec<u8> {
     rosc::encoder::encode(&OscPacket::Message(OscMessage {
         addr: addr.to_string(),
         args,
+    }))
+    .unwrap()
+}
+
+fn encode_bundle(msgs: Vec<(&str, Vec<OscType>)>) -> Vec<u8> {
+    rosc::encoder::encode(&OscPacket::Bundle(OscBundle {
+        timetag: OscTime {
+            seconds: 0,
+            fractional: 1,
+        },
+        content: msgs
+            .into_iter()
+            .map(|(addr, args)| {
+                OscPacket::Message(OscMessage {
+                    addr: addr.to_string(),
+                    args,
+                })
+            })
+            .collect(),
     }))
     .unwrap()
 }
@@ -56,6 +78,14 @@ fn wait_recording(handle: &Handle, want: bool) {
     }
 }
 
+fn wait_beacon(handle: &Handle) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while handle.status().unwrap().beacon_tl.is_none() {
+        assert!(Instant::now() < deadline, "beacon not received");
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
 fn read_lines(path: &std::path::Path) -> Vec<Value> {
     std::fs::read_to_string(path)
         .unwrap()
@@ -67,7 +97,7 @@ fn read_lines(path: &std::path::Path) -> Vec<Value> {
 #[test]
 fn forwards_raw_bytes_even_when_not_recording() {
     let tmp = tempfile::tempdir().unwrap();
-    let (tap, td) = start_tap(tmp.path());
+    let (tap, td, _player) = start_tap(tmp.path());
     let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
 
     let sent = encode_msg("/a", vec![OscType::Float(0.5)]);
@@ -81,12 +111,15 @@ fn forwards_raw_bytes_even_when_not_recording() {
 #[test]
 fn records_events_with_types_and_session_lines() {
     let tmp = tempfile::tempdir().unwrap();
-    let (tap, _td) = start_tap(tmp.path());
+    let (tap, _td, _player) = start_tap(tmp.path());
     let handle = tap.handle();
     let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
 
-    let clip = handle.start_clip(None).unwrap();
-    assert!(handle.start_clip(None).is_err(), "double start must fail");
+    let clip = handle.start_clip(None, None, None).unwrap();
+    assert!(
+        handle.start_clip(None, None, None).is_err(),
+        "double start must fail"
+    );
 
     tx.send_to(
         &encode_msg("/fader", vec![OscType::Float(0.42)]),
@@ -109,20 +142,10 @@ fn records_events_with_types_and_session_lines() {
     )
     .unwrap();
     // Bundle expands to individual messages.
-    let bundle = rosc::encoder::encode(&OscPacket::Bundle(OscBundle {
-        timetag: OscTime { seconds: 0, fractional: 1 },
-        content: vec![
-            OscPacket::Message(OscMessage {
-                addr: "/b1".into(),
-                args: vec![OscType::Int(1)],
-            }),
-            OscPacket::Message(OscMessage {
-                addr: "/b2".into(),
-                args: vec![OscType::Int(2)],
-            }),
-        ],
-    }))
-    .unwrap();
+    let bundle = encode_bundle(vec![
+        ("/b1", vec![OscType::Int(1)]),
+        ("/b2", vec![OscType::Int(2)]),
+    ]);
     tx.send_to(&bundle, tap.listen_addr).unwrap();
 
     wait_events(&handle, 5);
@@ -163,23 +186,18 @@ fn records_events_with_types_and_session_lines() {
 #[test]
 fn stamps_tl_from_beacon() {
     let tmp = tempfile::tempdir().unwrap();
-    let (tap, _td) = start_tap(tmp.path());
+    let (tap, _td, _player) = start_tap(tmp.path());
     let handle = tap.handle();
     let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
 
     tx.send_to(
-        &encode_msg("/clock", vec![OscType::Float(42.0)]),
-        tap.beacon_addr,
+        &encode_msg("/vtr/clock", vec![OscType::Float(42.0)]),
+        tap.listen_addr,
     )
     .unwrap();
-    // Wait for the beacon to land.
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while handle.status().unwrap().beacon_tl.is_none() {
-        assert!(Instant::now() < deadline, "beacon not received");
-        thread::sleep(Duration::from_millis(10));
-    }
+    wait_beacon(&handle);
 
-    let clip = handle.start_clip(None).unwrap();
+    let clip = handle.start_clip(None, None, None).unwrap();
     thread::sleep(Duration::from_millis(50));
     tx.send_to(&encode_msg("/x", vec![OscType::Int(1)]), tap.listen_addr)
         .unwrap();
@@ -195,24 +213,20 @@ fn stamps_tl_from_beacon() {
 #[test]
 fn clock_rate_zero_freezes_tl() {
     let tmp = tempfile::tempdir().unwrap();
-    let (tap, _td) = start_tap(tmp.path());
+    let (tap, _td, _player) = start_tap(tmp.path());
     let handle = tap.handle();
     let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
 
     // Paused timeline at t=42.
     tx.send_to(
-        &encode_msg("/clock", vec![OscType::Float(42.0), OscType::Float(0.0)]),
-        tap.beacon_addr,
+        &encode_msg("/vtr/clock", vec![OscType::Float(42.0), OscType::Float(0.0)]),
+        tap.listen_addr,
     )
     .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while handle.status().unwrap().beacon_tl.is_none() {
-        assert!(Instant::now() < deadline, "beacon not received");
-        thread::sleep(Duration::from_millis(10));
-    }
+    wait_beacon(&handle);
     assert_eq!(handle.status().unwrap().beacon_rate, Some(0.0));
 
-    let clip = handle.start_clip(None).unwrap();
+    let clip = handle.start_clip(None, None, None).unwrap();
     thread::sleep(Duration::from_millis(300));
     tx.send_to(&encode_msg("/x", vec![OscType::Int(1)]), tap.listen_addr)
         .unwrap();
@@ -228,7 +242,7 @@ fn clock_rate_zero_freezes_tl() {
 #[test]
 fn control_socket_roundtrip() {
     let tmp = tempfile::tempdir().unwrap();
-    let (tap, _td) = start_tap(tmp.path());
+    let (tap, _td, _player) = start_tap(tmp.path());
     let sock_path = tmp.path().join("tap.sock");
     {
         let handle = tap.handle();
@@ -276,7 +290,7 @@ fn control_socket_roundtrip() {
 #[test]
 fn control_replies_echo_request_id() {
     let tmp = tempfile::tempdir().unwrap();
-    let (tap, _td) = start_tap(tmp.path());
+    let (tap, _td, _player) = start_tap(tmp.path());
     let handle = tap.handle();
 
     let resp = osc_tap::control::dispatch(r#"{"cmd":"status","id":7}"#, &handle);
@@ -291,7 +305,7 @@ fn control_replies_echo_request_id() {
 #[test]
 fn start_with_dir_records_into_it() {
     let tmp = tempfile::tempdir().unwrap();
-    let (tap, _td) = start_tap(tmp.path());
+    let (tap, _td, _player) = start_tap(tmp.path());
     let handle = tap.handle();
     let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
 
@@ -313,6 +327,29 @@ fn start_with_dir_records_into_it() {
 }
 
 #[test]
+fn control_start_accepts_tl() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (tap, _td, _player) = start_tap(tmp.path());
+    let handle = tap.handle();
+    let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
+
+    let resp = osc_tap::control::dispatch(r#"{"cmd":"start","tl":42.0,"rate":0.0}"#, &handle);
+    assert_eq!(resp["ok"], true, "resp = {resp}");
+    let clip = std::path::PathBuf::from(resp["clip"].as_str().unwrap());
+
+    thread::sleep(Duration::from_millis(50));
+    tx.send_to(&encode_msg("/x", vec![OscType::Int(1)]), tap.listen_addr)
+        .unwrap();
+    wait_events(&handle, 1);
+    handle.stop_clip().unwrap();
+
+    let lines = read_lines(&clip);
+    // rate 0: header and event tl stay at the seeded value.
+    assert_eq!(lines[0]["tl"].as_f64().unwrap(), 42.0);
+    assert!((lines[1]["tl"].as_f64().unwrap() - 42.0).abs() < 1e-6);
+}
+
+#[test]
 fn stale_beacon_omits_tl() {
     let tmp = tempfile::tempdir().unwrap();
     let td = UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -321,7 +358,7 @@ fn stale_beacon_omits_tl() {
     let tap = Tap::start(Config {
         listen: "127.0.0.1:0".parse().unwrap(),
         forward: td.local_addr().unwrap(),
-        beacon: "127.0.0.1:0".parse().unwrap(),
+        relay: "127.0.0.1:9".parse().unwrap(),
         outdir: tmp.path().to_path_buf(),
         beacon_max_age_s: 0.3,
     })
@@ -331,17 +368,13 @@ fn stale_beacon_omits_tl() {
 
     // Playing beacon (rate 1) that then goes silent (TD quit mid-recording).
     tx.send_to(
-        &encode_msg("/clock", vec![OscType::Float(42.0)]),
-        tap.beacon_addr,
+        &encode_msg("/vtr/clock", vec![OscType::Float(42.0)]),
+        tap.listen_addr,
     )
     .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while handle.status().unwrap().beacon_tl.is_none() {
-        assert!(Instant::now() < deadline, "beacon not received");
-        thread::sleep(Duration::from_millis(10));
-    }
+    wait_beacon(&handle);
 
-    let clip = handle.start_clip(None).unwrap();
+    let clip = handle.start_clip(None, None, None).unwrap();
     // Let the beacon go stale (well past the 0.3s cutoff).
     thread::sleep(Duration::from_millis(600));
     tx.send_to(&encode_msg("/x", vec![OscType::Int(1)]), tap.listen_addr)
@@ -357,11 +390,11 @@ fn stale_beacon_omits_tl() {
 #[test]
 fn osc_rec_start_and_stop_control_recording() {
     let tmp = tempfile::tempdir().unwrap();
-    let (tap, _td) = start_tap(tmp.path());
+    let (tap, _td, _player) = start_tap(tmp.path());
     let handle = tap.handle();
     let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
 
-    tx.send_to(&encode_msg("/rec/start", vec![]), tap.beacon_addr)
+    tx.send_to(&encode_msg("/vtr/rec/start", vec![]), tap.listen_addr)
         .unwrap();
     wait_recording(&handle, true);
     let clip = handle.status().unwrap().clip.unwrap();
@@ -370,7 +403,7 @@ fn osc_rec_start_and_stop_control_recording() {
         .unwrap();
     wait_events(&handle, 1);
 
-    tx.send_to(&encode_msg("/rec/stop", vec![]), tap.beacon_addr)
+    tx.send_to(&encode_msg("/vtr/rec/stop", vec![]), tap.listen_addr)
         .unwrap();
     wait_recording(&handle, false);
 
@@ -392,16 +425,16 @@ fn osc_rec_start_and_stop_control_recording() {
 
 #[test]
 fn rec_start_tl_arg_seeds_the_clock() {
-    // /rec/start 42.0 with no /clock ever sent: the header carries tl ≈ 42
-    // and event tl continues from it.
+    // /vtr/rec/start 42.0 with no /vtr/clock ever sent: the header carries
+    // tl ≈ 42 and event tl continues from it.
     let tmp = tempfile::tempdir().unwrap();
-    let (tap, _td) = start_tap(tmp.path());
+    let (tap, _td, _player) = start_tap(tmp.path());
     let handle = tap.handle();
     let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
 
     tx.send_to(
-        &encode_msg("/rec/start", vec![OscType::Float(42.0)]),
-        tap.beacon_addr,
+        &encode_msg("/vtr/rec/start", vec![OscType::Float(42.0)]),
+        tap.listen_addr,
     )
     .unwrap();
     wait_recording(&handle, true);
@@ -409,7 +442,7 @@ fn rec_start_tl_arg_seeds_the_clock() {
     tx.send_to(&encode_msg("/x", vec![OscType::Int(1)]), tap.listen_addr)
         .unwrap();
     wait_events(&handle, 1);
-    tx.send_to(&encode_msg("/rec/stop", vec![]), tap.beacon_addr)
+    tx.send_to(&encode_msg("/vtr/rec/stop", vec![]), tap.listen_addr)
         .unwrap();
     wait_recording(&handle, false);
 
@@ -428,23 +461,23 @@ fn rec_start_tl_arg_seeds_the_clock() {
 #[test]
 fn rec_msgs_are_idempotent() {
     let tmp = tempfile::tempdir().unwrap();
-    let (tap, _td) = start_tap(tmp.path());
+    let (tap, _td, _player) = start_tap(tmp.path());
     let handle = tap.handle();
     let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
 
     // Stop while idle: nothing happens, no event.
-    tx.send_to(&encode_msg("/rec/stop", vec![]), tap.beacon_addr)
+    tx.send_to(&encode_msg("/vtr/rec/stop", vec![]), tap.listen_addr)
         .unwrap();
     thread::sleep(Duration::from_millis(100));
     assert!(!handle.status().unwrap().recording);
     assert_eq!(handle.event_log().newest(), 0);
 
     // Double start: one clip, one rec_started.
-    tx.send_to(&encode_msg("/rec/start", vec![]), tap.beacon_addr)
+    tx.send_to(&encode_msg("/vtr/rec/start", vec![]), tap.listen_addr)
         .unwrap();
     wait_recording(&handle, true);
     let clip = handle.status().unwrap().clip;
-    tx.send_to(&encode_msg("/rec/start", vec![]), tap.beacon_addr)
+    tx.send_to(&encode_msg("/vtr/rec/start", vec![]), tap.listen_addr)
         .unwrap();
     thread::sleep(Duration::from_millis(100));
     let st = handle.status().unwrap();
@@ -455,9 +488,192 @@ fn rec_msgs_are_idempotent() {
 }
 
 #[test]
+fn vtr_rec_toggle_starts_and_stops() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (tap, _td, _player) = start_tap(tmp.path());
+    let handle = tap.handle();
+    let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
+
+    // 1 starts, without seeding the beacon.
+    tx.send_to(
+        &encode_msg("/vtr/rec", vec![OscType::Float(1.0)]),
+        tap.listen_addr,
+    )
+    .unwrap();
+    wait_recording(&handle, true);
+    assert_eq!(handle.status().unwrap().beacon_tl, None, "no beacon seed");
+    let clip = handle.status().unwrap().clip.unwrap();
+    let lines = read_lines(&clip);
+    assert!(lines[0].get("tl").is_none(), "header must carry no tl");
+
+    // Redundant 1: idempotent.
+    tx.send_to(
+        &encode_msg("/vtr/rec", vec![OscType::Float(1.0)]),
+        tap.listen_addr,
+    )
+    .unwrap();
+    thread::sleep(Duration::from_millis(100));
+    assert_eq!(handle.status().unwrap().clip, Some(clip.clone()));
+    assert_eq!(handle.event_log().newest(), 1);
+
+    // 0 stops (int arg accepted too).
+    tx.send_to(
+        &encode_msg("/vtr/rec", vec![OscType::Int(0)]),
+        tap.listen_addr,
+    )
+    .unwrap();
+    wait_recording(&handle, false);
+    assert_eq!(handle.status().unwrap().last_clip, Some(clip));
+
+    // Redundant 0: idempotent.
+    tx.send_to(
+        &encode_msg("/vtr/rec", vec![OscType::Int(0)]),
+        tap.listen_addr,
+    )
+    .unwrap();
+    thread::sleep(Duration::from_millis(100));
+    assert_eq!(handle.event_log().newest(), 2);
+}
+
+#[test]
+fn vtr_msgs_are_never_forwarded_nor_recorded() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (tap, td, _player) = start_tap(tmp.path());
+    let handle = tap.handle();
+    let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
+
+    let clip = handle.start_clip(None, None, None).unwrap();
+    tx.send_to(
+        &encode_msg("/vtr/clock", vec![OscType::Float(1.0)]),
+        tap.listen_addr,
+    )
+    .unwrap();
+    let marker = encode_msg("/x", vec![OscType::Int(1)]);
+    tx.send_to(&marker, tap.listen_addr).unwrap();
+
+    // The first datagram TD sees is the marker: /vtr/clock was consumed.
+    let mut buf = [0u8; 1024];
+    let n = td.recv(&mut buf).unwrap();
+    assert_eq!(&buf[..n], &marker[..]);
+
+    wait_events(&handle, 1);
+    handle.stop_clip().unwrap();
+    let lines = read_lines(&clip);
+    let addrs: Vec<&str> = lines
+        .iter()
+        .filter(|l| l.get("a").is_some())
+        .map(|l| l["a"].as_str().unwrap())
+        .collect();
+    assert_eq!(addrs, vec!["/x"], "control msgs must not be recorded");
+}
+
+#[test]
+fn relay_carries_origin_and_payload() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (tap, _td, player) = start_tap(tmp.path());
+    let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
+
+    let sent = encode_msg("/vtr/seek", vec![OscType::Float(3.5)]);
+    tx.send_to(&sent, tap.listen_addr).unwrap();
+
+    let mut buf = [0u8; 1024];
+    let n = player.recv(&mut buf).unwrap();
+    let nl = buf[..n].iter().position(|&b| b == b'\n').expect("header");
+    let header = std::str::from_utf8(&buf[..nl]).unwrap();
+    assert_eq!(header, format!("v1 {}", tx.local_addr().unwrap()));
+    assert_eq!(&buf[nl + 1..n], &sent[..], "payload must be the raw datagram");
+}
+
+#[test]
+fn mixed_bundle_drops_non_vtr_siblings() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (tap, td, _player) = start_tap(tmp.path());
+    let handle = tap.handle();
+    let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
+
+    let clip = handle.start_clip(None, None, None).unwrap();
+    // /vtr/clock is handled, /app is dropped — never re-encoded and forwarded.
+    let mixed = encode_bundle(vec![
+        ("/vtr/clock", vec![OscType::Float(42.0)]),
+        ("/app", vec![OscType::Int(1)]),
+    ]);
+    tx.send_to(&mixed, tap.listen_addr).unwrap();
+    wait_beacon(&handle);
+
+    let marker = encode_msg("/x", vec![OscType::Int(1)]);
+    tx.send_to(&marker, tap.listen_addr).unwrap();
+    let mut buf = [0u8; 1024];
+    let n = td.recv(&mut buf).unwrap();
+    assert_eq!(&buf[..n], &marker[..], "nothing of the bundle is forwarded");
+
+    wait_events(&handle, 1);
+    handle.stop_clip().unwrap();
+    let lines = read_lines(&clip);
+    assert!(
+        lines.iter().all(|l| l.get("a").map(|a| a != "/app").unwrap_or(true)),
+        "dropped sibling must not be recorded"
+    );
+}
+
+#[test]
+fn plain_bundles_forward_byte_identical() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (tap, td, _player) = start_tap(tmp.path());
+    let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
+
+    let bundle = encode_bundle(vec![
+        ("/b1", vec![OscType::Int(1)]),
+        ("/b2", vec![OscType::Int(2)]),
+    ]);
+    tx.send_to(&bundle, tap.listen_addr).unwrap();
+
+    let mut buf = [0u8; 1024];
+    let n = td.recv(&mut buf).unwrap();
+    assert_eq!(&buf[..n], &bundle[..]);
+}
+
+#[test]
+fn vtr_lookalikes_forward_byte_identical() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (tap, td, _player) = start_tap(tmp.path());
+    let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let mut buf = [0u8; 1024];
+
+    // "/vtr/" in a string arg: byte-scan hit, but app data.
+    let string_arg = encode_msg("/label", vec![OscType::String("/vtr/rec".into())]);
+    tx.send_to(&string_arg, tap.listen_addr).unwrap();
+    let n = td.recv(&mut buf).unwrap();
+    assert_eq!(&buf[..n], &string_arg[..]);
+
+    // "/vtr/" not at the start of the address: app data.
+    let infix = encode_msg("/x/vtr/y", vec![OscType::Int(1)]);
+    tx.send_to(&infix, tap.listen_addr).unwrap();
+    let n = td.recv(&mut buf).unwrap();
+    assert_eq!(&buf[..n], &infix[..]);
+}
+
+#[test]
+fn unknown_vtr_addresses_are_dropped() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (tap, td, _player) = start_tap(tmp.path());
+    let handle = tap.handle();
+    let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
+
+    tx.send_to(&encode_msg("/vtr/nope", vec![]), tap.listen_addr)
+        .unwrap();
+    let marker = encode_msg("/x", vec![OscType::Int(1)]);
+    tx.send_to(&marker, tap.listen_addr).unwrap();
+
+    let mut buf = [0u8; 1024];
+    let n = td.recv(&mut buf).unwrap();
+    assert_eq!(&buf[..n], &marker[..], "unknown /vtr/* must not be forwarded");
+    assert!(!handle.status().unwrap().recording);
+}
+
+#[test]
 fn wait_long_polls_the_event_log() {
     let tmp = tempfile::tempdir().unwrap();
-    let (tap, _td) = start_tap(tmp.path());
+    let (tap, _td, _player) = start_tap(tmp.path());
     let handle = tap.handle();
     let sock_path = tmp.path().join("tap.sock");
     {
@@ -500,7 +716,7 @@ fn wait_long_polls_the_event_log() {
     assert_eq!(resp["id"], 3, "status must answer while wait blocks");
 
     // The blocked wait wakes on a (local) start.
-    let clip = handle.start_clip(None).unwrap();
+    let clip = handle.start_clip(None, None, None).unwrap();
     let resp = read_reply();
     assert_eq!(resp["id"], 2);
     assert_eq!(resp["seq"], 1);
@@ -527,20 +743,20 @@ fn wait_long_polls_the_event_log() {
 #[test]
 fn non_finite_beacon_is_rejected() {
     let tmp = tempfile::tempdir().unwrap();
-    let (tap, _td) = start_tap(tmp.path());
+    let (tap, _td, _player) = start_tap(tmp.path());
     let handle = tap.handle();
     let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
 
     tx.send_to(
-        &encode_msg("/clock", vec![OscType::Float(f32::NAN)]),
-        tap.beacon_addr,
+        &encode_msg("/vtr/clock", vec![OscType::Float(f32::NAN)]),
+        tap.listen_addr,
     )
     .unwrap();
     thread::sleep(Duration::from_millis(200));
     // The NaN beacon must not be accepted at all.
     assert!(handle.status().unwrap().beacon_tl.is_none());
 
-    let clip = handle.start_clip(None).unwrap();
+    let clip = handle.start_clip(None, None, None).unwrap();
     tx.send_to(&encode_msg("/x", vec![OscType::Int(1)]), tap.listen_addr)
         .unwrap();
     wait_events(&handle, 1);

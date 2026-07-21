@@ -20,7 +20,7 @@ fn start_tap(outdir: &std::path::Path) -> Tap {
     Tap::start(Config {
         listen: "127.0.0.1:0".parse().unwrap(),
         forward,
-        beacon: "127.0.0.1:0".parse().unwrap(),
+        relay: "127.0.0.1:9".parse().unwrap(),
         outdir: outdir.to_path_buf(),
         beacon_max_age_s: 5.0,
     })
@@ -70,7 +70,7 @@ fn burst_no_loss() {
     let handle = tap.handle();
     let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
 
-    let clip = handle.start_clip(None).unwrap();
+    let clip = handle.start_clip(None, None, None).unwrap();
     for i in 0..N {
         tx.send_to(
             &encode_msg("/burst", vec![OscType::Int(i as i32)]),
@@ -102,7 +102,7 @@ fn soak_120hz() {
     let handle = tap.handle();
     let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
 
-    let clip = handle.start_clip(None).unwrap();
+    let clip = handle.start_clip(None, None, None).unwrap();
     let period = Duration::from_secs_f64(1.0 / HZ);
     let start = Instant::now();
     for i in 0..n {

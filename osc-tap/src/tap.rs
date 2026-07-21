@@ -23,6 +23,9 @@ const RECV_BUF_BYTES: usize = 4 * 1024 * 1024;
 /// Bounds packet COUNT, not bytes: worst case ~4 GB of heap at max datagram
 /// size. Fine for a trusted LAN; don't shrink it without a real need.
 const CHANNEL_CAP: usize = 65_536;
+/// Control (`/vtr/*`) messages are low-rate (~10 Hz clock + rare rec/transport);
+/// a small bound keeps a stalled control thread from hoarding memory.
+const CTL_CHANNEL_CAP: usize = 256;
 
 /// Logs at most once per second; counts what it swallowed in between.
 struct RateLimitedLog {
@@ -54,7 +57,7 @@ impl RateLimitedLog {
     }
 }
 
-/// Latest `/clock` beacon.
+/// Latest `/vtr/clock` beacon.
 #[derive(Debug, Clone, Copy)]
 pub struct Beacon {
     /// Master timeline seconds.
@@ -188,7 +191,6 @@ impl EventLog {
 
 pub struct Tap {
     pub listen_addr: SocketAddr,
-    pub beacon_addr: SocketAddr,
     handle: Handle,
 }
 
@@ -207,6 +209,9 @@ enum Msg {
     Start {
         /// Record into this directory instead of the default outdir.
         dir: Option<PathBuf>,
+        /// Seed the beacon before starting so the clip header carries tl.
+        tl: Option<f64>,
+        rate: Option<f64>,
         reply: Sender<Result<PathBuf, String>>,
     },
     Stop {
@@ -246,10 +251,20 @@ pub struct Status {
 }
 
 impl Handle {
-    pub fn start_clip(&self, dir: Option<PathBuf>) -> Result<PathBuf, String> {
+    pub fn start_clip(
+        &self,
+        dir: Option<PathBuf>,
+        tl: Option<f64>,
+        rate: Option<f64>,
+    ) -> Result<PathBuf, String> {
         let (tx, rx) = mpsc::channel();
         self.tx
-            .send(Msg::Start { dir, reply: tx })
+            .send(Msg::Start {
+                dir,
+                tl,
+                rate,
+                reply: tx,
+            })
             .map_err(|_| "writer thread gone".to_string())?;
         rx.recv().map_err(|_| "writer thread gone".to_string())?
     }
@@ -279,15 +294,13 @@ impl Tap {
     pub fn start(config: Config) -> Result<Tap> {
         let listen = bind_udp(config.listen, Some(RECV_BUF_BYTES))
             .with_context(|| format!("bind listen {}", config.listen))?;
-        let beacon_sock = bind_udp(config.beacon, None)
-            .with_context(|| format!("bind beacon {}", config.beacon))?;
         let forward = UdpSocket::bind("0.0.0.0:0").context("bind forward socket")?;
         forward
             .connect(config.forward)
             .with_context(|| format!("connect forward {}", config.forward))?;
+        let relay_sock = UdpSocket::bind("0.0.0.0:0").context("bind relay socket")?;
 
         let listen_addr = listen.local_addr()?;
-        let beacon_addr = beacon_sock.local_addr()?;
         std::fs::create_dir_all(&config.outdir)?;
 
         let beacon: BeaconState = Arc::new(Mutex::new(None));
@@ -295,8 +308,13 @@ impl Tap {
         let received = Arc::new(AtomicU64::new(0));
         let event_log = EventLog::new();
         let (tx, rx) = mpsc::sync_channel::<Msg>(CHANNEL_CAP);
+        let (ctl_tx, ctl_rx) = mpsc::sync_channel::<CtlPacket>(CTL_CHANNEL_CAP);
 
-        // recv thread: stamp, forward raw, hand off to writer. No parsing here.
+        // recv thread: stamp, forward raw, hand off to writer. `/vtr/*`
+        // control datagrams go to the control thread instead — never to the
+        // app, never to the writer. Decoding happens here only on a `/vtr/`
+        // byte-scan hit, so a false positive is forwarded raw from the same
+        // thread, in order; the hot path stays scan + forward + try_send.
         {
             let beacon = beacon.clone();
             let tx = tx.clone();
@@ -307,9 +325,10 @@ impl Tap {
                 // TD down turns every forward into an error (~120/s); throttle.
                 let mut recv_log = RateLimitedLog::new();
                 let mut fwd_log = RateLimitedLog::new();
+                let mut ctl_log = RateLimitedLog::new();
                 loop {
-                    let n = match listen.recv(&mut buf) {
-                        Ok(n) => n,
+                    let (n, origin) = match listen.recv_from(&mut buf) {
+                        Ok(r) => r,
                         Err(e) => {
                             recv_log.log(&format!("recv error: {e}"));
                             continue;
@@ -317,6 +336,24 @@ impl Tap {
                     };
                     let t = Instant::now();
                     received.fetch_add(1, Ordering::Relaxed);
+                    if contains_vtr(&buf[..n]) {
+                        if let Some(msgs) = decode_control(&buf[..n]) {
+                            match ctl_tx.try_send(CtlPacket {
+                                origin,
+                                buf: buf[..n].to_vec(),
+                                msgs,
+                            }) {
+                                Ok(()) => {}
+                                Err(TrySendError::Full(_)) => {
+                                    ctl_log.log("control backlog full, /vtr datagram dropped");
+                                }
+                                Err(TrySendError::Disconnected(_)) => break,
+                            }
+                            continue;
+                        }
+                        // False positive (`/vtr/` in a string arg, `/x/vtr/y`):
+                        // app data, forwarded raw below.
+                    }
                     if let Err(e) = forward.send(&buf[..n]) {
                         fwd_log.log(&format!("forward error: {e}"));
                     }
@@ -339,40 +376,42 @@ impl Tap {
             })?;
         }
 
-        // beacon thread: /clock beacons plus /rec/start & /rec/stop.
+        // control thread: dispatches `/vtr/*` (beacon update, rec start/stop)
+        // and relays every control datagram to the player. Not inline in recv:
+        // start_clip blocks on a writer round trip that opens the clip file —
+        // that stall must not sit on the 120 Hz listen socket.
         {
             let beacon = beacon.clone();
             let handle = Handle {
                 tx: tx.clone(),
                 log: event_log.clone(),
             };
-            thread::Builder::new().name("beacon".into()).spawn(move || {
-                let mut buf = [0u8; MAX_DATAGRAM];
-                let mut recv_log = RateLimitedLog::new();
+            let relay_addr = config.relay;
+            thread::Builder::new().name("control".into()).spawn(move || {
                 let mut arg_log = RateLimitedLog::new();
                 let mut rec_log = RateLimitedLog::new();
-                loop {
-                    let n = match beacon_sock.recv(&mut buf) {
-                        Ok(n) => n,
-                        Err(e) => {
-                            recv_log.log(&format!("beacon recv error: {e}"));
-                            continue;
-                        }
-                    };
+                let mut unknown_log = RateLimitedLog::new();
+                let mut mixed_log = RateLimitedLog::new();
+                let mut clock_src_log = RateLimitedLog::new();
+                let mut relay_log = RateLimitedLog::new();
+                // Last /vtr/clock sender, for multi-sender arbitration warnings.
+                let mut last_clock: Option<(SocketAddr, Instant)> = None;
+                for pkt in ctl_rx {
+                    // Relay first, fire-and-forget: a dead player is invisible.
+                    let mut frame = format!("v1 {}\n", pkt.origin).into_bytes();
+                    frame.extend_from_slice(&pkt.buf);
+                    if let Err(e) = relay_sock.send_to(&frame, relay_addr) {
+                        relay_log.log(&format!("relay send error: {e}"));
+                    }
                     let now = Instant::now();
-                    let Ok((_, packet)) = rosc::decoder::decode_udp(&buf[..n]) else {
-                        continue;
-                    };
-                    let mut msgs = Vec::new();
-                    flatten(packet, &mut msgs);
-                    for m in msgs {
+                    for m in &pkt.msgs {
                         match m.addr.as_str() {
-                            "/clock" => {
+                            "/vtr/clock" => {
                                 // Silently dropping these left all clips without tl
                                 // and no hint why; say what arrived instead.
                                 let Some(t) = arg_as_f64(m.args.first()) else {
                                     arg_log.log(&format!(
-                                        "warn: /clock arg not numeric ({:?}), beacon ignored",
+                                        "warn: /vtr/clock arg not numeric ({:?}), beacon ignored",
                                         m.args.first()
                                     ));
                                     continue;
@@ -383,32 +422,76 @@ impl Tap {
                                 if !t.is_finite() || !rate.is_finite() {
                                     continue;
                                 }
+                                // Last-write-wins across senders; warn when the
+                                // source flips within a few seconds.
+                                if let Some((src, at)) = last_clock {
+                                    if src != pkt.origin && (now - at).as_secs_f64() < 3.0 {
+                                        clock_src_log.log(&format!(
+                                            "warn: /vtr/clock from multiple senders ({src}, {})",
+                                            pkt.origin
+                                        ));
+                                    }
+                                }
+                                last_clock = Some((pkt.origin, now));
                                 *beacon.lock().unwrap() = Some(Beacon { t, rate, at: now });
                             }
-                            "/rec/start" => {
-                                // Optional [tl] [rate]: update the beacon first so
-                                // the clip starts with a correct tl (the official
-                                // sync mechanism). Bad args: ignore, still start.
-                                let tl = arg_as_f64(m.args.first()).filter(|v| v.is_finite());
-                                if let Some(t) = tl {
-                                    let rate = arg_as_f64(m.args.get(1))
-                                        .filter(|v| v.is_finite())
-                                        .unwrap_or(1.0);
-                                    *beacon.lock().unwrap() =
-                                        Some(Beacon { t, rate, at: now });
-                                }
-                                match handle.start_clip(None) {
-                                    Ok(path) => eprintln!("osc-tap: /rec/start -> {path:?}"),
-                                    // Idempotent: already recording is a no-op.
-                                    Err(e) => rec_log.log(&format!("/rec/start ignored: {e}")),
+                            // Controller-facing toggle: no beacon seed.
+                            "/vtr/rec" => {
+                                match arg_as_f64(m.args.first()).filter(|v| v.is_finite()) {
+                                    Some(v) if v != 0.0 => {
+                                        match handle.start_clip(None, None, None) {
+                                            Ok(path) => {
+                                                eprintln!("osc-tap: /vtr/rec 1 -> {path:?}")
+                                            }
+                                            // Idempotent: already recording is a no-op.
+                                            Err(e) => rec_log
+                                                .log(&format!("/vtr/rec 1 ignored: {e}")),
+                                        }
+                                    }
+                                    Some(_) => match handle.stop_clip() {
+                                        Ok(()) => eprintln!("osc-tap: /vtr/rec 0"),
+                                        // Idempotent: not recording is a no-op.
+                                        Err(e) => {
+                                            rec_log.log(&format!("/vtr/rec 0 ignored: {e}"))
+                                        }
+                                    },
+                                    None => arg_log.log(&format!(
+                                        "warn: /vtr/rec arg not numeric ({:?}), dropped",
+                                        m.args.first()
+                                    )),
                                 }
                             }
-                            "/rec/stop" => match handle.stop_clip() {
-                                Ok(()) => eprintln!("osc-tap: /rec/stop"),
+                            "/vtr/rec/start" => {
+                                // Optional [tl] [rate] seed the beacon (in the
+                                // writer) so the clip starts with a correct tl.
+                                // Bad args: ignore, still start.
+                                let tl = arg_as_f64(m.args.first()).filter(|v| v.is_finite());
+                                let rate = arg_as_f64(m.args.get(1)).filter(|v| v.is_finite());
+                                match handle.start_clip(None, tl, rate) {
+                                    Ok(path) => eprintln!("osc-tap: /vtr/rec/start -> {path:?}"),
+                                    // Idempotent: already recording is a no-op.
+                                    Err(e) => {
+                                        rec_log.log(&format!("/vtr/rec/start ignored: {e}"))
+                                    }
+                                }
+                            }
+                            "/vtr/rec/stop" => match handle.stop_clip() {
+                                Ok(()) => eprintln!("osc-tap: /vtr/rec/stop"),
                                 // Idempotent: not recording is a no-op.
-                                Err(e) => rec_log.log(&format!("/rec/stop ignored: {e}")),
+                                Err(e) => rec_log.log(&format!("/vtr/rec/stop ignored: {e}")),
                             },
-                            _ => {}
+                            // Player-handled addresses (/vtr/play, /vtr/stop,
+                            // /vtr/seek) and unknowns: relay already happened.
+                            a if a.starts_with("/vtr/") => {
+                                if !matches!(a, "/vtr/play" | "/vtr/stop" | "/vtr/seek") {
+                                    unknown_log.log(&format!("warn: unknown {a} dropped"));
+                                }
+                            }
+                            // Mixed bundle: a consumed datagram is never
+                            // partially re-encoded and forwarded.
+                            a => mixed_log.log(&format!(
+                                "warn: non-/vtr message {a} in a control bundle dropped"
+                            )),
                         }
                     }
                 }
@@ -438,7 +521,6 @@ impl Tap {
 
         Ok(Tap {
             listen_addr,
-            beacon_addr,
             handle: Handle { tx, log: event_log },
         })
     }
@@ -544,14 +626,25 @@ impl Writer {
                 }
                 self.rec = Some(rec);
             }
-            Msg::Start { dir, reply } => {
+            Msg::Start {
+                dir,
+                tl: tl_seed,
+                rate,
+                reply,
+            } => {
+                let now = Instant::now();
+                // Seed the beacon first (even on a redundant start) so the
+                // clip starts with a correct tl — the official sync mechanism.
+                if let Some(t) = tl_seed.filter(|v| v.is_finite()) {
+                    let rate = rate.filter(|v| v.is_finite()).unwrap_or(1.0);
+                    *self.beacon.lock().unwrap() = Some(Beacon { t, rate, at: now });
+                }
                 if self.rec.is_some() {
                     let _ = reply.send(Err("already recording".into()));
                     return;
                 }
                 // Timeline position at clip start, same age filter as packet
                 // stamping; into the session_start header and the event.
-                let now = Instant::now();
                 let tl = self
                     .beacon
                     .lock()
@@ -691,6 +784,32 @@ fn write_line(file: &mut File, value: &Value) -> Result<(), String> {
         })
 }
 
+/// A `/vtr/*` datagram bound for the control thread, with its origin for
+/// the player relay.
+struct CtlPacket {
+    origin: SocketAddr,
+    buf: Vec<u8>,
+    msgs: Vec<OscMessage>,
+}
+
+/// Cheap scan deciding whether a datagram might be control at all.
+fn contains_vtr(buf: &[u8]) -> bool {
+    buf.windows(5).any(|w| w == b"/vtr/")
+}
+
+/// A datagram is control iff it decodes to a message whose address starts
+/// with `/vtr/`, or a bundle containing at least one such message. Returns
+/// the flattened messages, or None for app data (including false positives:
+/// `/vtr/` inside a string arg, addresses like `/x/vtr/y`).
+fn decode_control(buf: &[u8]) -> Option<Vec<OscMessage>> {
+    let (_, packet) = rosc::decoder::decode_udp(buf).ok()?;
+    let mut msgs = Vec::new();
+    flatten(packet, &mut msgs);
+    msgs.iter()
+        .any(|m| m.addr.starts_with("/vtr/"))
+        .then_some(msgs)
+}
+
 fn flatten(packet: OscPacket, out: &mut Vec<OscMessage>) {
     match packet {
         OscPacket::Message(m) => out.push(m),
@@ -807,7 +926,7 @@ mod tests {
 
     fn start_clip(w: &mut Writer) -> PathBuf {
         let (tx, rx) = mpsc::channel();
-        w.handle(Msg::Start { dir: None, reply: tx });
+        w.handle(Msg::Start { dir: None, tl: None, rate: None, reply: tx });
         rx.recv().unwrap().unwrap()
     }
 
@@ -1068,7 +1187,7 @@ mod tests {
         // Failed start (already recording) must not emit an event.
         start_clip(&mut w);
         let (tx, rx) = mpsc::channel();
-        w.handle(Msg::Start { dir: None, reply: tx });
+        w.handle(Msg::Start { dir: None, tl: None, rate: None, reply: tx });
         assert!(rx.recv().unwrap().is_err());
         assert_eq!(w.event_log.newest(), 3);
     }

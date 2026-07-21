@@ -6,7 +6,7 @@ VJs' Timeline Recorder. Record, edit, and replay OSC for VJ performance archival
 
 ## Components
 
-- **osc-tap** (Rust): UDP proxy that forwards OSC unchanged to TD and logs parsed copies as JSONL. Stamps TD-timeline time (`tl`) from a `/clock` beacon; the same port takes `/rec/start` / `/rec/stop`. Default ports: listen 10010, forward 127.0.0.1:10011, control 10012.
+- **osc-tap** (Rust): UDP proxy that forwards OSC unchanged to TD and logs parsed copies as JSONL. Control messages arrive on the listen port under the `/vtr` prefix: `/vtr/clock` stamps TD-timeline time (`tl`), `/vtr/rec*` starts/stops clips, and every `/vtr/*` datagram is relayed to vtr-player. Default ports: listen 10010, forward 127.0.0.1:10011, relay 127.0.0.1:10013.
 - **osc-editor** (Electron): DAW-style editor. Records clips via osc-tap, arranges them on tracks, previews to TD, exports a merged `session.jsonl`.
 - **vtr_core** (Python, `td/`): reference implementation of the playback resolver + conformance tests for the upcoming `vtr-player` (server-side Rust resolver, protocol v2 — see `docs/tasks/resolver-server/`).
 
@@ -50,28 +50,31 @@ userData (`~/Library/Application Support/VTR/recordings/`) and move
 into the bundle on save. The control socket and undo log live in userData
 too — the editor writes nothing to its cwd.
 
-## OSC control (port 10012)
+## OSC control (protocol v2, `/vtr` namespace)
 
-The VJ app drives VTR over the control port. Addresses are bare (no
-prefix); the dedicated port is the namespace.
+Control messages share the listen ports with app traffic under the
+reserved `/vtr` prefix. They are never forwarded to the app and never
+recorded; each one is also relayed (with its origin) to vtr-player.
+A bundle counts as control if it contains at least one `/vtr/*` message;
+its non-`/vtr` siblings are dropped, so don't mix them in one bundle.
 
-- `/clock <t> [rate]` — timeline beacon. `t` = master timeline seconds,
-  `rate` = speed (default 1; 0 = paused). Send at ~10Hz; recorded events
-  get an extrapolated `tl`, omitted once the last beacon is >5s old.
-- `/rec/start [tl] [rate]` — start a clip. Works with the editor closed
-  (launchd keeps osc-tap alive). The optional `tl` updates the clock and
-  starts the clip in one step, so the recording is synced from its first
-  event — this is the official sync mechanism. A running editor picks the
-  clip up live; otherwise it imports on next launch.
-- `/rec/stop` — stop the clip.
+| Address | Args | Handled by | Effect |
+| --- | --- | --- | --- |
+| `/vtr/clock` | `t [rate]` | tap | Timeline beacon for `tl` stamping. `t` = master timeline seconds, `rate` = speed (default 1; 0 = paused). Send at ~10Hz; recorded events get an extrapolated `tl`, omitted once the last beacon is >5s old. |
+| `/vtr/rec` | `0\|1` | tap | Controller-facing rec toggle: `1` starts a clip (no beacon seed), `0` stops it. The player echoes the same address back on state change. |
+| `/vtr/rec/start` | `[tl] [rate]` | tap + player | Start a clip. The optional `tl` updates the clock and starts the clip in one step, so the recording is synced from its first event — this is the official sync mechanism. The player additionally primes punch-in state at `tl`. |
+| `/vtr/rec/stop` | — | tap | Stop the clip. |
+| `/vtr/play` / `/vtr/stop` | — | player | Push-transport run/pause. |
+| `/vtr/seek` | `t` | player | Jump the push transport to `t`. |
 
-Both `/rec` cmds are idempotent: start-while-recording and stop-while-idle
+All rec commands are idempotent: start-while-recording and stop-while-idle
 are no-ops. Non-numeric or non-finite args are ignored (the command still
-runs).
+runs). Unknown `/vtr/*` addresses are dropped with a rate-limited log.
 
 The editor talks to osc-tap over a unix-socket JSON Lines API:
-`start` / `stop` / `status`, plus `wait` — a long-poll on the recording
-event log (`rec_started` / `rec_stopped`) that drives the editor's UI.
+`start` (optional `tl`/`rate`) / `stop` / `status`, plus `wait` — a
+long-poll on the recording event log (`rec_started` / `rec_stopped`) that
+drives the editor's UI.
 
 ## JSONL schema
 
