@@ -2,9 +2,18 @@
 //! tap's, but **stateful per connection**: each connection owns a
 //! dedup-wrapped resolver, so per-frame `resolve` calls return deltas.
 //!
-//! Requests:  {"cmd":"load","path":"…","triggers"?:[…],"routes"?:{"10010":9000}}
-//!          | {"cmd":"resolve","t":T} | {"cmd":"status"}
+//! Requests:  {"cmd":"load","path":"…"|"events":[…],"name"?:"…","duration"?:D,
+//!             "triggers"?:[…],"routes"?:{"10010":9000}}
+//!          | {"cmd":"resolve","t":T} | {"cmd":"resolve","follow":true}
+//!          | {"cmd":"play"} | {"cmd":"stop"} | {"cmd":"seek","t":T}
+//!          | {"cmd":"status"}
 //! Responses: {"ok":true,...} | {"ok":false,"error":"..."}
+//!
+//! `events` is the inline form of `load`: the same objects as session.jsonl
+//! lines, parsed — the editor uses it to sync its unexported project without
+//! touching disk. `resolve` with `follow` resolves at the push transport's
+//! playhead (reply carries `t`), so a client can track the transport that
+//! `play`/`stop`/`seek` (or relayed `/vtr/*`) drive.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
@@ -91,9 +100,32 @@ fn dispatch(request: &Value, ctx: &Ctx, conn: &mut ConnState) -> Value {
     match request["cmd"].as_str() {
         Some("load") => load(request, ctx),
         Some("resolve") => resolve(request, ctx, conn),
+        Some("play") => {
+            ctx.transport.play();
+            transport_reply(ctx)
+        }
+        Some("stop") => {
+            ctx.transport.stop();
+            transport_reply(ctx)
+        }
+        Some("seek") => {
+            let Some(t) = request["t"].as_f64().filter(|v| v.is_finite()) else {
+                return json!({"ok": false, "error": "missing t"});
+            };
+            ctx.transport.request_seek(t);
+            transport_reply(ctx)
+        }
         Some("status") => status(ctx),
         _ => json!({"ok": false, "error": "unknown cmd"}),
     }
+}
+
+fn transport_reply(ctx: &Ctx) -> Value {
+    json!({
+        "ok": true,
+        "playing": ctx.transport.playing(),
+        "playhead": ctx.transport.playhead(),
+    })
 }
 
 fn parse_route_overrides(v: Option<&Value>) -> HashMap<u16, u16> {
@@ -113,19 +145,28 @@ fn parse_route_overrides(v: Option<&Value>) -> HashMap<u16, u16> {
 }
 
 fn load(request: &Value, ctx: &Ctx) -> Value {
-    let Some(path) = request["path"].as_str() else {
-        return json!({"ok": false, "error": "missing path"});
-    };
     let triggers: Vec<String> = request["triggers"]
         .as_array()
         .into_iter()
         .flatten()
         .filter_map(|v| v.as_str().map(String::from))
         .collect();
-    let s = match session::load(Path::new(path)) {
-        Ok(s) => s,
-        Err(e) => return json!({"ok": false, "error": format!("load failed: {e}")}),
+    let (mut s, label) = if let Some(path) = request["path"].as_str() {
+        match session::load(Path::new(path)) {
+            Ok(s) => (s, path.to_string()),
+            Err(e) => return json!({"ok": false, "error": format!("load failed: {e}")}),
+        }
+    } else if let Some(events) = request["events"].as_array() {
+        let label = request["name"].as_str().unwrap_or("(inline)").to_string();
+        (session::from_values(events.clone()), label)
+    } else {
+        return json!({"ok": false, "error": "missing path or events"});
     };
+    // Inline sessions have no session_end marker; let the caller state the
+    // project duration instead of falling back to the last event's t.
+    if let Some(d) = request["duration"].as_f64().filter(|v| v.is_finite()) {
+        s.duration = d;
+    }
     let mut routes = s.routes.clone();
     routes.extend(parse_route_overrides(request.get("routes")));
 
@@ -143,7 +184,7 @@ fn load(request: &Value, ctx: &Ctx) -> Value {
     });
 
     let loaded = Arc::new(LoadedSession {
-        path: PathBuf::from(path),
+        path: PathBuf::from(label),
         session: Arc::new(s),
         triggers: TriggerPatterns::compile(&triggers),
         routes,
@@ -156,8 +197,15 @@ fn load(request: &Value, ctx: &Ctx) -> Value {
 }
 
 fn resolve(request: &Value, ctx: &Ctx, conn: &mut ConnState) -> Value {
-    let Some(t) = request["t"].as_f64().filter(|v| v.is_finite()) else {
-        return json!({"ok": false, "error": "missing t"});
+    // follow: resolve at the push transport's playhead, so a per-frame
+    // client can track a transport someone else drives (editor preview).
+    let t = if request["follow"].as_bool() == Some(true) {
+        ctx.transport.playhead()
+    } else {
+        let Some(t) = request["t"].as_f64().filter(|v| v.is_finite()) else {
+            return json!({"ok": false, "error": "missing t"});
+        };
+        t
     };
     let (epoch, loaded) = ctx.shared.snapshot();
     let Some(loaded) = loaded else {
@@ -179,6 +227,8 @@ fn resolve(request: &Value, ctx: &Ctx, conn: &mut ConnState) -> Value {
     json!({
         "ok": true,
         "mode": match mode { Mode::Pump => "pump", Mode::Seek => "seek" },
+        "t": t,
+        "playing": ctx.transport.playing(),
         "events": events,
     })
 }

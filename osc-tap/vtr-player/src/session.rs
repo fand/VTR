@@ -104,7 +104,27 @@ fn parse_routes(routes: Option<&Value>) -> HashMap<u16, u16> {
 pub fn load(path: &Path) -> Result<Session> {
     let file = File::open(path).with_context(|| format!("open {path:?}"))?;
     let reader = BufReader::new(file);
+    let mut values: Vec<Option<Value>> = Vec::new();
+    for line in reader.lines() {
+        let line = line?;
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        values.push(serde_json::from_str::<Value>(line).ok());
+    }
+    Ok(build(values))
+}
 
+/// Build a session from already-parsed event objects (the control API's
+/// inline `load`). Same schema as session.jsonl lines; marker lines
+/// (`type`) are honored, non-objects count as skipped.
+pub fn from_values(values: Vec<Value>) -> Session {
+    build(values.into_iter().map(Some).collect())
+}
+
+/// Shared builder: `None` entries are unparseable lines (counted skipped).
+fn build(values: Vec<Option<Value>>) -> Session {
     let mut ts: Vec<f64> = Vec::new();
     let mut addr_ids: Vec<u32> = Vec::new();
     let mut types_ids: Vec<u32> = Vec::new();
@@ -120,13 +140,8 @@ pub fn load(path: &Path) -> Result<Session> {
     let mut duration: Option<f64> = None;
     let mut skipped: u64 = 0;
 
-    for line in reader.lines() {
-        let line = line?;
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let Ok(obj) = serde_json::from_str::<Value>(line) else {
+    for obj in values {
+        let Some(obj) = obj else {
             skipped += 1;
             continue;
         };
@@ -221,7 +236,7 @@ pub fn load(path: &Path) -> Result<Session> {
 
     let duration = duration.unwrap_or_else(|| ts.last().copied().unwrap_or(0.0));
 
-    Ok(Session {
+    Session {
         t: ts,
         addr_id: addr_ids,
         types_id: types_ids,
@@ -236,5 +251,5 @@ pub fn load(path: &Path) -> Result<Session> {
         routes,
         duration,
         skipped,
-    })
+    }
 }

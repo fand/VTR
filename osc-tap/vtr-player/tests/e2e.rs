@@ -423,3 +423,79 @@ fn resolve_without_session_errors() {
     let r = c.request(json!({"cmd": "nope"}));
     assert_eq!(r["ok"], false);
 }
+
+#[test]
+fn inline_load_replies_with_session_facts() {
+    let tmp = tempfile::tempdir().unwrap();
+    let h = start_player(tmp.path(), None);
+    let mut c = h.connect();
+    let resp = c.request(json!({
+        "cmd": "load",
+        "events": [ev(1.0, "/a", &[1.0]), ev(2.0, "/b", &[2.0])],
+        "duration": 30.0,
+        "name": "(editor)",
+    }));
+    assert_eq!(resp["ok"], true, "resp = {resp}");
+    assert_eq!(resp["duration"], 30.0);
+    assert_eq!(resp["events"], 2);
+    assert_eq!(resp["addresses"], 2);
+    assert_eq!(resp["skipped"], 0);
+    // No routes: the push transport stays silent for inline sessions.
+    assert_eq!(resp["routes"], json!({}));
+
+    let st = c.request(json!({"cmd": "status"}));
+    assert_eq!(st["status"]["loaded"], "(editor)");
+
+    // The inline session resolves like a file-loaded one.
+    let r = c.request(json!({"cmd": "resolve", "t": 1.5}));
+    assert_eq!(r["ok"], true, "resp = {r}");
+    assert_eq!(r["events"], json!([[10010, "/a", [1.0]]]));
+}
+
+#[test]
+fn transport_cmds_drive_playhead_and_follow_resolve() {
+    let tmp = tempfile::tempdir().unwrap();
+    let h = start_player(tmp.path(), None);
+    let mut c = h.connect();
+    let resp = c.request(json!({
+        "cmd": "load",
+        "events": [ev(0.05, "/a", &[1.0]), ev(0.10, "/a", &[2.0]), ev(5.0, "/a", &[3.0])],
+        "duration": 60.0,
+    }));
+    assert_eq!(resp["ok"], true, "resp = {resp}");
+
+    // seek goes through the emit loop's mailbox; poll until it lands.
+    assert_eq!(c.request(json!({"cmd": "seek", "t": 2.0}))["ok"], true);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let head = c.request(json!({"cmd": "status"}))["status"]["playhead"]
+            .as_f64()
+            .unwrap();
+        if (head - 2.0).abs() < 0.01 {
+            break;
+        }
+        assert!(Instant::now() < deadline, "seek never landed (head {head})");
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    // follow: resolve at the transport playhead, catch-up to the seek.
+    let r = c.request(json!({"cmd": "resolve", "follow": true}));
+    assert_eq!(r["ok"], true, "resp = {r}");
+    assert!((r["t"].as_f64().unwrap() - 2.0).abs() < 0.2, "t = {}", r["t"]);
+    assert_eq!(r["playing"], false);
+    assert_eq!(r["events"], json!([[10010, "/a", [2.0]]]));
+
+    // play advances the playhead; stop freezes it.
+    let r = c.request(json!({"cmd": "play"}));
+    assert_eq!(r["playing"], true);
+    thread::sleep(Duration::from_millis(50));
+    let r = c.request(json!({"cmd": "resolve", "follow": true}));
+    assert!(r["t"].as_f64().unwrap() > 2.0, "t = {}", r["t"]);
+
+    let r = c.request(json!({"cmd": "stop"}));
+    assert_eq!(r["playing"], false);
+    let frozen = r["playhead"].as_f64().unwrap();
+    thread::sleep(Duration::from_millis(30));
+    let r = c.request(json!({"cmd": "resolve", "follow": true}));
+    assert!((r["t"].as_f64().unwrap() - frozen).abs() < 1e-6);
+}
