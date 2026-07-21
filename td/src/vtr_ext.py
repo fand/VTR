@@ -18,6 +18,7 @@ Spec: docs/tasks/tox-rework/spec.md + plan.md.
 import json
 import os
 import socket
+import time
 import traceback
 
 # Blocking-read budget for one player reply. Generous on purpose: offline
@@ -26,6 +27,10 @@ import traceback
 QUERY_TIMEOUT_S = 5.0
 # Throttle reconnect attempts after a socket failure.
 RECONNECT_S = 1.0
+# Paused-timeline tick rate. onFrameStart stops when the TD timeline is
+# paused; the delayed-run queue does not, so a self-rescheduling heartbeat
+# keeps player sync and the clock beacon alive through a pause.
+HEARTBEAT_MS = 50
 
 
 class VTRExt:
@@ -50,6 +55,11 @@ class VTRExt:
             self._pending_load = True
         self._set_info("connected", "0")
         self._set_info("error", "")
+        # Generation stamp kills the previous instance's heartbeat loop
+        # after a re-init (extension reload, comp copy/paste).
+        self._gen = int(self.ownerComp.fetch("vtr_hb_gen", 0)) + 1
+        self.ownerComp.store("vtr_hb_gen", self._gen)
+        self._schedule_heartbeat()
 
     # ------------------------------------------------------------------ util
 
@@ -83,6 +93,22 @@ class VTRExt:
             self._clock_tick()
         else:
             self._player_tick()
+
+    def Heartbeat(self):
+        """Paused-timeline tick. While the timeline plays, onFrameStart
+        covers everything and this only reschedules itself."""
+        if self._gen != int(self.ownerComp.fetch("vtr_hb_gen", 0)):
+            return  # superseded by a newer extension init
+        self._schedule_heartbeat()
+        if op("/").time.play:  # noqa: F821
+            return
+        self.OnFrame()
+
+    def _schedule_heartbeat(self):
+        try:
+            run("args[0].Heartbeat()", self, delayMilliseconds=HEARTBEAT_MS)  # noqa: F821
+        except Exception:
+            pass  # shutting down
 
     def OnParChange(self, par):
         """Called from the Parameter Execute DAT."""
@@ -145,7 +171,9 @@ class VTRExt:
         p = self.ownerComp.par
         if not p.Clock.eval():
             return
-        now = absTime.seconds  # noqa: F821
+        # Wall clock, not absTime: the beacon must keep its rate while the
+        # timeline is paused (absTime freezes with it).
+        now = time.monotonic()
         hz = max(0.1, float(p.Clockrate.eval()))
         if now - self._last_clock < 1.0 / hz:
             return
@@ -195,7 +223,7 @@ class VTRExt:
     def _ensure_connected(self):
         if self.sock is not None:
             return True
-        now = absTime.seconds  # noqa: F821
+        now = time.monotonic()  # wall clock: retries must run while paused
         if now < self._next_connect:
             return False
         path = os.path.expanduser(str(self.ownerComp.par.Sockpath.eval()).strip())
@@ -324,7 +352,7 @@ class VTRExt:
     def _drop_socket(self, msg):
         self._disconnect()
         self._set_error(msg)
-        self._next_connect = absTime.seconds + RECONNECT_S  # noqa: F821
+        self._next_connect = time.monotonic() + RECONNECT_S
 
     # --------------------------------------------------------- legacy re-emit
 

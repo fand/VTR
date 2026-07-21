@@ -37,6 +37,11 @@ One Base COMP, one `Mode` switch:
   (ordered delta — use this for triggers), and optionally as re-emitted
   OSC (`Emitosc`, one frame late, migration aid only).
 
+  Sync survives a **paused TD timeline**: `onFrameStart` stops firing on
+  pause, so a delayed-run heartbeat (~20 Hz) takes over the tick (both the
+  player query and record mode's clock beacon) until the timeline plays
+  again.
+
 ### Parameters
 
 | Page | Parameter | Default | Meaning |
