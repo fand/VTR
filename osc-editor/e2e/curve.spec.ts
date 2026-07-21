@@ -1024,3 +1024,77 @@ test('curve panel: marquee selects multiple points, group drag and delete', asyn
     await app.close()
   }
 })
+
+test('curve seekbar: labels, click/scrub seeks, playhead tracks the timeline', async () => {
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
+  writeFileSync(
+    join(workdir, CLIP),
+    jsonl([
+      { type: 'session_start', t: 0, wall: '2026-07-16T00:00:00Z' },
+      { t: 0.2, port: LISTEN_PORT, a: '/fader', args: [0.1] },
+      { t: 1.4, port: LISTEN_PORT, a: '/fader', args: [0.9] },
+      { type: 'session_end', t: 2 }
+    ])
+  )
+  writeFileSync(
+    join(workdir, 'project.json'),
+    JSON.stringify({
+      version: 1,
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT },
+      duration: 10,
+      tracks: [{ clips: [{ file: CLIP, offset: 0, trimIn: 0, trimOut: 2 }] }]
+    })
+  )
+
+  const app = await electron.launch({
+    args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
+    cwd: workdir,
+    env: {
+      ...process.env,
+      OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
+      OSC_EDITOR_HIDDEN: '1',
+      OSC_EDITOR_DATA_DIR: workdir
+    }
+  })
+  try {
+    const page = await app.firstWindow()
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
+    await page.locator('.clip').click()
+    await expectCurveCount(page, 1)
+
+    // Time labels live in the seekbar row, not the grid svg.
+    const ruler = page.locator('.curve-ruler')
+    await expect(
+      ruler.locator('.curve-ruler-mark').filter({ hasText: /^1s$/ }).first()
+    ).toBeVisible()
+    await expect(page.locator('.curve-scroll svg text')).toHaveCount(0)
+
+    // Timeline ruler seek to 1s: the curve playhead lands mid-span (the
+    // clip covers 0..2s, so t=1 maps to the editor's horizontal center).
+    const box = (await ruler.boundingBox())!
+    const line = page.locator('.curve-playhead')
+    await page.locator('.ruler').click({ position: { x: 20, y: 10 } })
+    await expect(page.locator('.timecode')).toHaveText('00:00:01.000')
+    expect(await line.evaluate((el) => parseFloat((el as HTMLElement).style.left))).toBeCloseTo(
+      box.width / 2,
+      0
+    )
+
+    // Click past the right edge of the span: seek clamps to 2s.
+    await ruler.click({ position: { x: box.width - 2, y: 10 } })
+    await expect(page.locator('.timecode')).toHaveText('00:00:02.000')
+    // The timeline playhead follows (96px label column + 2s * 20px/s).
+    expect(
+      await page.locator('.playhead').evaluate((el) => parseFloat((el as HTMLElement).style.left))
+    ).toBeCloseTo(136, 0)
+
+    // Scrub left across the whole bar: seeking follows and clamps to 0s.
+    await page.mouse.move(box.x + box.width / 2, box.y + 10)
+    await page.mouse.down()
+    await page.mouse.move(box.x + 2, box.y + 10, { steps: 5 })
+    await page.mouse.up()
+    await expect(page.locator('.timecode')).toHaveText('00:00:00.000')
+  } finally {
+    await app.close()
+  }
+})
