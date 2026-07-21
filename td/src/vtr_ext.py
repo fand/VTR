@@ -6,9 +6,11 @@ The tox is a thin client with a Mode switch: no session parsing, no resolver.
   rate]` / `/vtr/rec/stop` on Notifyport) seek the root timeline and start
   playback; the clock beacon (`/vtr/clock`) and the Record toggle talk to the
   tap's listen port.
-- player: every frame blocks on a `{"cmd":"resolve","t":…}` query to
-  vtr-player's unix socket and applies the delta before the frame cooks —
-  deterministic by construction, for offline rendering.
+- player: every frame blocks on a resolve query to vtr-player's unix socket
+  and applies the delta before the frame cooks. Position source
+  (`Positionmode`): the TD timeline (deterministic — offline rendering),
+  the player's push-transport playhead (follows the editor preview), or an
+  internal transport.
 
 Spec: docs/tasks/tox-rework/spec.md + plan.md.
 """
@@ -39,7 +41,7 @@ class VTRExt:
         self._rows = {}  # (port, addr) -> state DAT row
         self._pending_load = False
         self._next_connect = 0.0  # absTime gate on reconnect attempts
-        self._pos = 0.0  # internal transport position (Locktotimeline off)
+        self._pos = 0.0  # internal transport position (Positionmode internal)
         self._last_abs = None
         self._oscouts = {}  # (host, port) -> oscout DAT
         self._warned_ports = set()
@@ -103,7 +105,7 @@ class VTRExt:
             self._disconnect()
         elif name in ("Playhost", "Playport"):
             self._drop_outputs()
-        elif name in ("Locktotimeline", "Play"):
+        elif name in ("Positionmode", "Play"):
             # A jump in the queried t IS the seek; only the internal
             # transport's time base needs resetting.
             self._last_abs = None
@@ -156,9 +158,12 @@ class VTRExt:
 
     def _player_tick(self):
         p = self.ownerComp.par
-        if p.Locktotimeline.eval():
-            pos = float(op("/").time.seconds) - float(p.Offset.eval())  # noqa: F821
-        else:
+        mode = str(p.Positionmode.eval())
+        if mode == "follow":
+            # Track vtr-player's push transport: the editor preview (or a
+            # controller's /vtr/play|seek) drives it, TD follows.
+            req = {"cmd": "resolve", "follow": True}
+        elif mode == "internal":
             now = absTime.seconds  # noqa: F821
             if not p.Play.eval():
                 self._last_abs = None
@@ -166,13 +171,16 @@ class VTRExt:
             if self._last_abs is not None:
                 self._pos += now - self._last_abs
             self._last_abs = now
-            pos = self._pos
+            req = {"cmd": "resolve", "t": self._pos}
+        else:  # timeline: the offline-render position source
+            pos = float(op("/").time.seconds) - float(p.Offset.eval())  # noqa: F821
+            req = {"cmd": "resolve", "t": pos}
         if not self._ensure_connected():
             return  # degraded: state freezes on the last applied values
         try:
             if self._pending_load:
                 self._load()
-            reply = self._request({"cmd": "resolve", "t": pos})
+            reply = self._request(req)
         except Exception as e:
             self._drop_socket("{}".format(e))
             return

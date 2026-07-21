@@ -90,7 +90,11 @@ def build(td_dir):
     _par(play.appendStr("Sockpath"), SOCK_DEFAULT)
     _par(play.appendFile("File"), "")
     play.appendPulse("Reload")
-    _par(play.appendToggle("Locktotimeline"), True)
+    pm = play.appendMenu("Positionmode")[0]
+    pm.menuNames = ["timeline", "follow", "internal"]
+    pm.menuLabels = ["TD Timeline", "Follow Player", "Internal"]
+    pm.default = "timeline"
+    pm.val = "timeline"
     _par(play.appendFloat("Offset"), 0.0)
     _par(play.appendToggle("Play"), False)
     play.appendPulse("Rewind")

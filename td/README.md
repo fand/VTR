@@ -21,14 +21,21 @@ One Base COMP, one `Mode` switch:
   timeline to `tl` and starts playback. `/vtr/rec/stop` keeps TD playing.
   The tox beacons `/vtr/clock <t> <rate>` to the tap (also while paused,
   rate 0) and the `Record` toggle can start/stop clips from TD.
-- **player** (offline rendering): every frame, `onFrameStart` blocks on a
-  `{"cmd":"resolve","t":…}` query to vtr-player's unix socket and applies
-  the returned delta before the frame cooks. Deterministic by construction:
-  two offline exports of the same session produce identical frames. Output
-  lands in the `state` table DAT (one row per address: `port addr args…`),
-  the `callbacks` DAT's `onEvents(events)` hook (ordered delta — use this
-  for triggers), and optionally as re-emitted OSC (`Emitosc`, one frame
-  late, migration aid only).
+- **player**: every frame, `onFrameStart` blocks on a resolve query to
+  vtr-player's unix socket and applies the returned delta before the frame
+  cooks. `Positionmode` picks the position source:
+  - `timeline` — TD root timeline − `Offset`. Deterministic by
+    construction: two offline exports of the same session produce
+    identical frames. This is the offline-render mode.
+  - `follow` — the player's push-transport playhead. The editor mirrors
+    its preview into the player (inline load + play/seek), so **playing in
+    the editor drives TD live** — no export, no `File`.
+  - `internal` — the tox's own transport (`Play` / `Rewind`).
+
+  Output lands in the `state` table DAT (one row per address:
+  `port addr args…`), the `callbacks` DAT's `onEvents(events)` hook
+  (ordered delta — use this for triggers), and optionally as re-emitted
+  OSC (`Emitosc`, one frame late, migration aid only).
 
 ### Parameters
 
@@ -40,9 +47,9 @@ One Base COMP, one `Mode` switch:
 | VTR Rec | `Taphost` / `Tapport` | `127.0.0.1` / 10010 | The tap's listen port (control shares it under `/vtr`). |
 | VTR Rec | `Notifyport` | 10014 | Where the tap's `--td-notify` rec notifications arrive. |
 | VTR Play | `Sockpath` | `~/Library/Application Support/VTR/vtr-player.sock` | vtr-player control socket (`~` expanded). |
-| VTR Play | `File` / `Reload` | — | session.jsonl to `load`. The player holds ONE global session: loading here swaps it for every client. |
-| VTR Play | `Locktotimeline` / `Offset` | on / 0 | Queried position = root timeline seconds − Offset. |
-| VTR Play | `Play` / `Rewind` | — | Internal transport when the lock is OFF. |
+| VTR Play | `File` / `Reload` | — | session.jsonl to `load`. Leave empty when the editor (or another client) loads the session. The player holds ONE global session: loading here swaps it for every client. |
+| VTR Play | `Positionmode` / `Offset` | `timeline` / 0 | Position source: `timeline` (root timeline − Offset), `follow` (player transport = editor preview), `internal` (Play/Rewind). |
+| VTR Play | `Play` / `Rewind` | — | Internal transport (`Positionmode` = `internal` only). |
 | VTR Play | `Triggerpatterns` | — | Space-separated OSC address patterns, matched server-side. |
 | VTR Play | `Emitosc` / `Playhost` / `Playport` | off | Legacy re-emit to the project's OSC-in (routes from the load reply; Playport overrides). |
 
@@ -78,10 +85,13 @@ and saves `td/vtr.tox`.
 3. Play: File load surfaces duration/counts in the `info` DAT; timeline
    drag scrubs (forward pump, backward coalesced catch-up); trigger
    addresses fire on forward play only.
-4. Determinism: two offline exports (Export Movie, non-realtime) of the
+4. Editor follow: with `Positionmode` = `follow` and `File` empty, pressing
+   play in the editor moves the `state` DAT in TD; scrubbing the editor
+   seekbar scrubs TD; stop freezes it.
+5. Determinism: two offline exports (Export Movie, non-realtime) of the
    same session produce identical frames; killing vtr-player mid-render
    fails loudly (error row + frozen state) and recovers when it respawns.
-5. No re-recording: replay traffic never reaches the tap's listen port.
+6. No re-recording: replay traffic never reaches the tap's listen port.
 
 ## vtr_core
 
