@@ -34,16 +34,43 @@ test("socket 'error' stops playback and notifies instead of crashing", async () 
   await sleep(5)
 })
 
+test('seek repositions mid-playback without re-supplying events', async () => {
+  const sock = new FakeSock()
+  const p = new Preview(asSock(sock))
+  // One early event, one far out (~10s) plus a later tail so playback keeps
+  // running after the jump.
+  p.play(
+    [
+      { ...EV, t: 0.001 },
+      { ...EV, t: 10 },
+      { ...EV, t: 20 }
+    ],
+    0,
+    9999
+  )
+  await sleep(20)
+  expect(sock.sent.length).toBe(1) // only the early event so far
+  // Jump to the far event: it is now due and fires from the loaded set.
+  expect(p.seek(10)).toBe(true)
+  await sleep(20)
+  expect(sock.sent.length).toBe(2)
+  expect(p.playing).toBe(true) // still running toward the tail event
+  p.stop()
+})
+
+test('seek is a no-op when not playing', () => {
+  const sock = new FakeSock()
+  const p = new Preview(asSock(sock))
+  expect(p.seek(5)).toBe(false)
+  expect(p.playing).toBe(false)
+})
+
 test('async send failures are counted and reported once', async () => {
   const sock = new FakeSock()
   const errors: string[] = []
   const p = new Preview(asSock(sock), (m) => errors.push(m))
   sock.sendErr = new Error('refused')
-  p.play(
-    [EV, { ...EV, t: 0.001 }],
-    0,
-    9999
-  )
+  p.play([EV, { ...EV, t: 0.001 }], 0, 9999)
   await sleep(20)
   expect(sock.sent.length).toBe(2)
   expect(errors).toHaveLength(1)

@@ -1214,10 +1214,15 @@ function App(): React.JSX.Element {
     return () => clearTimeout(timer)
   }, [playing, pausePreview])
 
+  // Seeking while playing repositions the live preview stream so playback
+  // keeps generating from the new spot; the visible playhead is driven by
+  // `playing`, so we roll its origin forward to match the jump.
   const onSeek = useCallback(
     (sec: number) => {
-      if (playing) return
       setPlayhead(sec)
+      if (!playing) return
+      setPlaying((p) => (p ? { ...p, startPos: sec, startedAt: performance.now() } : p))
+      window.api.preview.seek(sec).catch((e) => setError((e as Error).message))
     },
     [playing]
   )

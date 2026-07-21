@@ -67,6 +67,9 @@ const api = {
   preview: {
     play: (project: ProjectFile, fromSec: number): Promise<{ duration: number }> =>
       ipcRenderer.invoke('preview:play', project, fromSec),
+    /** Reposition the live stream mid-playback; false when not playing. */
+    seek: (fromSec: number): Promise<{ seeked: boolean }> =>
+      ipcRenderer.invoke('preview:seek', fromSec),
     stop: (): Promise<{ position: number }> => ipcRenderer.invoke('preview:stop'),
     /** Async preview socket/send failures, for the error banner. */
     onError: (cb: (message: string) => void): (() => void) => {
