@@ -19,6 +19,23 @@ vtr-player suites — all green, clippy warnings unchanged from baseline),
 editor lint/typecheck/`test:unit` (75 green, warning count unchanged),
 `uv run pytest` (16 green, vtr_core untouched).
 
+## 2026-07-21 — editor live-follow (file-less editor → TD)
+
+Decided after the first TD bring-up ("editor 再生で state DAT が動かない"):
+the editor must reach TD without an export. Three commits:
+
+| Commit | Contents |
+| --- | --- |
+| `87224e6` | vtr-player control API: `load` accepts inline `events` (+`name`/`duration`) — no file; `play`/`stop`/`seek` cmds drive the push transport; `resolve {"follow":true}` resolves at the transport playhead (reply carries `t`/`playing`). e2e ×2. |
+| `c40f623` | Editor mirrors its preview into the player: `preview:play` inline-loads the merged project (no routes → player transport stays silent, the editor keeps pushing app OSC itself) then seeks + plays; `preview:seek`/`stop` mirror. Best-effort — preview never fails when the player is down. |
+| `e23bbb6` | tox: `Positionmode` menu replaces `Locktotimeline` — `timeline` (offline render), `follow` (player transport = editor preview, `File` empty), `internal`. |
+
+Known drift caveat: during preview, TD state comes from the player transport
+while app OSC comes from the editor's own pusher — two clocks, so long
+previews can drift slightly. Fine for preview; offline render uses the
+`timeline` source and is unaffected. Full pusher delegation (player emits
+to the app, editor pusher removed) stays a possible follow-up.
+
 ## Remaining — step 6: manual verification in TD
 
 Not runnable here (needs TouchDesigner + `./run`). Procedure: build the tox
