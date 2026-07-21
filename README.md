@@ -7,7 +7,7 @@ VJs' Timeline Recorder. Record, edit, and replay OSC for VJ performance archival
 ## Components
 
 - **osc-tap** (Rust): UDP proxy that forwards OSC unchanged to TD and logs parsed copies as JSONL. Control messages arrive on the listen port under the `/vtr` prefix: `/vtr/clock` stamps TD-timeline time (`tl`), `/vtr/rec*` starts/stops clips, and every `/vtr/*` datagram is relayed to vtr-player. Default ports: listen 10010, forward 127.0.0.1:10011, relay 127.0.0.1:10013.
-- **vtr-player** (Rust, `osc-tap/vtr-player/`): resolver server. Replays a `session.jsonl` to the VJ app (push transport driven by relayed `/vtr/play|stop|seek`), answers per-frame sync queries over a unix socket (for TD), primes punch-in state, and echoes rec state to controllers (`source IP : echo port`). Spec: `docs/tasks/resolver-server/`.
+- **vtr-player** (Rust, `osc-tap/vtr-player/`): resolver server. Replays a `session.jsonl` to the VJ app (push transport driven by relayed `/vtr/play|stop|seek`), answers per-frame sync queries over a unix socket (for TD), primes punch-in state, and echoes rec state to controllers (`source IP : echo port`). Protocol: "OSC control" below.
 - **osc-editor** (Electron): DAW-style editor. Records clips via osc-tap, arranges them on tracks, previews to TD, exports a merged `session.jsonl`. Spawns and monitors both osc-tap and vtr-player.
 - **vtr_core** (Python, `td/`): reference implementation of the playback resolver; its pytest suite is the conformance reference for vtr-player's Rust resolver.
 

@@ -2,7 +2,7 @@
 //!
 //! Port of `td/src/vtr_core/resolver.py` — the Python module stays the
 //! executable conformance reference (see `td/tests/test_resolver.py`).
-//! Two modes per spec (docs/tasks/resolver-server/spec.md):
+//! Two modes (protocol v2; see the top-level README):
 //!
 //! - Continuous forward (0 < step <= jump_threshold): event pump — every
 //!   event in (prev, pos] in order, full fidelity, triggers fire.

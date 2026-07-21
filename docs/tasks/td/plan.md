@@ -60,10 +60,10 @@ Status: steps 1–4 & 6 implemented (2026-07-18); step 5 (manual verification in
 - `README.md`: add a Components entry for `td/` (what the tox does, pointer to `td/README.md`).
 - `TODO.md`: drop the TouchDesigner line.
 
-> **2026-07-20**: the playback side of this plan is superseded by
-> [../resolver-server/spec.md](../resolver-server/spec.md) (server-side Rust
-> resolver, protocol v2). The rec/clock side and the vtr_core test suite (as
-> conformance reference) carry over.
+> **2026-07-20**: the playback side of this plan is superseded by the
+> server-side Rust resolver (protocol v2; top-level README and
+> [../tox-rework/spec.md](../tox-rework/spec.md)). The rec/clock side and the
+> vtr_core test suite (as conformance reference) carry over.
 
 ## Follow-ups (agreed, not yet scheduled)
 

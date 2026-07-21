@@ -1,6 +1,6 @@
 # TouchDesigner component (vtr.tox)
 
-Status: spec agreed (2026-07-18); the playback architecture was superseded by [../resolver-server/spec.md](../resolver-server/spec.md) on 2026-07-20 — kept for the resolver semantics (now the conformance reference) and the rec/clock design. Plan: [plan.md](plan.md).
+Status: spec agreed (2026-07-18); the playback architecture was superseded on 2026-07-20 by the server-side resolver (`vtr-player`; protocol v2 in the top-level README, tox client spec in [../tox-rework/spec.md](../tox-rework/spec.md)) — kept for the resolver semantics (now the conformance reference) and the rec/clock design. Plan: [plan.md](plan.md).
 
 ## Background
 
@@ -30,7 +30,7 @@ Decisions from the design discussion:
 
 ### Play page
 
-> **Superseded (2026-07-20):** playback moved to the vtr-player process — see [../resolver-server/spec.md](../resolver-server/spec.md). The Play page becomes a sync-query client (`load` + per-frame `resolve`); the sections below stay as the resolver-semantics reference, ported to Rust with `td/src/vtr_core` as the conformance suite.
+> **Superseded (2026-07-20):** playback moved to the vtr-player process — see [../tox-rework/spec.md](../tox-rework/spec.md). The Play page becomes a sync-query client (`load` + per-frame `resolve`); the sections below stay as the resolver-semantics reference, ported to Rust with `td/src/vtr_core` as the conformance suite.
 
 - `File` (File) — an exported `session.jsonl`. On change: parse, build indexes (synchronously in v1; a huge file blocks the UI for a few seconds — acceptable, revisit only if it hurts).
 - `Locktotimeline` (Toggle, default ON) + `Offset` (Float, seconds) — playback position = root timeline seconds − Offset. Pausing the TD timeline and dragging it is scrubbing; no extra transport UI needed.

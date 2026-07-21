@@ -27,7 +27,7 @@ Not startable from this environment (needs TouchDesigner + osc-tap running). Pro
 
 ## 2026-07-20 — pivot: resolver moves server-side (protocol v2)
 
-Design discussions (other VJ apps, sync pull, port merge) concluded the resolver must live on the VTR side as a Rust process — see [../resolver-server/spec.md](../resolver-server/spec.md). Consequences for this task:
+Design discussions (other VJ apps, sync pull, port merge) concluded the resolver must live on the VTR side as a Rust process (protocol v2; top-level README and [../tox-rework/spec.md](../tox-rework/spec.md)). Consequences for this task:
 
 - PR #7 (the in-TD player) was closed unmerged: the tox play side was superseded before manual verification ever ran.
 - Salvaged into the replacement PR: all docs, `td/src/vtr_core` + its 16 tests (now the **conformance reference** for the Rust resolver), and the CI job.
