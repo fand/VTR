@@ -6,7 +6,6 @@ import { join } from 'node:path'
 // Suite-specific ports so a running dev instance (default 10010-10012) never collides.
 const LISTEN_PORT = 14710
 const FORWARD_PORT = 14711
-const BEACON_PORT = 14712
 
 const CLIP = 'clip-a.jsonl'
 
@@ -28,7 +27,7 @@ test('timeline pinch zoom (ctrl+wheel) scales around the cursor', async () => {
     join(workdir, 'project.json'),
     JSON.stringify({
       version: 1,
-      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT, beacon: BEACON_PORT },
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT },
       duration: 10,
       tracks: [{ clips: [{ file: CLIP, offset: 0, trimIn: 0, trimOut: 2 }] }]
     })
@@ -126,7 +125,7 @@ test('curve editor x/y zoom sliders scale the axes; y zoom scrolls vertically', 
     join(workdir, 'project.json'),
     JSON.stringify({
       version: 1,
-      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT, beacon: BEACON_PORT },
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT },
       duration: 10,
       tracks: [{ clips: [{ file: CLIP, offset: 0, trimIn: 0, trimOut: 2 }] }]
     })
@@ -188,7 +187,7 @@ test('min zoom fits a long timeline in the window', async () => {
     join(workdir, 'project.json'),
     JSON.stringify({
       version: 1,
-      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT, beacon: BEACON_PORT },
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT },
       duration: 2400, // 40 min: 2px/s alone can't fit this in the window
       tracks: [{ clips: [{ file: CLIP, offset: 0, trimIn: 0, trimOut: 2 }] }]
     })

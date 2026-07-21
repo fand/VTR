@@ -7,7 +7,6 @@ import { join } from 'node:path'
 // Suite-specific ports so a running dev instance (default 10010-10012) never collides.
 const LISTEN_PORT = 14010
 const FORWARD_PORT = 14011
-const BEACON_PORT = 14012
 
 function pad4(b: Buffer): Buffer {
   return Buffer.concat([b, Buffer.alloc((4 - (b.length % 4)) % 4)])
@@ -38,7 +37,7 @@ async function launchApp(): Promise<Launched> {
     join(workdir, 'project.json'),
     JSON.stringify({
       version: 1,
-      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT, beacon: BEACON_PORT },
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT },
       tracks: []
     })
   )
@@ -136,16 +135,15 @@ test('record → clip on track → drag → delete → persisted', async () => {
 test('beacon → tl recorded → clip auto-aligned at record stop', async () => {
   const { app, page } = await launchApp()
   const sock = dgram.createSocket('udp4')
-  // TD-style beacon at 10Hz, timeline running from 100s.
+  // TD-style beacon at 10Hz on the listen port, timeline running from 100s.
   const beaconStart = Date.now()
   const beacon = setInterval(() => {
     const tl = 100 + (Date.now() - beaconStart) / 1000
-    sock.send(oscMessage('/clock', [tl, 1.0]), BEACON_PORT, '127.0.0.1')
+    sock.send(oscMessage('/vtr/clock', [tl, 1.0]), LISTEN_PORT, '127.0.0.1')
   }, 100)
   try {
-    await expect(page.locator('.stat', { hasText: 'sync:' })).toHaveText(/on/, {
-      timeout: 5000
-    })
+    // Let a few beacons land before recording starts.
+    await sleep(500)
     await page.getByRole('button', { name: 'Rec' }).click()
     for (let i = 0; i < 5; i++) {
       sock.send(oscMessage('/x', [i]), LISTEN_PORT, '127.0.0.1')
@@ -166,12 +164,12 @@ test('beacon → tl recorded → clip auto-aligned at record stop', async () => 
   }
 })
 
-test('OSC /rec/start & /rec/stop drive recording without touching the UI', async () => {
+test('OSC /vtr/rec/start & /vtr/rec/stop drive recording without touching the UI', async () => {
   const { app, page } = await launchApp()
   const sock = dgram.createSocket('udp4')
   try {
     // Remote start: the REC indicator flips with no UI interaction.
-    sock.send(oscMessage('/rec/start', []), BEACON_PORT, '127.0.0.1')
+    sock.send(oscMessage('/vtr/rec/start', []), LISTEN_PORT, '127.0.0.1')
     await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible({ timeout: 5000 })
 
     for (let i = 0; i < 5; i++) {
@@ -180,7 +178,7 @@ test('OSC /rec/start & /rec/stop drive recording without touching the UI', async
     }
 
     // Remote stop: the finished clip imports as a track.
-    sock.send(oscMessage('/rec/stop', []), BEACON_PORT, '127.0.0.1')
+    sock.send(oscMessage('/vtr/rec/stop', []), LISTEN_PORT, '127.0.0.1')
     await expect(page.getByRole('button', { name: 'Rec' })).toBeVisible({ timeout: 5000 })
     const clip = page.locator('.clip:not(.recording)')
     await expect(clip).toHaveCount(1)
@@ -198,7 +196,7 @@ test('boot: no CLI arg → empty project; broken arg → error + empty project',
     join(workdir, 'project.json'),
     JSON.stringify({
       version: 1,
-      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT, beacon: BEACON_PORT },
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT },
       tracks: [{ clips: [] }]
     })
   )

@@ -17,9 +17,9 @@ struct Cli {
     #[arg(long, default_value = "127.0.0.1:10011")]
     forward: SocketAddr,
 
-    /// UDP port to receive /clock beacons and /rec/start, /rec/stop on
-    #[arg(long, default_value_t = 10012)]
-    beacon: u16,
+    /// Relay destination for /vtr/* control datagrams (vtr-player)
+    #[arg(long, default_value = "127.0.0.1:10013")]
+    relay: SocketAddr,
 
     /// Directory to write clip files to
     #[arg(long, default_value = ".")]
@@ -39,7 +39,7 @@ fn main() -> anyhow::Result<()> {
     let config = Config {
         listen: SocketAddr::from(([0, 0, 0, 0], cli.listen)),
         forward: cli.forward,
-        beacon: SocketAddr::from(([0, 0, 0, 0], cli.beacon)),
+        relay: cli.relay,
         outdir: cli.outdir,
         beacon_max_age_s: 5.0,
     };
@@ -61,8 +61,8 @@ fn main() -> anyhow::Result<()> {
 
     let tap = Tap::start(config.clone())?;
     eprintln!(
-        "osc-tap: listen {} -> {}, beacon {}, outdir {:?}, control {:?}",
-        tap.listen_addr, config.forward, tap.beacon_addr, config.outdir, cli.control
+        "osc-tap: listen {} -> {}, relay {}, outdir {:?}, control {:?}",
+        tap.listen_addr, config.forward, config.relay, config.outdir, cli.control
     );
     control::serve(&cli.control, tap.handle())
 }

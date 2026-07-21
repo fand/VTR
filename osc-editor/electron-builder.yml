@@ -12,10 +12,12 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 asarUnpack:
   - resources/**
-# Ship the Rust tap next to the asar; findTapBinary looks here when packaged.
+# Ship the Rust binaries next to the asar; findBinary looks here when packaged.
 extraResources:
   - from: ../osc-tap/target/release/osc-tap
     to: bin/osc-tap
+  - from: ../osc-tap/target/release/vtr-player
+    to: bin/vtr-player
 fileAssociations:
   - ext: oscproj
     name: VTR Project

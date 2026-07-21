@@ -7,8 +7,8 @@ pub struct Config {
     pub listen: SocketAddr,
     /// Destination for the raw datagrams (TD).
     pub forward: SocketAddr,
-    /// Address to receive `/clock` beacons and `/rec/start` / `/rec/stop` on.
-    pub beacon: SocketAddr,
+    /// Destination for relayed `/vtr/*` control datagrams (vtr-player).
+    pub relay: SocketAddr,
     /// Directory clip files are written to.
     pub outdir: PathBuf,
     /// Omit `tl` when the last beacon is older than this (seconds). A stale

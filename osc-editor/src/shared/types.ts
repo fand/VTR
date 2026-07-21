@@ -72,17 +72,38 @@ export interface ClipSummary {
   writeError: string | null
 }
 
-/** osc-tap port configuration. */
+/** osc-tap / vtr-player port configuration. */
 export interface PortConfig {
   /** UDP port osc-tap receives OSC on. */
   listen: number
   /** TD port raw datagrams (and preview) are sent to. */
   forward: number
-  /** UDP port /clock beacons are received on. */
-  beacon: number
+  /** Port controller feedback (/vtr/rec echo) is sent to (source IP : echo). */
+  echo: number
 }
 
-export const DEFAULT_PORTS: PortConfig = { listen: 10010, forward: 10011, beacon: 10012 }
+export const DEFAULT_PORTS: PortConfig = { listen: 10010, forward: 10011, echo: 9000 }
+
+/** Loopback port the tap relays /vtr/* control datagrams to (vtr-player). */
+export const RELAY_PORT = 10013
+
+/**
+ * Back-fill missing ports and drop legacy keys (the removed beacon port)
+ * from older project files.
+ */
+export function normalizePorts(ports?: Partial<PortConfig>): PortConfig {
+  const { listen, forward, echo } = { ...DEFAULT_PORTS, ...ports }
+  return { listen, forward, echo }
+}
+
+/** Status reported by vtr-player's control API. */
+export interface PlayerStatus {
+  /** Loaded session file, null when none. */
+  loaded: string | null
+  playing: boolean
+  playhead: number
+  connections: number
+}
 
 /** Undo depth: the in-memory stacks and the compacted on-disk log share it. */
 export const UNDO_CAP = 1000

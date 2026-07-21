@@ -6,7 +6,6 @@ import { join } from 'node:path'
 // Suite-specific ports so a running dev instance never collides.
 const LISTEN_PORT = 15910
 const FORWARD_PORT = 15911
-const BEACON_PORT = 15912
 
 // A clip whose summary line says the recording lost data.
 const DAMAGED_CLIP = [
@@ -45,7 +44,7 @@ test('clip with a lossy summary line loads with a persistent warning', async () 
     join(bundle, 'project.json'),
     JSON.stringify({
       version: 1,
-      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT, beacon: BEACON_PORT },
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT },
       tracks: [{ clips: [{ file: 'a.jsonl', offset: 0, trimIn: 0, trimOut: 1 }] }]
     })
   )

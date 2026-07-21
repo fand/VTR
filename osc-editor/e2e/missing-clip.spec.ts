@@ -6,7 +6,6 @@ import { join } from 'node:path'
 // Suite-specific ports so a running dev instance never collides.
 const LISTEN_PORT = 15510
 const FORWARD_PORT = 15511
-const BEACON_PORT = 15512
 
 const CLIP = [
   '{"type":"session_start","wall":"2026-01-01T00:00:00Z"}',
@@ -43,7 +42,7 @@ test('missing clip: kept grayed, save keeps the reference, restore brings it bac
     join(bundle, 'project.json'),
     JSON.stringify({
       version: 1,
-      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT, beacon: BEACON_PORT },
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT },
       tracks: [{ clips: [{ file: 'a.jsonl', offset: 1, trimIn: 0, trimOut: 1 }] }]
     })
   )

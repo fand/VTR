@@ -16,8 +16,8 @@ const WAIT_TIMEOUT: Duration = Duration::from_secs(25);
 
 /// Serve the JSON Lines control API on a unix domain socket. Blocks forever.
 ///
-/// Requests:  {"cmd":"start","dir"?:"/abs/path"} | {"cmd":"stop"} | {"cmd":"status"}
-///          | {"cmd":"wait","since"?:N}
+/// Requests:  {"cmd":"start","dir"?:"/abs/path","tl"?:T,"rate"?:R}
+///          | {"cmd":"stop"} | {"cmd":"status"} | {"cmd":"wait","since"?:N}
 /// Responses: {"ok":true,...} | {"ok":false,"error":"..."}
 ///
 /// `wait` long-polls the event log: blocks until an event with seq > since
@@ -137,7 +137,11 @@ pub fn dispatch(line: &str, handle: &Handle) -> Value {
 
 fn dispatch_value(request: &Value, handle: &Handle) -> Value {
     match request["cmd"].as_str() {
-        Some("start") => match handle.start_clip(request["dir"].as_str().map(Into::into)) {
+        Some("start") => match handle.start_clip(
+            request["dir"].as_str().map(Into::into),
+            request["tl"].as_f64(),
+            request["rate"].as_f64(),
+        ) {
             Ok(path) => json!({"ok": true, "clip": path}),
             Err(e) => json!({"ok": false, "error": e}),
         },

@@ -6,7 +6,6 @@ import { join } from 'node:path'
 // Suite-specific ports so a running dev instance (default 10010-10012) never collides.
 const LISTEN_PORT = 15110
 const FORWARD_PORT = 15111
-const BEACON_PORT = 15112
 
 const CLIP = 'clip-a.jsonl'
 
@@ -29,7 +28,7 @@ test("snap toggle: clip move and trim snap to other clips' edges", async () => {
     join(workdir, 'project.json'),
     JSON.stringify({
       version: 1,
-      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT, beacon: BEACON_PORT },
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT },
       duration: 10,
       tracks: [
         {

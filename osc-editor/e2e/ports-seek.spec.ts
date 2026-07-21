@@ -7,7 +7,6 @@ import { join } from 'node:path'
 // Suite-specific ports so a running dev instance never collides.
 const LISTEN_PORT = 14210
 const FORWARD_PORT = 14211
-const BEACON_PORT = 14212
 
 function pad4(b: Buffer): Buffer {
   return Buffer.concat([b, Buffer.alloc((4 - (b.length % 4)) % 4)])
@@ -31,7 +30,7 @@ async function launchApp(): Promise<{ app: ElectronApplication; page: Page; work
     join(workdir, 'project.json'),
     JSON.stringify({
       version: 1,
-      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT, beacon: BEACON_PORT },
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT },
       tracks: []
     })
   )
@@ -41,6 +40,7 @@ async function launchApp(): Promise<{ app: ElectronApplication; page: Page; work
     env: {
       ...process.env,
       OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
+      VTR_PLAYER_BIN: join(__dirname, '../../osc-tap/target/debug/vtr-player'),
       OSC_EDITOR_HIDDEN: '1',
       OSC_EDITOR_DATA_DIR: workdir
     }
@@ -99,25 +99,27 @@ test('seek: ruler click, lane click, scrub', async () => {
   }
 })
 
-test('ctrl port editable; beacon received on new port', async () => {
-  const { app, page } = await launchApp()
-  const sock = dgram.createSocket('udp4')
+test('echo port editable; player runs and persists it on save', async () => {
+  const { app, page, workdir } = await launchApp()
   try {
-    await page.getByLabel('ctrl port').fill('12012')
-    await page.getByLabel('ctrl port').press('Enter')
-    await sleep(2500) // tap restart
-    const beacon = setInterval(() => {
-      sock.send(oscMessage('/clock', [50, 1.0]), 12012, '127.0.0.1')
-    }, 100)
-    try {
-      await expect(page.locator('.stat', { hasText: 'sync:' })).toHaveText(/on/, {
-        timeout: 15_000
-      })
-    } finally {
-      clearInterval(beacon)
-    }
+    // vtr-player is spawned next to the tap.
+    await expect(page.locator('.stat', { hasText: 'player:' })).toHaveText(/on/, {
+      timeout: 15_000
+    })
+
+    await page.getByLabel('echo port').fill('12000')
+    await page.getByLabel('echo port').press('Enter')
+    // The player restarts with the new echo port and comes back.
+    await sleep(2500)
+    await expect(page.locator('.stat', { hasText: 'player:' })).toHaveText(/on/, {
+      timeout: 15_000
+    })
+
+    await page.keyboard.press('ControlOrMeta+s')
+    await expect
+      .poll(() => JSON.parse(readFileSync(join(workdir, 'project.json'), 'utf8')).ports)
+      .toEqual({ listen: LISTEN_PORT, forward: FORWARD_PORT, echo: 12000 })
   } finally {
-    sock.close()
     await app.close()
   }
 })
@@ -230,7 +232,7 @@ test('ports editable in header; tap restarts on new ports', async () => {
     await page.keyboard.press('ControlOrMeta+s')
     await expect
       .poll(() => JSON.parse(readFileSync(join(workdir, 'project.json'), 'utf8')).ports)
-      .toEqual({ listen: 11010, forward: 11011, beacon: BEACON_PORT })
+      .toEqual({ listen: 11010, forward: 11011, echo: 9000 })
   } finally {
     td.close()
     sock.close()

@@ -16,11 +16,13 @@ import {
 import { SESSION_FILE, exportSession } from './session'
 import { ensureWithin } from './paths'
 import { SpawnMode, TapManager } from './tap'
-import { findTapBinary } from './tapBinary'
+import { PlayerManager } from './player'
+import { findBinary } from './binary'
 import { addRecent, clearRecents, loadRecents, removeRecent } from './recents'
 import { appendUndo, clearUndoLog, loadUndoLog, transferUndoLog, truncateUndoAfter } from './undo'
 import {
   DEFAULT_PORTS,
+  normalizePorts,
   type LoadedProject,
   type PortConfig,
   type ProjectFile,
@@ -122,6 +124,14 @@ let tapError: string | null = null
 function requireTap(): TapManager {
   if (!tap) throw new Error(tapError ?? 'osc-tap not running')
   return tap
+}
+
+let player: PlayerManager | null = null
+let playerError: string | null = null
+
+function requirePlayer(): PlayerManager {
+  if (!player) throw new Error(playerError ?? 'vtr-player not running')
+  return player
 }
 
 // e2e: never show a window or steal focus.
@@ -316,21 +326,20 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
+  // Start on the project's ports right away — no restart dance at boot.
+  const ports = normalizePorts(
+    bootProjectPath ? readProjectPorts(normalizeProjectPath(bootProjectPath)) : undefined
+  )
+  const binEnv = {
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    appPath: app.getAppPath()
+  }
   try {
     const mode: SpawnMode =
       (process.env.OSC_TAP_SPAWN as SpawnMode) ??
       (app.isPackaged && process.platform === 'darwin' ? 'launchd' : 'child')
-    // Start on the project's ports right away — no restart dance at boot.
-    const ports = {
-      ...DEFAULT_PORTS,
-      ...(bootProjectPath ? readProjectPorts(normalizeProjectPath(bootProjectPath)) : undefined)
-    }
-    const bin = findTapBinary({
-      isPackaged: app.isPackaged,
-      resourcesPath: process.resourcesPath,
-      appPath: app.getAppPath(),
-      envBin: process.env.OSC_TAP_BIN
-    })
+    const bin = findBinary('osc-tap', { ...binEnv, envBin: process.env.OSC_TAP_BIN })
     tap = new TapManager(bin, dataDir, stagingDir, mode, ports)
     tap.spawnTap()
     // Recording state flows renderer-ward through this one channel: events
@@ -347,6 +356,17 @@ app.whenReady().then(() => {
     console.error(tapError)
   }
 
+  try {
+    const bin = findBinary('vtr-player', { ...binEnv, envBin: process.env.VTR_PLAYER_BIN })
+    // The tap socket path is fixed under dataDir even when the tap failed
+    // to start — the player just retries the connection.
+    player = new PlayerManager(bin, dataDir, ports.echo, join(dataDir, 'osc-tap.sock'))
+    player.spawnPlayer()
+  } catch (e) {
+    playerError = (e as Error).message
+    console.error(playerError)
+  }
+
   // Record straight into the open project's bundle; staging only when untitled.
   ipcMain.handle('tap:start', () =>
     requireTap().start(projectDir ? join(projectDir, 'clips') : undefined)
@@ -354,7 +374,11 @@ app.whenReady().then(() => {
   ipcMain.handle('tap:stop', () => requireTap().stop())
   ipcMain.handle('tap:status', () => requireTap().status())
   ipcMain.handle('clip:summary', (_e, path: string) => clipSummary(ensureWithin(clipRoots(), path)))
-  ipcMain.handle('tap:setPorts', (_e, ports: PortConfig) => requireTap().setPorts(ports))
+  ipcMain.handle('tap:setPorts', (_e, ports: PortConfig) => {
+    requireTap().setPorts(ports)
+    player?.setEchoPort(ports.echo)
+  })
+  ipcMain.handle('player:status', () => requirePlayer().status())
   ipcMain.handle('app:workdir', () => workdir)
   // In-window File menu mirrors the app menu's Open Recent.
   ipcMain.handle('recents:list', () =>
@@ -528,6 +552,7 @@ app.whenReady().then(() => {
 
 app.on('will-quit', () => {
   tap?.shutdown()
+  player?.shutdown()
 })
 
 app.on('window-all-closed', () => {
