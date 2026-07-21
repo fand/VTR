@@ -1,6 +1,6 @@
 # Plan: vtr.tox — mode-switched sync client (record / player)
 
-Status: draft (2026-07-21). Spec: [spec.md](spec.md); this plan applies the
+Status: agreed (2026-07-21). Spec: [spec.md](spec.md); this plan applies the
 mode-switch decisions below on top of it.
 
 ## Spec deltas (2026-07-21)
@@ -59,7 +59,7 @@ over from spec.md unchanged unless noted.
 
 - `oscin` DAT bound to `Notifyport`. On `/vtr/rec/start tl rate`: seek the
   root timeline to `tl`, start playback. On `/vtr/rec/stop`: keep playing
-  (a rec stop shouldn't yank the visuals; see open questions).
+  (decided 2026-07-21 — a rec stop must not yank the visuals).
 - Record toggle and clock beacon: unchanged from spec.md. The Record toggle
   (TD-initiated rec) stays — it's cheap, idempotent, and its
   `/vtr/rec/start <t>` round-trips through the tap back to the notify port,
@@ -113,12 +113,18 @@ over from spec.md unchanged unless noted.
     fails loudly (badge + frozen state) instead of silently desyncing.
   - Replay traffic never reaches the tap's listen port.
 
+## Resolved questions (2026-07-21)
+
+- `/vtr/rec/stop` in record mode: **keep TD playing**. A rec stop is a
+  logging event, not a transport command.
+- Following `/vtr/play` / `/vtr/stop` / `/vtr/seek` in record mode
+  (editor-preview scrub follow): **deferred** — revisit as a follow-up
+  after the rec path ships; it would need the transport datagrams fanned
+  out to TD too, not just rec transitions.
+- macOS-only player mode (no `AF_UNIX` in Windows CPython): **accepted**;
+  TCP-localhost fallback only if it ever matters.
+
 ## Open questions
 
-- `/vtr/rec/stop` in record mode: keep TD playing (current default) or
-  pause the timeline?
-- Should record mode also follow `/vtr/play` / `/vtr/stop` / `/vtr/seek`
-  (editor-preview scrub follow)? Deferred — would need the transport
-  datagrams fanned out to TD too, not just rec transitions.
 - `rate` from `/vtr/rec/start`: v1 seeks and plays at rate 1; honoring
   fractional rates on the TD timeline is untested territory.
