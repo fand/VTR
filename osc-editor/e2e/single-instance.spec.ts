@@ -7,7 +7,6 @@ import { join } from 'node:path'
 // Suite-specific ports so a running dev instance (default 10010-10012) never collides.
 const LISTEN_PORT = 15710
 const FORWARD_PORT = 15711
-const BEACON_PORT = 15712
 
 // The lock is scoped to userData (OSC_EDITOR_DATA_DIR), so every other e2e
 // suite — each with its own workdir — is unaffected.
@@ -20,7 +19,7 @@ test('second instance forwards its project arg to the first and quits', async ()
     projectPath,
     JSON.stringify({
       version: 1,
-      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT, beacon: BEACON_PORT },
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT },
       duration: 10,
       tracks: []
     })

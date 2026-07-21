@@ -6,7 +6,6 @@ import { join } from 'node:path'
 // Suite-specific ports so a running dev instance never collides.
 const LISTEN_PORT = 15810
 const FORWARD_PORT = 15811
-const BEACON_PORT = 15812
 
 const CLIP = 'clip-a.jsonl'
 const MOD = process.platform === 'darwin' ? 'Meta' : 'Control'
@@ -28,7 +27,7 @@ function setup(workdir: string): void {
     join(workdir, 'project.json'),
     JSON.stringify({
       version: 1,
-      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT, beacon: BEACON_PORT },
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT },
       duration: 10,
       tracks: [{ clips: [{ file: CLIP, offset: 0, trimIn: 0, trimOut: 2 }] }]
     })

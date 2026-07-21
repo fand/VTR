@@ -4,9 +4,11 @@
 set -e
 cd "$(dirname "$0")"
 
-# Dev spawns osc-tap from osc-tap/target; build it if there is no binary yet.
-if [ ! -x osc-tap/target/release/osc-tap ] && [ ! -x osc-tap/target/debug/osc-tap ]; then
-  echo "building osc-tap..."
+# Dev spawns osc-tap and vtr-player from osc-tap/target; build the
+# workspace (both binaries) if either is missing.
+have() { [ -x "osc-tap/target/release/$1" ] || [ -x "osc-tap/target/debug/$1" ]; }
+if ! have osc-tap || ! have vtr-player; then
+  echo "building osc-tap workspace..."
   (cd osc-tap && cargo build --release)
 fi
 

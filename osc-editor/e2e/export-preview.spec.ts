@@ -7,7 +7,6 @@ import { join } from 'node:path'
 // Suite-specific ports so a running dev instance never collides.
 const LISTEN_PORT = 14110
 const TD_PORT = 14111
-const BEACON_PORT = 14112
 
 function pad4(b: Buffer): Buffer {
   return Buffer.concat([b, Buffer.alloc((4 - (b.length % 4)) % 4)])
@@ -31,7 +30,7 @@ async function launchApp(): Promise<{ app: ElectronApplication; page: Page; work
     join(workdir, 'project.json'),
     JSON.stringify({
       version: 1,
-      ports: { listen: LISTEN_PORT, forward: TD_PORT, beacon: BEACON_PORT },
+      ports: { listen: LISTEN_PORT, forward: TD_PORT },
       tracks: []
     })
   )

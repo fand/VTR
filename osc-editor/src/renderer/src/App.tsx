@@ -3,7 +3,9 @@ import { Circle, Pause, Play, Square } from 'lucide-react'
 import {
   DEFAULT_DURATION,
   DEFAULT_PORTS,
+  normalizePorts,
   type LoadedProject,
+  type PlayerStatus,
   type PortConfig,
   type TapStatus,
   type UndoEntry
@@ -387,6 +389,7 @@ function App(): React.JSX.Element {
   const splitDrag = useRef<{ y: number; h: number } | null>(null)
   const [status, setStatus] = useState<TapStatus | null>(null)
   const [statusError, setStatusError] = useState<string | null>(null)
+  const [playerStatus, setPlayerStatus] = useState<PlayerStatus | null>(null)
   /** Incoming packets/s, from received deltas between polls. */
   const [rxRate, setRxRate] = useState<number | null>(null)
   const lastRx = useRef<{ received: number; at: number } | null>(null)
@@ -459,8 +462,8 @@ function App(): React.JSX.Element {
           edits: project.edits
         }
         if (project.ports) {
-          // Older project files may lack the beacon port.
-          loadedPorts = { ...DEFAULT_PORTS, ...project.ports }
+          // Back-fill echo and drop the legacy beacon key on older files.
+          loadedPorts = normalizePorts(project.ports)
           setPorts(loadedPorts)
           window.api.tap.setPorts(loadedPorts).catch((e: Error) => setError(e.message))
         }
@@ -659,6 +662,10 @@ function App(): React.JSX.Element {
           }
         })
         .catch((e: Error) => setStatusError(e.message))
+      window.api.player
+        .status()
+        .then(setPlayerStatus)
+        .catch(() => setPlayerStatus(null))
     }
     poll()
     const iv = setInterval(poll, 1000)
@@ -1470,33 +1477,28 @@ function App(): React.JSX.Element {
               </span>
             </span>
             <NumField
-              label="ctrl"
-              ariaLabel="ctrl port"
-              value={ports.beacon}
+              label="echo"
+              ariaLabel="echo port"
+              value={ports.echo}
               disabled={!!recording || !!playing}
               parse={parsePort}
-              onCommit={(beacon) => changePorts({ ...ports, beacon })}
+              onCommit={(echo) => changePorts({ ...ports, echo })}
             />
             <span />
             <span />
             <span
               className="stat divider"
               data-tip={
-                status?.beacon_tl != null
-                  ? `tl=${status.beacon_tl.toFixed(2)}s` +
-                    (status.beacon_rate === 0
-                      ? ' (paused)'
-                      : status.beacon_rate != null && status.beacon_rate !== 1
-                        ? ` ×${status.beacon_rate}`
-                        : '') +
-                    ` (${status.beacon_age?.toFixed(1)}s ago)`
-                  : 'no /clock beacon received'
+                playerStatus
+                  ? playerStatus.loaded
+                    ? `${playerStatus.loaded.split(/[\\/]/).pop()} @ ${playerStatus.playhead.toFixed(2)}s` +
+                      (playerStatus.playing ? ' (playing)' : '')
+                    : 'vtr-player running, no session loaded'
+                  : 'vtr-player not running'
               }
             >
-              <span>sync:</span>
-              <span className={status?.beacon_tl != null ? 'ok' : ''}>
-                {status?.beacon_tl != null ? 'on' : 'off'}
-              </span>
+              <span>player:</span>
+              <span className={playerStatus ? 'ok' : ''}>{playerStatus ? 'on' : 'off'}</span>
             </span>
             <span
               className={status != null && status.dropped > 0 ? 'stat bad' : 'stat'}

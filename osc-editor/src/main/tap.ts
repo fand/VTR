@@ -5,6 +5,7 @@ import { homedir } from 'os'
 import { dirname, join } from 'path'
 import {
   DEFAULT_PORTS,
+  RELAY_PORT,
   type PortConfig,
   type TapEvent,
   type TapStatus,
@@ -80,14 +81,13 @@ export class TapManager {
     return this._ports
   }
 
-  /** Change ports and restart osc-tap with the new config. */
+  /** Change ports and restart osc-tap when its own config changed (the
+   *  echo port belongs to vtr-player, not the tap). */
   setPorts(ports: PortConfig): void {
     const p = this._ports
-    if (ports.listen === p.listen && ports.forward === p.forward && ports.beacon === p.beacon) {
-      return
-    }
+    const restart = ports.listen !== p.listen || ports.forward !== p.forward
     this._ports = ports
-    this.restart()
+    if (restart) this.restart()
   }
 
   private restart(): void {
@@ -113,8 +113,8 @@ export class TapManager {
       String(this._ports.listen),
       '--forward',
       `127.0.0.1:${this._ports.forward}`,
-      '--beacon',
-      String(this._ports.beacon),
+      '--relay',
+      `127.0.0.1:${RELAY_PORT}`,
       '--outdir',
       this.outdir,
       '--control',

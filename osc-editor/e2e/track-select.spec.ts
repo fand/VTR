@@ -7,7 +7,6 @@ import { expectPointCount } from './curveHooks'
 // Suite-specific ports so a running dev instance (default 10010-10012) never collides.
 const LISTEN_PORT = 15210
 const FORWARD_PORT = 15211
-const BEACON_PORT = 15212
 
 function jsonl(lines: object[]): string {
   return lines.map((l) => JSON.stringify(l)).join('\n') + '\n'
@@ -36,7 +35,7 @@ test('track select: cmd/shift multi-select, curve shows track clips', async () =
     join(workdir, 'project.json'),
     JSON.stringify({
       version: 1,
-      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT, beacon: BEACON_PORT },
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT },
       duration: 10,
       tracks: [
         { clips: [{ file: 'clip-a.jsonl', offset: 0, trimIn: 0, trimOut: 1 }] },

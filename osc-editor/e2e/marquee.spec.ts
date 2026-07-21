@@ -6,7 +6,6 @@ import { join } from 'node:path'
 // Suite-specific ports so a running dev instance (default 10010-10012) never collides.
 const LISTEN_PORT = 15310
 const FORWARD_PORT = 15311
-const BEACON_PORT = 15312
 
 const CLIP = 'clip-a.jsonl'
 
@@ -33,7 +32,7 @@ test('timeline marquee: drag-select clips, shift adds, click deselects and seeks
     join(workdir, 'project.json'),
     JSON.stringify({
       version: 1,
-      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT, beacon: BEACON_PORT },
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT },
       duration: 10,
       tracks: [{ clips }, { clips }]
     })

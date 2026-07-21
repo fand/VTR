@@ -7,7 +7,6 @@ import { join } from 'node:path'
 // Suite-specific ports so a running dev instance never collides.
 const LISTEN_PORT = 15410
 const TD_PORT = 15411
-const BEACON_PORT = 15412
 
 function pad4(b: Buffer): Buffer {
   return Buffer.concat([b, Buffer.alloc((4 - (b.length % 4)) % 4)])
@@ -69,7 +68,7 @@ test('bundle: rec into project clips/, Save As collects into .oscproj, reopen + 
     join(workdir, 'project.json'),
     JSON.stringify({
       version: 1,
-      ports: { listen: LISTEN_PORT, forward: TD_PORT, beacon: BEACON_PORT },
+      ports: { listen: LISTEN_PORT, forward: TD_PORT },
       tracks: []
     })
   )

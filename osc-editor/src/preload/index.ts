@@ -4,6 +4,7 @@ import type {
   ExportResult,
   LoadedProject,
   OscEvent,
+  PlayerStatus,
   PortConfig,
   ProjectFile,
   TapPush,
@@ -23,6 +24,9 @@ const api = {
       ipcRenderer.on('tap:event', listener)
       return () => ipcRenderer.removeListener('tap:event', listener)
     }
+  },
+  player: {
+    status: (): Promise<PlayerStatus> => ipcRenderer.invoke('player:status')
   },
   clip: {
     events: (path: string): Promise<OscEvent[]> => ipcRenderer.invoke('clip:events', path),
