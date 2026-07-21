@@ -53,6 +53,22 @@ export class Preview {
     this.timer = setTimeout(this.tick, 0)
   }
 
+  /**
+   * Jump to a new position mid-playback, reusing the already-merged events so
+   * a scrub doesn't re-merge the project. Returns false when not playing, so
+   * the caller can fall back to a plain playhead move.
+   */
+  seek(fromSec: number): boolean {
+    if (!this.playing) return false
+    clearTimeout(this.timer!)
+    const idx = this.events.findIndex((e) => e.t >= fromSec)
+    this.idx = idx < 0 ? this.events.length : idx
+    this.startPos = fromSec
+    this.startedAt = performance.now()
+    this.timer = setTimeout(this.tick, 0)
+    return true
+  }
+
   /** Returns the frozen playhead position. */
   stop(): number {
     const pos = this.position()

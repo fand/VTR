@@ -519,6 +519,7 @@ app.whenReady().then(() => {
     preview.play(merged.events, fromSec, tap?.ports.forward ?? DEFAULT_PORTS.forward)
     return { duration: Math.max(merged.duration, project.duration ?? 0) }
   })
+  ipcMain.handle('preview:seek', (_e, fromSec: number) => ({ seeked: preview.seek(fromSec) }))
   ipcMain.handle('preview:stop', () => ({ position: preview.stop() }))
 
   createWindow()
