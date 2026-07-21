@@ -39,16 +39,20 @@ to the app, editor pusher removed) stays a possible follow-up.
 ## 2026-07-21 — CHOP output
 
 Requested after the first player-mode use ("tox から chop output もしてほしい"):
-the state DAT was the only numeric sink, forcing every project through a
-DAT-to-CHOP. Added a `chop_out` Script CHOP alongside it — one channel per
-numeric OSC argument, latest value held. `VTRExt._apply_chop` folds each
-delta's numeric args into a channel map (channel name = OSC address;
-multi-arg addresses fan out to `addr:0`, `addr:1`, …; string args skipped)
-and force-cooks the Script CHOP when something moved (pull-driven cook is
-cached, so a live output must be dirtied). `FillChop` is the `onCook` hook.
-Map resets with the state DAT on session load. Builder gains the
-`chop_out` scriptCHOP + `chop_callbacks` DAT. README output section and
-manual checklist updated. Same TD-only bring-up caveat: not runnable here.
+the state DAT was the only numeric sink, so every project had to bolt a
+DAT-to-CHOP onto the tox. Added a `chop_out` Script CHOP as a first-class
+sibling of the state DAT — one channel per numeric OSC argument, latest
+value held, wired straight into TD. One commit (`57a3987`), all in player
+mode's apply path plus the builder and docs:
+
+| File | Change |
+| --- | --- |
+| `td/src/vtr_ext.py` | `_apply` also calls `_apply_chop`, which folds each delta's numeric args into a channel map — name = OSC address, multi-arg addresses fan out to `addr:0`, `addr:1`, … (string args skipped), latest value wins across ports. Force-cooks `chop_out` only when a value moved (pull-driven Script CHOP cook is cached, so a live output must be dirtied). `FillChop` is the `onCook` hook (1 sample/channel). `_reset_state` clears the map + re-cooks, so channels reset on session load. |
+| `td/build/build_vtr.py` | Builder gains the `chop_out` `scriptCHOP` and its `chop_callbacks` text DAT (guards a half-built comp, same as the other exec shims). |
+| `td/README.md` | Output section documents `chop_out` (naming, multi-arg fan-out, string skip, reset); manual checklist item 3 gained the CHOP check. |
+
+TD-only bring-up caveat unchanged: not runnable here, and `td/vtr.tox` must
+be rebuilt inside TouchDesigner (`build/build_vtr.py`) and committed.
 
 ## Remaining — step 6: manual verification in TD
 
