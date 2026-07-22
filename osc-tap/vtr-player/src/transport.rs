@@ -255,12 +255,19 @@ fn emit_loop(inner: Arc<Inner>) {
         let (epoch, l) = inner.shared.snapshot();
         if epoch != cur_epoch {
             cur_epoch = epoch;
+            // Carry the dedup state across the swap: a live session reload
+            // (the editor's residency load during playback) must not
+            // re-send values the receivers already hold.
+            let last = resolver.take().map(DedupResolver::into_last).unwrap_or_default();
             resolver = l.as_ref().map(|l| {
-                DedupResolver::new(Resolver::new(
-                    l.session.clone(),
-                    Some(&|a: &str| l.triggers.matches(a)),
-                    0.5,
-                ))
+                DedupResolver::with_last(
+                    Resolver::new(
+                        l.session.clone(),
+                        Some(&|a: &str| l.triggers.matches(a)),
+                        0.5,
+                    ),
+                    last,
+                )
             });
             // Pending seeks are NOT cleared here: on_load() already did,
             // synchronously before the load reply — a seek arriving after

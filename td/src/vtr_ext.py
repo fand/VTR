@@ -260,6 +260,7 @@ class VTRExt:
         state wholesale and writes nothing (mode entry, reconnect)."""
         self._sync_gen = -1  # last transport gen applied
         self._sync_last = None  # (td_seconds, play, monotonic) at last tick
+        self._sync_reseed = False  # error-driven drops set this (see _drop_socket)
 
     def _sync_tick(self, p):
         """Bidirectional glue between the root timeline and the player
@@ -274,6 +275,24 @@ class VTRExt:
         actual_td = float(tl.seconds)
         actual_play = bool(tl.play)
         now = time.monotonic()
+
+        # 0. First tick after an error-driven reconnect (player crash):
+        #    during the outage TD was the only live timeline the operator
+        #    saw, so seed the transport from it (origin "td") instead of
+        #    adopting — a restarted player would otherwise yank TD to
+        #    0/stopped. Seeding happens before the resolve so this frame
+        #    already resolves at the reseeded playhead. A live foreign
+        #    driver still wins: the hold rule rejects these writes and the
+        #    adopt below snaps to the transport as usual.
+        if self._sync_last is None and self._sync_reseed:
+            self._sync_reseed = False
+            r = self._request({"cmd": "seek", "t": actual_td - offset, "origin": "td"})
+            if (
+                r.get("ok")
+                and str(r.get("origin", "")) == "td"
+                and bool(r.get("playing")) != actual_play
+            ):
+                self._request({"cmd": "play" if actual_play else "stop", "origin": "td"})
 
         reply = self._request({"cmd": "resolve", "follow": True})
         if not reply.get("ok"):
@@ -502,12 +521,18 @@ class VTRExt:
                     pass
         self.rfile = None
         self.sock = None
-        # A reconnect re-baselines from the transport, no write-back.
+        # A reconnect re-baselines from the transport, no write-back —
+        # unless _drop_socket flags an error-driven drop for reseeding.
         self._sync_reset()
         self._set_info("connected", "0")
 
     def _drop_socket(self, msg):
         self._disconnect()
+        # Error-driven drop (player crash, dead socket): after the
+        # reconnect, sync mode reseeds the transport from TD instead of
+        # adopting. Deliberate drops (Mode/Sockpath change) keep the
+        # adopt-on-entry behavior from _disconnect alone.
+        self._sync_reseed = True
         self._set_error(msg)
         self._next_connect = time.monotonic() + RECONNECT_S
 

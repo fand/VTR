@@ -13,6 +13,16 @@ const RESPAWN_DELAY_MAX_MS = 10_000
 /** The editor's own origin tag on transport writes (for echo suppression). */
 export const EDITOR_ORIGIN = 'editor'
 
+/** Transport snapshot carried by play/stop/seek replies. */
+function toTransportState(r: Record<string, unknown>): TransportState {
+  return {
+    gen: Number(r.gen ?? 0),
+    origin: String(r.origin ?? ''),
+    playhead: Number(r.playhead ?? 0),
+    playing: Boolean(r.playing)
+  }
+}
+
 interface Pending {
   resolve: (v: Record<string, unknown>) => void
   reject: (e: Error) => void
@@ -193,6 +203,13 @@ export class PlayerManager {
     ]
   }
 
+  /** Last inline load, re-pushed after a respawn (a restarted player is empty). */
+  private lastLoad: {
+    events: OscEvent[]
+    duration: number
+    routes: Record<string, number>
+  } | null = null
+
   spawnPlayer(): void {
     if (this.stopping || this.proc) return
     // Piped stdin + --exit-on-stdin-close: the player exits if the editor dies hard.
@@ -223,6 +240,16 @@ export class PlayerManager {
       console.error(`vtr-player spawn failed: ${e.message}`)
     })
     this.proc = proc
+    // Re-push the resident session: without this, resolve clients (the TD
+    // tox on an editor session) get "no session loaded" until the next
+    // edit re-triggers the renderer's residency load. The lazy connect
+    // waits out the player's startup.
+    const l = this.lastLoad
+    if (l) {
+      this.loadInline(l.events, l.duration, l.routes).catch((e) =>
+        console.log(`residency re-push failed: ${(e as Error).message}`)
+      )
+    }
   }
 
   shutdown(): void {
@@ -238,33 +265,40 @@ export class PlayerManager {
   }
 
   /**
-   * Inline-load the current merged project (no file involved) so sync
-   * clients (the TD tox) resolve against what the editor is playing.
-   * No routes: the player's own push transport stays silent — the editor
-   * keeps pushing preview OSC to the app itself. keep:true swaps the
-   * session without touching the transport, so a residency reload during
-   * playback never yanks followers to zero; origin tags the swap as ours.
+   * Inline-load the current merged project (no file involved). The routes
+   * make the player's emit loop the one preview emitter: it resolves the
+   * push transport's playhead and sends to the routed ports, whoever
+   * drives the transport (editor, TD sync, controllers). keep:true swaps
+   * the session without touching the transport, so a residency reload
+   * during playback never yanks followers to zero; origin tags the swap
+   * as ours.
    */
-  async loadInline(events: OscEvent[], duration: number): Promise<void> {
+  async loadInline(
+    events: OscEvent[],
+    duration: number,
+    routes: Record<string, number>
+  ): Promise<void> {
+    this.lastLoad = { events, duration, routes }
     await this.request('load', {
       events,
       duration,
+      routes,
       name: '(editor)',
       origin: EDITOR_ORIGIN,
       keep: true
     })
   }
 
-  async play(origin: string = EDITOR_ORIGIN): Promise<void> {
-    await this.request('play', { origin })
+  async play(origin: string = EDITOR_ORIGIN): Promise<TransportState> {
+    return toTransportState(await this.request('play', { origin }))
   }
 
-  async stopTransport(origin: string = EDITOR_ORIGIN): Promise<void> {
-    await this.request('stop', { origin })
+  async stopTransport(origin: string = EDITOR_ORIGIN): Promise<TransportState> {
+    return toTransportState(await this.request('stop', { origin }))
   }
 
-  async seek(t: number, origin: string = EDITOR_ORIGIN): Promise<void> {
-    await this.request('seek', { t, origin })
+  async seek(t: number, origin: string = EDITOR_ORIGIN): Promise<TransportState> {
+    return toTransportState(await this.request('seek', { t, origin }))
   }
 
   /**

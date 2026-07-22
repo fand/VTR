@@ -145,6 +145,18 @@ impl DedupResolver {
         }
     }
 
+    /// Rebuild around a fresh resolver (session swap) while keeping the
+    /// last-emitted values: receivers still hold them, so the catch-up
+    /// after the swap must not re-send unchanged state.
+    pub fn with_last(inner: Resolver, last: HashMap<(u16, String), Vec<Value>>) -> Self {
+        Self { inner, last }
+    }
+
+    /// Move the last-emitted map out, for `with_last` on the next session.
+    pub fn into_last(self) -> HashMap<(u16, String), Vec<Value>> {
+        self.last
+    }
+
     /// Forget position AND dedup state; the next step is a full catch-up.
     pub fn reset(&mut self) {
         self.inner.reset();
@@ -257,6 +269,21 @@ mod tests {
         let (mode, emits) = r.step(5.0);
         assert_eq!(mode, Mode::Seek);
         assert_eq!(emits, vec![]);
+    }
+
+    #[test]
+    fn with_last_carries_dedup_across_sessions() {
+        let s1 = load(&[ev(1.0, "/a", vec![1.0])]);
+        let mut r1 = dedup(&s1);
+        assert_eq!(r1.step(2.0).1.len(), 1);
+        // Session swap, same current value: the carried state suppresses
+        // the post-swap catch-up.
+        let s2 = load(&[ev(1.0, "/a", vec![1.0]), ev(3.0, "/a", vec![2.0])]);
+        let mut r2 =
+            DedupResolver::with_last(Resolver::new(s2.clone(), None, 0.5), r1.into_last());
+        assert_eq!(r2.step(2.0).1.len(), 0);
+        // A changed value still emits.
+        assert_eq!(r2.step(3.5).1.len(), 1);
     }
 
     #[test]

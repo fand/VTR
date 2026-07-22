@@ -17,10 +17,10 @@ export interface PlayingState {
   startedAt: number
   duration: number
   /**
-   * Playback driven by the shared transport (TD or a controller), not the
-   * editor's own Preview stream: the playhead animates but no OSC push
-   * runs, and the end-of-project auto-pause must not fire (it would stop
-   * the shared transport that someone else is driving).
+   * Playback started by TD or a controller, not the editor. The player
+   * emits the OSC either way; the flag only exempts the end-of-project
+   * auto-pause (it would stop the shared transport that someone else is
+   * driving).
    */
   remote?: boolean
 }
