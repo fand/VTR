@@ -152,3 +152,19 @@ test('watch parses the transport snapshot', async () => {
     playing: true
   })
 })
+
+test('watch rides its own connection so a pending watch never delays a command', async () => {
+  // The server handles each connection's lines in order, so a blocking
+  // watch on the command socket would head-of-line-delay every seek.
+  const watchReplies: ((v: Record<string, unknown>) => void)[] = []
+  const { player, connections } = await setup((req, reply) => {
+    if (req.cmd === 'watch') watchReplies.push(reply) // hold: simulate the long-poll blocking
+    else reply({ ok: true })
+  })
+  const watching = player.watch(0)
+  await new Promise((r) => setTimeout(r, 20)) // let the watch land server-side
+  await player.seek(1.0) // must resolve while the watch is still pending
+  expect(connections()).toBe(2)
+  watchReplies[0]({ ok: true, gen: 1, origin: 'osc', t: 1.0, playing: false })
+  await expect(watching).resolves.toMatchObject({ gen: 1, origin: 'osc' })
+})

@@ -20,19 +20,133 @@ interface Pending {
 }
 
 /**
- * Spawns vtr-player as a child process (no launchd mode — recording never
- * depends on it), respawns it on crash, and talks to its unix socket
- * control API (JSON Lines, one response per request line). Modeled on
- * TapManager.
+ * One control-socket connection with id-matched request/reply framing.
+ * The server handles each connection's lines strictly in order, so a
+ * blocking long-poll would head-of-line-delay every other request on the
+ * same socket — the manager therefore keeps commands and the watch
+ * long-poll on separate Channels.
  */
-export class PlayerManager {
-  readonly sockPath: string
-  private proc: ChildProcess | null = null
+class Channel {
   private sock: net.Socket | null = null
   private connecting: Promise<net.Socket> | null = null
   private pending = new Map<number, Pending>()
   private nextId = 1
   private buf = ''
+
+  constructor(private sockPath: string) {}
+
+  async request(
+    cmd: string,
+    extra: Record<string, unknown> | undefined,
+    timeoutMs: number
+  ): Promise<Record<string, unknown>> {
+    const sock = await this.connect()
+    const id = this.nextId++
+    return new Promise((resolve, reject) => {
+      const entry: Pending = {
+        resolve: (v) => {
+          clearTimeout(entry.timer)
+          if (v.ok) resolve(v)
+          else reject(new Error(String(v.error ?? 'vtr-player error')))
+        },
+        reject: (e) => {
+          clearTimeout(entry.timer)
+          reject(e)
+        },
+        timer: setTimeout(() => {
+          this.pending.delete(id)
+          reject(new Error(`vtr-player ${cmd}: timed out`))
+        }, timeoutMs)
+      }
+      this.pending.set(id, entry)
+      sock.write(JSON.stringify({ id, cmd, ...extra }) + '\n')
+    })
+  }
+
+  drop(err: Error): void {
+    this.sock?.destroy()
+    this.sock = null
+    this.buf = ''
+    const pending = [...this.pending.values()]
+    this.pending.clear()
+    for (const p of pending) p.reject(err)
+  }
+
+  private connect(): Promise<net.Socket> {
+    if (this.sock && !this.sock.destroyed) return Promise.resolve(this.sock)
+    // Share one in-flight connect so concurrent callers never open two sockets.
+    this.connecting ??= this.connectWithRetry().finally(() => {
+      this.connecting = null
+    })
+    return this.connecting
+  }
+
+  private async connectWithRetry(): Promise<net.Socket> {
+    const deadline = Date.now() + CONNECT_DEADLINE_MS
+    for (;;) {
+      try {
+        return await this.tryConnect()
+      } catch (e) {
+        if (Date.now() > deadline) throw e
+        await new Promise((r) => setTimeout(r, 200))
+      }
+    }
+  }
+
+  private tryConnect(): Promise<net.Socket> {
+    return new Promise((resolve, reject) => {
+      const sock = net.createConnection(this.sockPath)
+      sock.once('connect', () => {
+        sock.on('data', (chunk) => this.onData(chunk))
+        sock.on('close', () => {
+          if (this.sock === sock) this.drop(new Error('control socket closed'))
+        })
+        sock.on('error', () => {})
+        this.sock = sock
+        resolve(sock)
+      })
+      sock.once('error', (e) => {
+        sock.destroy()
+        reject(e)
+      })
+    })
+  }
+
+  private onData(chunk: Buffer): void {
+    this.buf += chunk.toString()
+    for (;;) {
+      const nl = this.buf.indexOf('\n')
+      if (nl < 0) return
+      const line = this.buf.slice(0, nl)
+      this.buf = this.buf.slice(nl + 1)
+      let msg: Record<string, unknown>
+      try {
+        msg = JSON.parse(line)
+      } catch {
+        console.error(`vtr-player: unparseable control reply: ${line}`)
+        continue
+      }
+      // Match by id; drop replies to unknown (e.g. timed-out) requests.
+      const entry = typeof msg.id === 'number' ? this.pending.get(msg.id) : undefined
+      if (!entry) continue
+      this.pending.delete(msg.id as number)
+      entry.resolve(msg)
+    }
+  }
+}
+
+/**
+ * Spawns vtr-player as a child process (no launchd mode — recording never
+ * depends on it), respawns it on crash, and talks to its unix socket
+ * control API (JSON Lines, one response per request line). Modeled on
+ * TapManager. Commands and the watch long-poll ride separate connections
+ * (see Channel).
+ */
+export class PlayerManager {
+  readonly sockPath: string
+  private proc: ChildProcess | null = null
+  private cmds: Channel
+  private poll: Channel
   private stopping = false
   private restarting = false
   private respawnDelay = RESPAWN_DELAY_MS
@@ -48,6 +162,8 @@ export class PlayerManager {
     private requestTimeoutMs = REQUEST_TIMEOUT_MS
   ) {
     this.sockPath = join(dataDir, 'vtr-player.sock')
+    this.cmds = new Channel(this.sockPath)
+    this.poll = new Channel(this.sockPath)
   }
 
   /** Change the echo port and restart vtr-player with the new config. */
@@ -154,10 +270,13 @@ export class PlayerManager {
   /**
    * Long-poll the transport: resolves when its generation differs from
    * `gen`, or vtr-player's server-side timeout fires (same gen returned).
-   * The follow loop re-issues on every resolution.
+   * The follow loop re-issues on every resolution. Rides its own
+   * connection: the server blocks the whole connection while a watch is
+   * pending, and the change that would wake it could be a command queued
+   * on the same socket.
    */
   async watch(gen: number): Promise<TransportState> {
-    const r = await this.request('watch', { gen }, WATCH_TIMEOUT_MS)
+    const r = await this.poll.request('watch', { gen }, WATCH_TIMEOUT_MS)
     return {
       gen: Number(r.gen ?? 0),
       origin: String(r.origin ?? ''),
@@ -166,102 +285,15 @@ export class PlayerManager {
     }
   }
 
-  private async request(
+  private request(
     cmd: string,
-    extra?: Record<string, unknown>,
-    timeoutMs = this.requestTimeoutMs
+    extra?: Record<string, unknown>
   ): Promise<Record<string, unknown>> {
-    const sock = await this.connect()
-    const id = this.nextId++
-    return new Promise((resolve, reject) => {
-      const entry: Pending = {
-        resolve: (v) => {
-          clearTimeout(entry.timer)
-          if (v.ok) resolve(v)
-          else reject(new Error(String(v.error ?? 'vtr-player error')))
-        },
-        reject: (e) => {
-          clearTimeout(entry.timer)
-          reject(e)
-        },
-        timer: setTimeout(() => {
-          this.pending.delete(id)
-          reject(new Error(`vtr-player ${cmd}: timed out`))
-        }, timeoutMs)
-      }
-      this.pending.set(id, entry)
-      sock.write(JSON.stringify({ id, cmd, ...extra }) + '\n')
-    })
-  }
-
-  private connect(): Promise<net.Socket> {
-    if (this.sock && !this.sock.destroyed) return Promise.resolve(this.sock)
-    // Share one in-flight connect so concurrent callers never open two sockets.
-    this.connecting ??= this.connectWithRetry().finally(() => {
-      this.connecting = null
-    })
-    return this.connecting
-  }
-
-  private async connectWithRetry(): Promise<net.Socket> {
-    const deadline = Date.now() + CONNECT_DEADLINE_MS
-    for (;;) {
-      try {
-        return await this.tryConnect()
-      } catch (e) {
-        if (Date.now() > deadline) throw e
-        await new Promise((r) => setTimeout(r, 200))
-      }
-    }
-  }
-
-  private tryConnect(): Promise<net.Socket> {
-    return new Promise((resolve, reject) => {
-      const sock = net.createConnection(this.sockPath)
-      sock.once('connect', () => {
-        sock.on('data', (chunk) => this.onData(chunk))
-        sock.on('close', () => {
-          if (this.sock === sock) this.dropConnection(new Error('control socket closed'))
-        })
-        sock.on('error', () => {})
-        this.sock = sock
-        resolve(sock)
-      })
-      sock.once('error', (e) => {
-        sock.destroy()
-        reject(e)
-      })
-    })
-  }
-
-  private onData(chunk: Buffer): void {
-    this.buf += chunk.toString()
-    for (;;) {
-      const nl = this.buf.indexOf('\n')
-      if (nl < 0) return
-      const line = this.buf.slice(0, nl)
-      this.buf = this.buf.slice(nl + 1)
-      let msg: Record<string, unknown>
-      try {
-        msg = JSON.parse(line)
-      } catch {
-        console.error(`vtr-player: unparseable control reply: ${line}`)
-        continue
-      }
-      // Match by id; drop replies to unknown (e.g. timed-out) requests.
-      const entry = typeof msg.id === 'number' ? this.pending.get(msg.id) : undefined
-      if (!entry) continue
-      this.pending.delete(msg.id as number)
-      entry.resolve(msg)
-    }
+    return this.cmds.request(cmd, extra, this.requestTimeoutMs)
   }
 
   private dropConnection(err: Error): void {
-    this.sock?.destroy()
-    this.sock = null
-    this.buf = ''
-    const pending = [...this.pending.values()]
-    this.pending.clear()
-    for (const p of pending) p.reject(err)
+    this.cmds.drop(err)
+    this.poll.drop(err)
   }
 }
