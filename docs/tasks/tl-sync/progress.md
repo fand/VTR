@@ -52,6 +52,22 @@ Verification in this environment: `cargo test -p vtr-player` (18 unit /
 typecheck + `test:unit` (84) + lint (0 errors), `py_compile` on
 `vtr_ext.py`, `uv run pytest` (16, vtr_core untouched).
 
+## 2026-07-22 — second review round: 1 high + 4 minor, all fixed
+
+A fresh review of the full PR diff. One commit per finding:
+
+| Severity | Commit | Issue → fix |
+| --- | --- | --- |
+| High | `3910b58` | **Idle editor scrubs never wrote the transport**: `onSeek` returned early when not playing, so checklist 1/6 (editor→TD with the editor stopped) could not pass — session residency had no write side. The mirror write now runs unconditionally. |
+| Minor | `a76b510` | `/vtr/rec/start` priming went through the hold rule as origin `""`, so a transport write in the last 400 ms silently dropped it (regression vs always-applied). New `prime_seek`: bypasses the hold (recording wins), bumps gen, takes no hold. |
+| Minor | `dab8c33` | A renderer loading after a foreign move assumed playhead 0 until the next change. Main keeps the last foreign state; `transport:last` IPC returns it (extrapolated while playing); the renderer seeds once on mount, live updates win. |
+| Minor | `0db3680` | `request_seek` wrote the seek mailbox after releasing the state lock — racing seeks could emit one stale frame. Mailbox write moved under the state lock (state → seek, same order as `on_load`). |
+| Minor | `e77cc4f` | `TransportFollow` was fire-and-forget; retained and stopped in `will-quit`. |
+
+Accepted as-is: paused TD scrubs < `SYNC_JUMP_EPS` are swallowed
+(threshold tradeoff, already in the tuning list); residency reload ships
+the full merged project per edit (debounced — revisit if heavy).
+
 ## Remaining — tox rebuild + manual verification in TD
 
 Not runnable here (needs TouchDesigner + `./run`):

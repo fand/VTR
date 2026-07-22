@@ -99,9 +99,10 @@ on replies.
   always move `TState` (and bump `gen`); only resolve/emit still requires
   a loaded session. `on_load` still rewinds and clears the mailbox.
 - The relay passes origin `osc` on `/vtr/play|stop|seek`
-  (`relay.rs`). The `/vtr/rec/start` punch-in seek keeps origin `""`
-  (internal priming, not a user transport gesture — followers may apply
-  it as any foreign-origin write).
+  (`relay.rs`). The `/vtr/rec/start` punch-in seek is internal priming,
+  not a user transport gesture: it bypasses the hold rule (recording wins
+  over any tug-of-war) and takes no hold itself, with origin `""` —
+  followers apply it as any foreign-origin write.
 
 ## TD tox: `Positionmode` = `sync`
 
@@ -166,7 +167,12 @@ wins over a stale local timeline.
   transport); a foreign stop freezes a running local stream. Between
   replies the renderer extrapolates from `(t, playing, reply time)`.
 - **Write**: seekbar / play / stop IPC handlers pass `origin:"editor"` on
-  the mirror calls they already make. No new write paths.
+  the mirror calls they already make; the seekbar mirrors every scrub,
+  idle included (the stream-side seek is a no-op then), so TD follows the
+  editor while it is stopped. No new write paths.
+- **Boot seed**: the renderer seeds its playhead once on mount from the
+  last foreign state main saw (extrapolated while playing), so a window
+  that loads or reloads after a TD move doesn't assume 0.
 - **Session residency**: today the inline session is loaded only on
   `preview:play`, so with the editor idle a TD-side scrub would resolve
   against nothing. The editor instead inline-loads on project open and
