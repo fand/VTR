@@ -4,7 +4,7 @@ Status: done. Spec: [spec.md](spec.md).
 
 ## Shape
 
-1. osc-tap: event log + `wait` cmd; `/rec/start` / `/rec/stop` on the
+1. vtr-tap: event log + `wait` cmd; `/rec/start` / `/rec/stop` on the
    beacon port; `tl` in `session_start`; `rec_t` + `last_clip` in status.
 2. editor: wait loop in TapManager, event-driven recording state in the
    renderer; the 1s poll becomes display-only.
@@ -13,7 +13,7 @@ Status: done. Spec: [spec.md](spec.md).
 
 ## Steps
 
-### 1. osc-tap: event log (`osc-tap/src/tap.rs`)
+### 1. vtr-tap: event log (`vtr-tap/src/tap.rs`)
 
 - `Event` enum: `RecStarted { clip, tl: Option<f64> }`,
   `RecStopped { clip }`. Serializes as `{"ev":"rec_started",...}`.
@@ -31,7 +31,7 @@ Status: done. Spec: [spec.md](spec.md).
 - Unit tests drive `EventLog` directly: seq growth, overflow → reset,
   wait_since cutoff.
 
-### 2. osc-tap: `/rec` on the beacon thread (`osc-tap/src/tap.rs`)
+### 2. vtr-tap: `/rec` on the beacon thread (`vtr-tap/src/tap.rs`)
 
 - Beacon thread gets a `Handle` (clone `tx` before spawn).
 - In the flatten loop, match on address:
@@ -44,7 +44,7 @@ Status: done. Spec: [spec.md](spec.md).
 - `Msg::Start`: compute `tl` (same age filter as packet stamping) → into
   the `session_start` header and the `RecStarted` event.
 
-### 3. osc-tap: `wait` cmd (`osc-tap/src/control.rs`)
+### 3. vtr-tap: `wait` cmd (`vtr-tap/src/control.rs`)
 
 - `{"cmd":"wait","since":N}` → `EventLog::wait_since(N, SERVER_TIMEOUT)`;
   reply `{"ok":true,"seq":M,"events":[...]}`, plus `"reset":true` and
@@ -133,7 +133,7 @@ Status: done. Spec: [spec.md](spec.md).
 
 ### 6. Tests
 
-- Rust e2e (`osc-tap/tests/e2e.rs`):
+- Rust e2e (`vtr-tap/tests/e2e.rs`):
   - UDP `/rec/start` → recording; events recorded; `/rec/stop` →
     `session_end`, `last_clip` set.
   - `/rec/start 42.0` with no `/clock` ever sent → header `tl` ≈ 42,

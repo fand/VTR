@@ -52,7 +52,6 @@ class VTRExt:
         # player mode
         self.sock = None
         self.rfile = None
-        self.routes = {}  # listen port -> forward port, from the load reply
         self.error = ""
         self._rows = {}  # (port, addr) -> state DAT row
         self._pending_load = False
@@ -60,8 +59,6 @@ class VTRExt:
         self._pos = 0.0  # internal transport position (Positionmode internal)
         self._last_abs = None
         self._sync_reset()  # Positionmode sync state
-        self._oscouts = {}  # (host, port) -> oscout DAT
-        self._warned_ports = set()
         self._reset_state()
         if str(self.ownerComp.par.File.eval()).strip():
             self._pending_load = True
@@ -152,8 +149,6 @@ class VTRExt:
             # lazily. A fresh connection re-baselines server-side, so the
             # next resolve is a full catch-up.
             self._disconnect()
-        elif name in ("Playhost", "Playport"):
-            self._drop_outputs()
         elif name in ("Positionmode", "Play"):
             # A jump in the queried t IS the seek; only the internal
             # transport's time base needs resetting.
@@ -397,7 +392,6 @@ class VTRExt:
         if not reply.get("ok"):
             self._set_error(reply.get("error", "load failed"))
             return
-        self.routes = {int(k): int(v) for k, v in reply.get("routes", {}).items()}
         self._reset_state()
         for key in ("duration", "events", "addresses", "skipped"):
             self._set_info(key, reply.get(key, ""))
@@ -412,9 +406,6 @@ class VTRExt:
         self._apply_state(events)
         self._apply_chop(events)
         self._fire_callbacks(events)
-        if self.ownerComp.par.Emitosc.eval():
-            for port, addr, args in events:
-                self._out_for(int(port)).sendOSC(addr, list(args))
 
     def _apply_state(self, events):
         dat = self.ownerComp.op("state")
@@ -535,43 +526,3 @@ class VTRExt:
         self._sync_reseed = True
         self._set_error(msg)
         self._next_connect = time.monotonic() + RECONNECT_S
-
-    # --------------------------------------------------------- legacy re-emit
-
-    def _drop_outputs(self):
-        for o in self.ownerComp.ops("oscout_play*"):
-            o.destroy()
-        self._oscouts = {}
-        self._warned_ports = set()
-
-    def _out_for(self, listen_port):
-        """oscout DAT for a listen port, mapped through routes / overrides.
-
-        Always the forward side of the route — emitting to the listen port
-        would make the tap re-record the replay. Documented cost of Emitosc:
-        the re-emit arrives one frame late; new projects should read the
-        state table / callbacks instead.
-        """
-        p = self.ownerComp.par
-        dest = int(p.Playport.eval())
-        if not dest:
-            dest = self.routes.get(listen_port)
-        if not dest:
-            dest = listen_port
-            if listen_port not in self._warned_ports:
-                self._warned_ports.add(listen_port)
-                print(
-                    "VTR: no route for listen port {} — emitting to it directly; "
-                    "if osc-tap listens there, set Playport to the forward port".format(listen_port)
-                )
-        host = str(p.Playhost.eval()).strip() or "127.0.0.1"
-        key = (host, dest)
-        out = self._oscouts.get(key)
-        if out is None or not out.valid:
-            out = self.ownerComp.create(oscoutDAT, "oscout_play{}".format(dest))  # noqa: F821
-            out.par.address = host
-            out.par.port = dest
-            out.nodeX = 400
-            out.nodeY = -200 * len(self._oscouts)
-            self._oscouts[key] = out
-        return out

@@ -20,7 +20,7 @@ matching the OSC type tag string (minus the leading `,`):
 
 ## Steps
 
-### 1. osc-tap: emit tags (`osc-tap/src/tap.rs`)
+### 1. vtr-tap: emit tags (`vtr-tap/src/tap.rs`)
 
 - Change `arg_to_json` → `arg_to_json_tagged(&OscType) -> Option<(char, Value)>`:
   - `Float`→`f`, `Double`→`d`, `Int`→`i`, `Long`→`h`, `String`→`s`,
@@ -33,27 +33,27 @@ matching the OSC type tag string (minus the leading `,`):
 - Tests (`mod tests`): tag/arg alignment with a blob in the middle; `T`/`F`
   by value; big `h` as string; each tag char.
 
-### 2. Editor types (`osc-editor/src/shared/types.ts`)
+### 2. Editor types (`vtr-editor/src/shared/types.ts`)
 
 - `OscEvent`: add `types?: string`.
 
-### 3. Clip reader (`osc-editor/src/main/clips.ts`)
+### 3. Clip reader (`vtr-editor/src/main/clips.ts`)
 
 - Lines are cast to `OscEvent`, so `types` flows through as-is. Add a test:
   one line with `types`, one without.
 
-### 4. Merge (`osc-editor/src/main/merge.ts`)
+### 4. Merge (`vtr-editor/src/main/merge.ts`)
 
 - The event copy (~line 34) rebuilds objects; add `types: e.types`
   (`JSON.stringify` drops `undefined`, so old clips stay clean).
 - Curve-editor-added events (`edits.add`) have no `types` → guess path.
   Their args are editor-made floats, so the `f` guess is right.
 
-### 5. Export (`osc-editor/src/main/session.ts`)
+### 5. Export (`vtr-editor/src/main/session.ts`)
 
 - Line 28 rebuilds the JSON line; include `types: e.types`.
 
-### 6. Encoder (`osc-editor/src/main/osc.ts` + `preview.ts`)
+### 6. Encoder (`vtr-editor/src/main/osc.ts` + `preview.ts`)
 
 - `encodeOscMessage(addr, args, types?)`:
   - No `types`, or `types.length !== args.length` → current guessing,
@@ -77,7 +77,7 @@ matching the OSC type tag string (minus the leading `,`):
 
 ## Verification
 
-- `cargo test` in `osc-tap`; `npm test` in `osc-editor`.
+- `cargo test` in `vtr-tap`; `npm test` in `vtr-editor`.
 - End-to-end: script sends args of each type → record → check JSONL tags →
   preview replay → capture with a dump tool → tags match the original send.
 - Back-compat: load a pre-change clip; preview and export behave as today.

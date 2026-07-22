@@ -4,7 +4,7 @@ Status: spec agreed (2026-07-18); the playback architecture was superseded on 20
 
 ## Background
 
-TD is the VJ app on the other side of osc-tap: controllers send OSC to the tap's listen port (10010), the tap forwards unchanged to TD (10011) and takes `/clock` / `/rec/*` on the control port (10012). Today nothing on the TD side speaks that control protocol, and replaying an exported `session.jsonl` requires launching the editor (its preview feature). This task adds a single reusable TD component that closes both gaps.
+TD is the VJ app on the other side of vtr-tap: controllers send OSC to the tap's listen port (10010), the tap forwards unchanged to TD (10011) and takes `/clock` / `/rec/*` on the control port (10012). Today nothing on the TD side speaks that control protocol, and replaying an exported `session.jsonl` requires launching the editor (its preview feature). This task adds a single reusable TD component that closes both gaps.
 
 Decisions from the design discussion:
 
@@ -24,7 +24,7 @@ Decisions from the design discussion:
 
 ### Rec page
 
-- `Record` (Toggle) — ON sends `/rec/start <t> <rate>` (t = current root timeline seconds; this is osc-tap's official sync mechanism), OFF sends `/rec/stop`. Fire-and-forget UDP; both commands are idempotent on the tap side, so UI/tap state can never wedge.
+- `Record` (Toggle) — ON sends `/rec/start <t> <rate>` (t = current root timeline seconds; this is vtr-tap's official sync mechanism), OFF sends `/rec/stop`. Fire-and-forget UDP; both commands are idempotent on the tap side, so UI/tap state can never wedge.
 - `Clock` (Toggle, default ON) — send `/clock <t> <rate>` at `Clockrate` Hz (default 10). Sent even while the timeline is paused (`rate` 0), because beacon age is what keeps `tl` stamping alive.
 - `Controlhost` (default `127.0.0.1`) / `Controlport` (default `10012`).
 

@@ -1,14 +1,14 @@
 # Clip JSONL drops OSC type tags
 
-Status: done (2026-07-17). Fixed on `feat/schema-types`: osc-tap records a
+Status: done (2026-07-17). Fixed on `feat/schema-types`: vtr-tap records a
 `types` tag string per event, the editor carries it through merge/export and
 encodes preview OSC by it. See [plan.md](plan.md); schema documented in the
 README.
 
 ## Problem
 
-osc-tap parses each OSC packet and writes its args as plain JSON
-(`osc-tap/src/tap.rs` `arg_to_json`). OSC args are typed (`i` int32, `f`
+vtr-tap parses each OSC packet and writes its args as plain JSON
+(`vtr-tap/src/tap.rs` `arg_to_json`). OSC args are typed (`i` int32, `f`
 float32, `d` float64, `h` int64, `s` string, `I` impulse, `r` color, …) but
 the JSONL line keeps only JSON numbers/strings. The mapping is not injective,
 so the original tags cannot be recovered:
@@ -22,7 +22,7 @@ The loss happens **at record time**. Everything downstream inherits it.
 
 ## Symptoms
 
-### 1. Preview replay guesses types (`osc-editor/src/main/osc.ts`)
+### 1. Preview replay guesses types (`vtr-editor/src/main/osc.ts`)
 
 `encodeOscMessage` re-encodes JSON args to OSC:
 
@@ -54,16 +54,16 @@ stay ambiguous forever.
 
 ## Fix direction
 
-Record the type tag string per event in osc-tap's JSONL, e.g.:
+Record the type tag string per event in vtr-tap's JSONL, e.g.:
 
 ```json
 {"t":0.5,"port":10000,"a":"/fader","types":"ff","args":[0.42,2.0]}
 ```
 
-- `osc-tap` (`arg_to_json` call site): emit the rosc tag per arg alongside the
+- `vtr-tap` (`arg_to_json` call site): emit the rosc tag per arg alongside the
   JSON value. Skipped args (blob) must skip their tag too, so `types` and
   `args` stay aligned.
-- `osc-editor/src/main/osc.ts`: use `types` when present; keep the current
+- `vtr-editor/src/main/osc.ts`: use `types` when present; keep the current
   guessing as fallback for old clips (back-compat — `types` is an additive
   field, old readers ignore it).
 - Events added in the curve editor have no recorded tags; they stay on the
@@ -72,11 +72,11 @@ Record the type tag string per event in osc-tap's JSONL, e.g.:
 
 ## Touch points
 
-- `osc-tap/src/tap.rs` — `arg_to_json` / packet write loop, plus its tests
-- `osc-editor/src/main/osc.ts` — `encodeOscMessage`
-- `osc-editor/src/main/clips.ts` — clip reader (carry `types` through)
-- `osc-editor/src/shared/types.ts` — `OscEvent` (optional `types?: string`)
-- `osc-editor/src/main/merge.ts` / `session.ts` — keep `types` on merged
+- `vtr-tap/src/tap.rs` — `arg_to_json` / packet write loop, plus its tests
+- `vtr-editor/src/main/osc.ts` — `encodeOscMessage`
+- `vtr-editor/src/main/clips.ts` — clip reader (carry `types` through)
+- `vtr-editor/src/shared/types.ts` — `OscEvent` (optional `types?: string`)
+- `vtr-editor/src/main/merge.ts` / `session.ts` — keep `types` on merged
   events so export carries it
 - README / export docs — describe the schema field
 

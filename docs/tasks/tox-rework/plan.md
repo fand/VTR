@@ -86,9 +86,9 @@ over from spec.md unchanged unless noted.
 
 ## Steps
 
-1. `osc-tap`: `--td-notify` config + OSC emit on rec transitions (both the
+1. `vtr-tap`: `--td-notify` config + OSC emit on rec transitions (both the
    socket-API and `/vtr/rec*` paths) + unit/e2e tests.
-2. `osc-editor`: spawn the tap with `--td-notify 127.0.0.1:10014`; adjust
+2. `vtr-editor`: spawn the tap with `--td-notify 127.0.0.1:10014`; adjust
    spawn-arg tests.
 3. `td/src/vtr_ext.py`: extension — Mode gating, record follower
    (oscin callbacks → seek + play), clock/rec sender, player sync client

@@ -6,38 +6,38 @@
 ## 全体像
 
 ```
-TouchOSC ──▶ osc-tap ──▶ clips/*.jsonl ──▶ osc-editor ──▶ session.jsonl ──▶ vtr-player ──▶ TouchDesigner
+TouchOSC ──▶ vtr-tap ──▶ clips/*.jsonl ──▶ vtr-editor ──▶ session.jsonl ──▶ vtr-player ──▶ TouchDesigner
  (操作)      (記録)                        (編集/配置)                        (再生/解決)      (映像)
 ```
 
 ## ① ライブ / 録音経路
 
 ```
-TouchOSC ── app OSC + /vtr/* ──▶ osc-tap ── app OSC そのまま転送 ──▶ TouchDesigner
+TouchOSC ── app OSC + /vtr/* ──▶ vtr-tap ── app OSC そのまま転送 ──▶ TouchDesigner
             (UDP :10010)           │            (UDP :10011)
                                    ├─▶ clips/*.jsonl に記録 (tl 付き JSONL)
                                    ├─▶ /vtr/* リレー ──▶ vtr-player (UDP :10013)
                                    └─▶ rec 通知 ──▶ vtr.tox record モード (UDP :10014)
 
-vtr.tox ── /vtr/clock ビーコン (tl, rate) ──▶ osc-tap (UDP :10010)
+vtr.tox ── /vtr/clock ビーコン (tl, rate) ──▶ vtr-tap (UDP :10010)
 ```
 
 - `/vtr/clock` で TD タイムライン時刻(`tl`)をイベントに刻印。
   `/vtr/rec/start [tl]` が公式の同期開始手段。
 - `/vtr/*` はアプリへ転送されず、記録もされない。
 
-## ② 編集 / プレビュー (osc-editor)
+## ② 編集 / プレビュー (vtr-editor)
 
 ```
-clips/*.jsonl ──▶ osc-editor ──┬─▶ session.jsonl エクスポート
+clips/*.jsonl ──▶ vtr-editor ──┬─▶ session.jsonl エクスポート
                                └─▶ inline session load (routes 付き) + transport 書込 ──▶ vtr-player
                                      (unix socket vtr-player.sock)
 
 vtr-player ── プレビュー OSC (③ の再生経路と同一) ──▶ TouchDesigner (UDP :10011)
 ```
 
-- editor は osc-tap と vtr-player を spawn・監視する
-  (tap は osc-tap.sock の JSON Lines API、player は stdin close で終了)。
+- editor は vtr-tap と vtr-player を spawn・監視する
+  (tap は vtr-tap.sock の JSON Lines API、player は stdin close で終了)。
 - プレビュー再生は player に委譲: editor は merge した project を routes 付きで
   inline load し、transport を seek/play するだけ。OSC を出すのは player の
   emit loop のみ(resolver 一本化 — preview と本番再生が同一挙動)。
@@ -52,8 +52,8 @@ session.jsonl ──▶ vtr-player ──┬─▶ 再生 OSC ──▶ TouchDes
                                │     (unix socket; TD が毎フレーム resolve 問い合わせ、応答で受取)
                                └─▶ rec 状態エコー ──▶ TouchOSC (送信元IP :9000)
 
-osc-tap ── /vtr/play|stop|seek リレー ──▶ vtr-player (UDP :10013)
-osc-editor / vtr.tox(sync) ── transport 書込 (seek/play, gen+origin) ──▶ vtr-player
+vtr-tap ── /vtr/play|stop|seek リレー ──▶ vtr-player (UDP :10013)
+vtr-editor / vtr.tox(sync) ── transport 書込 (seek/play, gen+origin) ──▶ vtr-player
 ```
 
 - resolve は pull 型: リクエストは TD 発だが、データ本体(差分イベント)は
@@ -72,4 +72,4 @@ osc-editor / vtr.tox(sync) ── transport 書込 (seek/play, gen+origin) ─�
 | tap → player (/vtr/* リレー) | UDP :10013 |
 | tap → TD (rec 通知) | UDP :10014 |
 | player → コントローラ (rec エコー) | UDP 送信元IP:9000 |
-| editor ↔ tap / editor・TD ↔ player | unix socket (osc-tap.sock / vtr-player.sock) |
+| editor ↔ tap / editor・TD ↔ player | unix socket (vtr-tap.sock / vtr-player.sock) |

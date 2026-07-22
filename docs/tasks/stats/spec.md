@@ -4,7 +4,7 @@ Status: implemented (2026-07-17), pending commit/PR.
 
 ## Background
 
-osc-tap can lose packets at two points, both invisible in the UI today:
+vtr-tap can lose packets at two points, both invisible in the UI today:
 
 1. **Kernel recv buffer overflow** — the kernel silently drops datagrams when
    the recv thread stalls (CPU starvation). Not detectable per-socket on
@@ -34,7 +34,7 @@ Decisions from the design discussion:
 
 ## Spec
 
-### osc-tap
+### vtr-tap
 
 - `Status` gains `received: u64` — datagrams received on the listen socket
   since process start, recording or not (`events` only moves while recording,
@@ -76,6 +76,6 @@ In the header-right `status-grid`, second row:
 - Kernel-level drop detection (OS network stats in the UI; global counters
   give a sound "no loss" certificate when the delta is zero).
 - Sender-side sequence-number probes for measuring network-path loss
-  (TouchOSC/MaxMSP → osc-tap) during rehearsal; post-session gap analysis of
+  (TouchOSC/MaxMSP → vtr-tap) during rehearsal; post-session gap analysis of
   clip JSONL.
-- Forward-path (osc-tap → TD) delivery counters.
+- Forward-path (vtr-tap → TD) delivery counters.

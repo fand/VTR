@@ -1,15 +1,10 @@
-# td — TouchDesigner component (vtr.tox) + resolver conformance reference
+# td — TouchDesigner component (vtr.tox)
 
-Two things live here:
-
-- **vtr.tox** — the TouchDesigner client component (protocol v2): a thin,
-  mode-switched sync client. Source in `src/vtr_ext.py`, generator in
-  `build/build_vtr.py`. Spec: [docs/tasks/tox-rework/](../docs/tasks/tox-rework/).
-- **vtr_core** — pure-Python reference implementation of VTR's playback
-  resolution semantics, with the test suite that defines them. The
-  production resolver is the Rust `vtr-player` (`osc-tap/vtr-player/`); the
-  tests here are the conformance fixtures, ported 1:1 to
-  `osc-tap/vtr-player/tests/`. The tox does **not** use vtr_core.
+**vtr.tox** — the TouchDesigner client component (protocol v2): a thin,
+mode-switched sync client. Source in `src/vtr_ext.py`, generator in
+`build/build_vtr.py`. Spec: [docs/tasks/tox-rework/](../docs/tasks/tox-rework/).
+Playback-resolution semantics live in the Rust resolver and its tests
+(`vtr-tap/vtr-player/tests/conformance_*.rs`).
 
 ## vtr.tox
 
@@ -39,9 +34,8 @@ One Base COMP, one `Mode` switch:
 
   Output lands in the `state` table DAT (one row per address:
   `port addr args…`), the `chop_out` CHOP (numeric channels, see below),
-  the `callbacks` DAT's `onEvents(events)` hook (ordered delta — use this
-  for triggers), and optionally as re-emitted OSC (`Emitosc`, one frame
-  late, migration aid only).
+  and the `callbacks` DAT's `onEvents(events)` hook (ordered delta — use
+  this for triggers).
 
   `chop_out` is the numeric sibling of the state DAT: one channel per
   numeric OSC argument, holding its latest value, so you can wire OSC
@@ -71,7 +65,6 @@ One Base COMP, one `Mode` switch:
 | VTR Play | `Positionmode` / `Offset` | `timeline` / 0 | Position source: `timeline` (root timeline − Offset), `follow` (player transport = editor preview, read-only), `sync` (bidirectional — TD and editor seeks propagate both ways), `internal` (Play/Rewind). |
 | VTR Play | `Play` / `Rewind` | — | Internal transport (`Positionmode` = `internal` only). |
 | VTR Play | `Triggerpatterns` | — | Space-separated OSC address patterns, matched server-side. |
-| VTR Play | `Emitosc` / `Playhost` / `Playport` | off | Legacy re-emit to the project's OSC-in (routes from the load reply; Playport overrides). |
 
 Degraded behavior (player mode): on a connect failure or query error the
 state freezes on the last applied values, the `info` DAT's `error` row
@@ -118,20 +111,3 @@ and saves `td/vtr.tox`.
    same session produce identical frames; killing vtr-player mid-render
    fails loudly (error row + frozen state) and recovers when it respawns.
 7. No re-recording: replay traffic never reaches the tap's listen port.
-
-## vtr_core
-
-- `src/vtr_core/session.py` — columnar `session.jsonl` loader (numpy
-  columns, per-address indexes, routes/duration, malformed-line tolerance).
-- `src/vtr_core/resolver.py` — playback resolver: event pump for continuous
-  forward playback (full fidelity, triggers fire), per-address catch-up for
-  seeks/reverse (coalesced, triggers suppressed).
-
-No TouchDesigner dependency.
-
-### Tests
-
-```sh
-cd td
-uv run pytest
-```

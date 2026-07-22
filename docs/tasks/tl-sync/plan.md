@@ -9,7 +9,7 @@ two commits (player API, then the follow-loop + renderer wiring).
 
 ## Phase 1 — transport gen/origin + sessionless seek (Rust, foundation)
 
-`osc-tap/vtr-player/src/transport.rs`:
+`vtr-tap/vtr-player/src/transport.rs`:
 
 - `TState` gains `gen: u64`, `origin: String`, `last_write: Instant`.
 - `play` / `stop` / `seek` take an `origin: &str` and apply the hold rule
@@ -49,7 +49,7 @@ Commit: `feat(player): origin on transport cmds, gen in replies, watch long-poll
 
 ## Phase 3 — editor follower (TypeScript)
 
-`osc-editor/src/main/player.ts`, `index.ts`, preload/renderer:
+`vtr-editor/src/main/player.ts`, `index.ts`, preload/renderer:
 
 - `PlayerManager.play/stopTransport/seek` send `origin:"editor"`; new
   `watch(gen)` method with a longer per-request timeout than

@@ -19,7 +19,7 @@ Test suite: 16 pytest cases green (`cd td && uv run pytest`), wired into CI.
 
 ## Remaining — step 5: manual verification in TD
 
-Not startable from this environment (needs TouchDesigner + osc-tap running). Procedure:
+Not startable from this environment (needs TouchDesigner + vtr-tap running). Procedure:
 
 1. In the TD textport: `exec(open('<repo>/td/build/build_vtr.py').read())` then `build('<repo>/td')` — generates `td/vtr.tox`.
 2. Walk the manual test checklist in `td/README.md` (rec live/closed-editor, `tl` stamping, scrub/reverse/offset start, trigger suppression, no re-recording of replays).

@@ -7,7 +7,7 @@ Status: steps 1–4 & 6 implemented (2026-07-18); step 5 (manual verification in
 1. `td/src/vtr_core`: pure-Python session loader + playback resolver, pytest-covered, no TD imports.
 2. `td/src/vtr_ext.py`: TD extension wiring parameters, clock/rec OSC, and the per-frame cook to the core.
 3. `td/build/build_vtr.py`: script run inside TD that generates `vtr.tox` from `src/`, so the tox is reproducible instead of hand-maintained.
-4. Manual verification against real osc-tap + editor, checklist in `td/README.md`.
+4. Manual verification against real vtr-tap + editor, checklist in `td/README.md`.
 5. CI job for the pytest suite; top-level docs.
 
 ## Steps
@@ -48,9 +48,9 @@ Status: steps 1–4 & 6 implemented (2026-07-18); step 5 (manual verification in
 - Idempotent: deletes and rebuilds the comp, so spec changes are re-runs, not hand edits.
 - `td/README.md`: how to load the tox, how to rebuild it, dev loop (edit .py → re-init extension), plus the manual test checklist from step 5.
 
-### 5. Manual verification (osc-tap + editor)
+### 5. Manual verification (vtr-tap + editor)
 
-- Rec: with osc-tap running (editor closed and open), toggle `Record` in TD → clip appears / imports; verify events carry `tl` consistent with the TD timeline (clock beacon) and that `/rec/start` with `t` syncs the first event.
+- Rec: with vtr-tap running (editor closed and open), toggle `Record` in TD → clip appears / imports; verify events carry `tl` consistent with the TD timeline (clock beacon) and that `/rec/start` with `t` syncs the first event.
 - Play: export a session from the editor, load in the tox → OSC arrives on the forward port (watch with an OSC-in DAT); verify scrub (pause timeline + drag), reverse drag, mid-session start via `Offset`, trigger suppression with a `Triggerpatterns` entry, and that the tap does **not** re-record replayed events while recording is armed.
 - Record findings in `td/README.md` checklist checkboxes; anything broken feeds back into steps 1–3.
 
@@ -68,8 +68,8 @@ Status: steps 1–4 & 6 implemented (2026-07-18); step 5 (manual verification in
 ## Follow-ups (agreed, not yet scheduled)
 
 - **Snapshot dedup in the resolver** — keep a last-emitted-value snapshot per address and skip emissions whose args equal it, so seeks/scrubs don't re-send unchanged values. Small change: track the snapshot in `Resolver` (update on every emit, compare in `_catchup`, clear on `reset()`); pump stays dedup-free to preserve full fidelity. Do after the current verification round. (2026-07-18 discussion.)
-- Deterministic non-realtime rendering: swap the emit layer from loopback OSC to direct dispatch, or query a Rust-side state server (osc-tap adjacency) — revisit when offline export becomes a real use case.
+- Deterministic non-realtime rendering: swap the emit layer from loopback OSC to direct dispatch, or query a Rust-side state server (vtr-tap adjacency) — revisit when offline export becomes a real use case.
 
 ## Order & scopes
 
-Steps 1–2 are pure TDD and land first (scope: `td` — new conventional-commit scope, e.g. `feat(td): session loader`); 3–4 need TouchDesigner open for iteration; 5 needs osc-tap; 6 last.
+Steps 1–2 are pure TDD and land first (scope: `td` — new conventional-commit scope, e.g. `feat(td): session loader`); 3–4 need TouchDesigner open for iteration; 5 needs vtr-tap; 6 last.
