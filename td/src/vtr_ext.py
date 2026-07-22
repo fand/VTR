@@ -59,7 +59,7 @@ class VTRExt:
         self._next_connect = 0.0  # absTime gate on reconnect attempts
         self._pos = 0.0  # internal transport position (Positionmode internal)
         self._last_abs = None
-        self._sync_gen = -1  # last transport gen applied (Positionmode sync)
+        self._sync_reset()  # Positionmode sync state
         self._oscouts = {}  # (host, port) -> oscout DAT
         self._warned_ports = set()
         self._reset_state()
@@ -159,7 +159,7 @@ class VTRExt:
             # transport's time base needs resetting.
             self._last_abs = None
             # Entering sync re-baselines from the transport on the next tick.
-            self._sync_gen = -1
+            self._sync_reset()
 
     def OnPulse(self, par):
         if par.name == "Rewind":
@@ -255,17 +255,26 @@ class VTRExt:
         self._set_error("")
         self._apply(reply.get("events", []))
 
+    def _sync_reset(self):
+        """Drop the sync baseline: the next sync tick adopts the transport
+        state wholesale and writes nothing (mode entry, reconnect)."""
+        self._sync_gen = -1  # last transport gen applied
+        self._sync_last = None  # (td_seconds, play, monotonic) at last tick
+
     def _sync_tick(self, p):
         """Bidirectional glue between the root timeline and the player
-        transport. TD gives no scrub event, so a user seek is inferred from a
-        discontinuity between the timeline and the transport's playhead."""
+        transport. TD gives no scrub event, so user gestures are inferred
+        from a discontinuity against the position this extension *expects*
+        the timeline to be at (last tick's position, advanced while it was
+        playing) — never against the transport itself, which would misread
+        every foreign move as a local gesture."""
         tl = op("/").time  # noqa: F821
         rate = float(tl.rate) or 60.0
         offset = float(p.Offset.eval())
         actual_td = float(tl.seconds)
         actual_play = bool(tl.play)
+        now = time.monotonic()
 
-        # Resolve at the transport playhead; the reply is authoritative.
         reply = self._request({"cmd": "resolve", "follow": True})
         if not reply.get("ok"):
             self._set_error(reply.get("error", "resolve failed"))
@@ -275,29 +284,49 @@ class VTRExt:
         tr_play = bool(reply.get("playing"))
         gen = int(reply.get("gen", 0))
         origin = str(reply.get("origin", ""))
+
+        # 1. User gestures → write back (origin "td"). The first tick after
+        #    entry/reconnect has no baseline: adopt the transport, never
+        #    write. Each write reply is the authoritative outcome — the
+        #    hold rule may reject it mid-drag on the other side — so fold
+        #    it back in before the apply step.
+        user_seek = user_play = False
+        if self._sync_last is not None:
+            last_td, last_play, last_mono = self._sync_last
+            expected_td = last_td + ((now - last_mono) if last_play else 0.0)
+            user_seek = abs(actual_td - expected_td) > SYNC_JUMP_EPS
+            user_play = actual_play != last_play
+        if user_seek:
+            r = self._request({"cmd": "seek", "t": actual_td - offset, "origin": "td"})
+            if r.get("ok"):
+                t = float(r.get("playhead", t))
+                tr_play = bool(r.get("playing"))
+                gen, origin = int(r.get("gen", gen)), str(r.get("origin", ""))
+        if user_play:
+            r = self._request({"cmd": "play" if actual_play else "stop", "origin": "td"})
+            if r.get("ok"):
+                t = float(r.get("playhead", t))
+                tr_play = bool(r.get("playing"))
+                gen, origin = int(r.get("gen", gen)), str(r.get("origin", ""))
         target_td = t + offset
 
-        # 1. User gestures on the TD timeline → write back (origin "td").
-        #    A large gap is a deliberate seek; a play-flag mismatch is a
-        #    transport toggle. The transport's hold rule arbitrates.
-        user_seek = abs(actual_td - target_td) > SYNC_JUMP_EPS
-        if user_seek:
-            self._request({"cmd": "seek", "t": actual_td - offset, "origin": "td"})
-        if actual_play != tr_play:
-            cmd = "play" if actual_play else "stop"
-            self._request({"cmd": cmd, "origin": "td"})
-
-        # 2. Follow the transport — unless the user just took the timeline
-        #    over this tick (then it owns the position, corrected next tick).
-        if not user_seek:
-            foreign = gen != self._sync_gen and origin != "td"
-            if foreign:
-                tl.frame = target_td * rate + 1.0
-                tl.play = tr_play
-            elif tr_play and abs(actual_td - target_td) > SYNC_DRIFT_FRAMES / rate:
-                # Silent drift correction; not a user action, no write-back.
-                tl.frame = target_td * rate + 1.0
+        # 2. Glue the timeline to the transport. `lost` = this tick's
+        #    gesture was rejected by the hold rule (a foreign writer holds
+        #    the transport): snap back and keep following — without this a
+        #    rejected drag would leave the timeline diverged forever.
+        lost = (user_seek or user_play) and origin != "td"
+        foreign = gen != self._sync_gen and origin != "td"
+        if self._sync_last is None or lost or foreign:
+            tl.frame = target_td * rate + 1.0
+            tl.play = tr_play
+        elif tr_play and abs(actual_td - target_td) > SYNC_DRIFT_FRAMES / rate:
+            # Frame quantization / wall-clock drift: silent correction,
+            # never written back.
+            tl.frame = target_td * rate + 1.0
         self._sync_gen = gen
+        # Next tick's prediction starts from what the timeline actually
+        # shows now (frame assignment quantizes).
+        self._sync_last = (float(tl.seconds), bool(tl.play), now)
 
         self._apply(reply.get("events", []))
 
@@ -474,7 +503,7 @@ class VTRExt:
         self.rfile = None
         self.sock = None
         # A reconnect re-baselines from the transport, no write-back.
-        self._sync_gen = -1
+        self._sync_reset()
         self._set_info("connected", "0")
 
     def _drop_socket(self, msg):
