@@ -203,6 +203,13 @@ export class PlayerManager {
     ]
   }
 
+  /** Last inline load, re-pushed after a respawn (a restarted player is empty). */
+  private lastLoad: {
+    events: OscEvent[]
+    duration: number
+    routes: Record<string, number>
+  } | null = null
+
   spawnPlayer(): void {
     if (this.stopping || this.proc) return
     // Piped stdin + --exit-on-stdin-close: the player exits if the editor dies hard.
@@ -233,6 +240,16 @@ export class PlayerManager {
       console.error(`vtr-player spawn failed: ${e.message}`)
     })
     this.proc = proc
+    // Re-push the resident session: without this, resolve clients (the TD
+    // tox on an editor session) get "no session loaded" until the next
+    // edit re-triggers the renderer's residency load. The lazy connect
+    // waits out the player's startup.
+    const l = this.lastLoad
+    if (l) {
+      this.loadInline(l.events, l.duration, l.routes).catch((e) =>
+        console.log(`residency re-push failed: ${(e as Error).message}`)
+      )
+    }
   }
 
   shutdown(): void {
@@ -261,6 +278,7 @@ export class PlayerManager {
     duration: number,
     routes: Record<string, number>
   ): Promise<void> {
+    this.lastLoad = { events, duration, routes }
     await this.request('load', {
       events,
       duration,

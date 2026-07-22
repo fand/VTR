@@ -2,7 +2,7 @@ import { mkdtempSync } from 'fs'
 import net from 'net'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { afterEach, expect, test } from 'vitest'
+import { afterEach, expect, test, vi } from 'vitest'
 import { PlayerManager } from './player'
 
 /** Fake vtr-player control server, like tap.test.ts's. */
@@ -136,6 +136,19 @@ test('transport commands return the reply snapshot', async () => {
   })
   await expect(player.play()).resolves.toMatchObject({ playing: true, gen: 4 })
   await expect(player.stopTransport()).resolves.toMatchObject({ playhead: 6.75, playing: false })
+})
+
+test('spawn re-pushes the last inline load (a respawned player is empty)', async () => {
+  const seen: Record<string, unknown>[] = []
+  const { player } = await setup((req, reply) => {
+    seen.push(req)
+    reply({ ok: true })
+  })
+  const events = [{ t: 0.5, port: 10010, a: '/x', types: 'f', args: [0.1] }]
+  await player.loadInline(events, 5, { '10010': 10011 })
+  player.spawnPlayer() // respawn path; the fake server stands in for the new player
+  await vi.waitFor(() => expect(seen.filter((r) => r.cmd === 'load')).toHaveLength(2))
+  expect(seen[1]).toMatchObject({ cmd: 'load', events, duration: 5, keep: true })
 })
 
 test('transport writes carry the editor origin', async () => {
