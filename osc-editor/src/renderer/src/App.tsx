@@ -1260,15 +1260,17 @@ function App(): React.JSX.Element {
     return () => clearTimeout(timer)
   }, [playing, pausePreview])
 
-  // Seeking while playing repositions the live preview stream so playback
-  // keeps generating from the new spot; the visible playhead is driven by
-  // `playing`, so we roll its origin forward to match the jump.
+  // Every user seek mirrors into the shared transport — idle included, so
+  // a TD sync client follows the seekbar while the editor is stopped (the
+  // stream-side seek is a no-op then). While playing, it also repositions
+  // the live preview stream; the visible playhead is driven by `playing`,
+  // so we roll its origin forward to match the jump.
   const onSeek = useCallback(
     (sec: number) => {
       setPlayhead(sec)
+      window.api.preview.seek(sec).catch((e) => setError((e as Error).message))
       if (!playing) return
       setPlaying((p) => (p ? { ...p, startPos: sec, startedAt: performance.now() } : p))
-      window.api.preview.seek(sec).catch((e) => setError((e as Error).message))
     },
     [playing]
   )
