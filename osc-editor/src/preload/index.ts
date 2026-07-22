@@ -69,22 +69,16 @@ const api = {
       ipcRenderer.invoke('session:export', project)
   },
   preview: {
-    play: (project: ProjectFile, fromSec: number): Promise<{ duration: number }> =>
+    /** Load + seek + play on the shared transport; the reply snapshot is the truth. */
+    play: (
+      project: ProjectFile,
+      fromSec: number
+    ): Promise<{ duration: number; transport: TransportState }> =>
       ipcRenderer.invoke('preview:play', project, fromSec),
-    /**
-     * Reposition the live stream mid-playback; false when not playing.
-     * mirror=false skips the transport write — for seeks that CAME from
-     * the transport (follow apply), where mirroring would echo.
-     */
-    seek: (fromSec: number, mirror = true): Promise<{ seeked: boolean }> =>
-      ipcRenderer.invoke('preview:seek', fromSec, mirror),
+    /** Seek the shared transport (the player emits the resolved frame). */
+    seek: (fromSec: number): Promise<TransportState> =>
+      ipcRenderer.invoke('preview:seek', fromSec),
     stop: (): Promise<{ position: number }> => ipcRenderer.invoke('preview:stop'),
-    /** Async preview socket/send failures, for the error banner. */
-    onError: (cb: (message: string) => void): (() => void) => {
-      const listener = (_e: unknown, message: string): void => cb(message)
-      ipcRenderer.on('preview:error', listener)
-      return () => ipcRenderer.removeListener('preview:error', listener)
-    },
     /** Foreign transport moves (TD/controller seek or play/stop) to follow. */
     onTransport: (cb: (state: TransportState) => void): (() => void) => {
       const listener = (_e: unknown, state: TransportState): void => cb(state)

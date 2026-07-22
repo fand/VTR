@@ -397,8 +397,6 @@ function App(): React.JSX.Element {
   const [error, setError] = useState<string | null>(null)
   /** Latest event log line, shown at the right end of the status bar. */
   const [log, setLog] = useState<string | null>(null)
-  // Async preview socket/send failures from main land in the error banner.
-  useEffect(() => window.api.preview.onError(setError), [])
   const [busy, setBusy] = useState(false)
   const [playhead, setPlayhead] = useState(0)
   const [playing, setPlaying] = useState<PlayingState | null>(null)
@@ -521,10 +519,9 @@ function App(): React.JSX.Element {
   }, [applyLoaded])
 
   // Follow the shared transport: a seek or play/stop from TD or a controller
-  // (never the editor's own writes — those are suppressed in main). A foreign
-  // seek during a local preview repositions the live stream too; a foreign
-  // play animates the playhead only (remote) — TD already receives events
-  // through its own resolve, so the editor does not start pushing OSC on top.
+  // (never the editor's own writes — those are suppressed in main). The
+  // player emits the OSC for every transport move, so all the renderer does
+  // is roll its local playhead clock to match.
   const playingRef = useRef(playing)
   useEffect(() => {
     playingRef.current = playing
@@ -539,14 +536,13 @@ function App(): React.JSX.Element {
       setPlayhead(s.playhead)
       if (s.playing) {
         if (p && !p.remote) {
-          window.api.preview.seek(s.playhead, false).catch((e) => setError((e as Error).message))
+          // Foreign seek during editor playback: keep it editor-owned so
+          // the end-of-project auto-pause still applies.
           setPlaying({ ...p, startPos: s.playhead, startedAt: performance.now() })
         } else {
           setPlaying({ startPos: s.playhead, startedAt: performance.now(), duration, remote: true })
         }
       } else {
-        // Foreign stop: freeze a local preview stream where the transport says.
-        if (p && !p.remote) window.api.preview.stop().catch(() => {})
         setPlaying(null)
       }
     }
@@ -1219,8 +1215,8 @@ function App(): React.JSX.Element {
   }, [selectedPoints, commit])
 
   // Pause freezes the playhead where playback stopped; Play resumes from it.
-  // The renderer clock decides the pause position: main freezes at the last
-  // *sent* event, which can sit before the visible playhead.
+  // The local clock is the immediate estimate; the stop reply carries the
+  // player transport's exact position and wins when it arrives.
   const pausePreview = useCallback(async () => {
     if (playing) {
       setPlayhead(
@@ -1231,7 +1227,8 @@ function App(): React.JSX.Element {
       )
     }
     try {
-      await window.api.preview.stop()
+      const res = await window.api.preview.stop()
+      setPlayhead(playing ? Math.min(res.position, playing.duration) : res.position)
     } catch (e) {
       setError((e as Error).message)
     }
@@ -1255,7 +1252,17 @@ function App(): React.JSX.Element {
         serializeProject(tracks, markers, ports, duration, edits, history.seq),
         playhead
       )
-      setPlaying({ startPos: playhead, startedAt: performance.now(), duration: res.duration })
+      // The reply snapshot is the truth: the hold rule can reject our
+      // writes while a foreign controller is still driving the transport.
+      if (!res.transport.playing || res.transport.origin !== 'editor') {
+        setLog('Transport busy — another controller is driving it')
+        return
+      }
+      setPlaying({
+        startPos: res.transport.playhead,
+        startedAt: performance.now(),
+        duration: res.duration
+      })
       setLog('Playback started')
       setError(null)
     } catch (e) {
@@ -1275,11 +1282,10 @@ function App(): React.JSX.Element {
     return () => clearTimeout(timer)
   }, [playing, pausePreview])
 
-  // Every user seek mirrors into the shared transport — idle included, so
-  // a TD sync client follows the seekbar while the editor is stopped (the
-  // stream-side seek is a no-op then). While playing, it also repositions
-  // the live preview stream; the visible playhead is driven by `playing`,
-  // so we roll its origin forward to match the jump.
+  // Every user seek writes the shared transport — idle included, so a TD
+  // sync client follows the seekbar while the editor is stopped, and the
+  // player pushes the resolved frame to TD (deduped). The visible playhead
+  // is driven by `playing`, so we roll its origin forward to match the jump.
   const onSeek = useCallback(
     (sec: number) => {
       setPlayhead(sec)

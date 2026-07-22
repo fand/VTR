@@ -549,14 +549,7 @@ app.whenReady().then(() => {
     const transport = await p.play()
     return { duration, transport }
   })
-  // mirror=false: the seek came FROM the shared transport (follow apply) —
-  // writing it back would be an echo. With the player emitting, an echoed
-  // seek is a pure no-op request.
-  ipcMain.handle('preview:seek', async (_e, fromSec: number, mirror = true) => {
-    if (!mirror) return { seeked: false }
-    const transport = await requirePlayer().seek(fromSec)
-    return { seeked: transport.playing, transport }
-  })
+  ipcMain.handle('preview:seek', (_e, fromSec: number) => requirePlayer().seek(fromSec))
   ipcMain.handle('preview:stop', async () => {
     const transport = await requirePlayer().stopTransport()
     return { position: transport.playhead }
