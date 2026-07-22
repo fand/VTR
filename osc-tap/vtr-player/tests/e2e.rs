@@ -539,6 +539,42 @@ fn transport_cmds_carry_gen_and_origin_and_honor_hold() {
 }
 
 #[test]
+fn load_with_keep_preserves_the_transport() {
+    let tmp = tempfile::tempdir().unwrap();
+    let h = start_player(tmp.path(), None);
+    let mut c = h.connect();
+    assert_eq!(
+        c.request(json!({"cmd": "load", "events": [ev(1.0, "/a", &[1.0])], "duration": 60.0}))
+            ["ok"],
+        true
+    );
+    let r = c.request(json!({"cmd": "seek", "t": 2.0, "origin": "editor"}));
+    let gen0 = r["gen"].as_u64().unwrap();
+
+    // keep: session swaps, transport untouched (position, gen, origin).
+    let r = c.request(json!({
+        "cmd": "load", "keep": true, "origin": "editor",
+        "events": [ev(1.0, "/a", &[2.0])], "duration": 60.0,
+    }));
+    assert_eq!(r["ok"], true, "resp = {r}");
+    let s = c.request(json!({"cmd": "status"}));
+    assert!((s["status"]["playhead"].as_f64().unwrap() - 2.0).abs() < 0.05);
+    assert_eq!(s["status"]["gen"].as_u64().unwrap(), gen0);
+    assert_eq!(s["status"]["origin"], "editor");
+
+    // Default load: stop + rewind, gen bumped with the loader's origin.
+    let r = c.request(json!({
+        "cmd": "load", "origin": "editor",
+        "events": [ev(1.0, "/a", &[3.0])], "duration": 60.0,
+    }));
+    assert_eq!(r["ok"], true, "resp = {r}");
+    let s = c.request(json!({"cmd": "status"}));
+    assert_eq!(s["status"]["playhead"], 0.0);
+    assert!(s["status"]["gen"].as_u64().unwrap() > gen0);
+    assert_eq!(s["status"]["origin"], "editor");
+}
+
+#[test]
 fn watch_blocks_until_gen_changes() {
     let tmp = tempfile::tempdir().unwrap();
     let h = start_player(tmp.path(), None);

@@ -3,7 +3,8 @@
 //! dedup-wrapped resolver, so per-frame `resolve` calls return deltas.
 //!
 //! Requests:  {"cmd":"load","path":"…"|"events":[…],"name"?:"…","duration"?:D,
-//!             "triggers"?:[…],"routes"?:{"10010":9000}}
+//!             "triggers"?:[…],"routes"?:{"10010":9000},
+//!             "origin"?:"…","keep"?:true}
 //!          | {"cmd":"resolve","t":T} | {"cmd":"resolve","follow":true}
 //!          | {"cmd":"play"|"stop"|"seek","origin"?:"…"[,"t":T]}
 //!          | {"cmd":"watch","gen":N} | {"cmd":"status"}
@@ -223,10 +224,17 @@ fn load(request: &Value, ctx: &Ctx) -> Value {
         triggers: TriggerPatterns::compile(&triggers),
         routes,
     });
-    // Swap atomically; the transport stops and every connection's resolver
-    // resets via the epoch bump.
+    // Swap atomically; every connection's resolver resets via the epoch
+    // bump (next resolve is a full catch-up). `keep` swaps the session
+    // without touching the transport — no stop, no rewind, no gen bump —
+    // so a live edit (the editor's residency reload) lands mid-playback
+    // without yanking every follower to 0. The default stop+rewind stays
+    // for File-workflow clients (the tox), stamped with the loader's
+    // origin so the loader's own follower can suppress the echo.
     ctx.shared.swap(loaded);
-    ctx.transport.on_load();
+    if request["keep"].as_bool() != Some(true) {
+        ctx.transport.on_load(origin_of(request));
+    }
     reply
 }
 

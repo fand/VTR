@@ -208,16 +208,18 @@ impl Transport {
         st.snap()
     }
 
-    /// Called on `load`: stop, rewind, drop any pending seek, and bump generation
-    /// with a system origin so followers re-baseline to t=0/stopped. The
-    /// emit loop rebuilds its resolver on the epoch change it will observe.
-    pub fn on_load(&self) {
+    /// Called on `load`: stop, rewind, drop any pending seek, and bump
+    /// generation with the loader's origin so followers re-baseline to
+    /// t=0/stopped — except the loader itself, which suppresses its own
+    /// echo. The emit loop rebuilds its resolver on the epoch change it
+    /// will observe.
+    pub fn on_load(&self, origin: &str) {
         let mut st = self.inner.state.lock().unwrap();
         st.playing = false;
         st.base_t = 0.0;
         *self.inner.seek.lock().unwrap() = None;
         st.generation += 1;
-        st.origin = String::new();
+        st.origin = origin.to_string();
         // A load is not a holder: leave the transport idle for the next writer.
         st.last_write = None;
         self.inner.changed.notify_all();
