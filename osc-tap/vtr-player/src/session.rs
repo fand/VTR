@@ -1,7 +1,7 @@
 //! Columnar in-memory model of an exported session.jsonl.
 //!
-//! Port of `td/src/vtr_core/session.py` — the Python module stays the
-//! executable conformance reference (see `td/tests/test_session.py`).
+//! Semantics are defined by `tests/conformance_session.rs` (originally
+//! ported from a Python reference, since removed).
 //! Events are stored as columns so multi-million-event sessions stay
 //! compact; per-address indexes make seek catch-up a binary search.
 

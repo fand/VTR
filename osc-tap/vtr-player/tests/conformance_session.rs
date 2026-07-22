@@ -1,6 +1,6 @@
-//! Conformance suite: 1:1 translation of `td/tests/test_session.py`.
-//! The Python originals (run by `cd td && uv run pytest`) stay the
-//! executable reference; keep names and fixtures in sync.
+//! Conformance suite for session loading. Originally translated 1:1 from
+//! the Python reference (`td/tests/test_session.py`, removed); this suite
+//! now defines the semantics.
 
 use std::io::Write as _;
 use std::path::PathBuf;

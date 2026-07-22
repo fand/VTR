@@ -22,16 +22,6 @@ jobs:
       - run: cargo test
         working-directory: osc-tap
 
-  td-tests:
-    name: td (pytest)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - run: uv run pytest
-        working-directory: td
-
   editor-checks:
     name: osc-editor (lint / typecheck / unit)
     runs-on: ubuntu-latest

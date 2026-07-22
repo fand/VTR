@@ -1,15 +1,10 @@
-# td — TouchDesigner component (vtr.tox) + resolver conformance reference
+# td — TouchDesigner component (vtr.tox)
 
-Two things live here:
-
-- **vtr.tox** — the TouchDesigner client component (protocol v2): a thin,
-  mode-switched sync client. Source in `src/vtr_ext.py`, generator in
-  `build/build_vtr.py`. Spec: [docs/tasks/tox-rework/](../docs/tasks/tox-rework/).
-- **vtr_core** — pure-Python reference implementation of VTR's playback
-  resolution semantics, with the test suite that defines them. The
-  production resolver is the Rust `vtr-player` (`osc-tap/vtr-player/`); the
-  tests here are the conformance fixtures, ported 1:1 to
-  `osc-tap/vtr-player/tests/`. The tox does **not** use vtr_core.
+**vtr.tox** — the TouchDesigner client component (protocol v2): a thin,
+mode-switched sync client. Source in `src/vtr_ext.py`, generator in
+`build/build_vtr.py`. Spec: [docs/tasks/tox-rework/](../docs/tasks/tox-rework/).
+Playback-resolution semantics live in the Rust resolver and its tests
+(`osc-tap/vtr-player/tests/conformance_*.rs`).
 
 ## vtr.tox
 
@@ -116,20 +111,3 @@ and saves `td/vtr.tox`.
    same session produce identical frames; killing vtr-player mid-render
    fails loudly (error row + frozen state) and recovers when it respawns.
 7. No re-recording: replay traffic never reaches the tap's listen port.
-
-## vtr_core
-
-- `src/vtr_core/session.py` — columnar `session.jsonl` loader (numpy
-  columns, per-address indexes, routes/duration, malformed-line tolerance).
-- `src/vtr_core/resolver.py` — playback resolver: event pump for continuous
-  forward playback (full fidelity, triggers fire), per-address catch-up for
-  seeks/reverse (coalesced, triggers suppressed).
-
-No TouchDesigner dependency.
-
-### Tests
-
-```sh
-cd td
-uv run pytest
-```

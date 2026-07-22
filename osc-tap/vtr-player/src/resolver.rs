@@ -1,7 +1,7 @@
 //! Playback state resolver: turns a playhead position into OSC emissions.
 //!
-//! Port of `td/src/vtr_core/resolver.py` — the Python module stays the
-//! executable conformance reference (see `td/tests/test_resolver.py`).
+//! Semantics are defined by `tests/conformance_resolver.rs` (originally
+//! ported from a Python reference, since removed).
 //! Two modes (protocol v2; see the top-level README):
 //!
 //! - Continuous forward (0 < step <= jump_threshold): event pump — every
@@ -126,8 +126,8 @@ impl Resolver {
     }
 }
 
-/// Connection-layer wrapper adding snapshot dedup on seeks (per spec, new
-/// vs. vtr_core): catch-up emissions exactly equal to the per-connection
+/// Connection-layer wrapper adding snapshot dedup on seeks (per spec —
+/// not in the resolver core): catch-up emissions exactly equal to the per-connection
 /// last-emitted value are skipped. Exact equality only — no epsilon
 /// (archival fidelity). Pump emissions are never deduped but do update the
 /// last-emitted values, so a later seek dedups against what was actually

@@ -10,7 +10,6 @@ VJs' Timeline Recorder. Record, edit, and replay OSC for VJ performance archival
 - **vtr-player** (Rust, `osc-tap/vtr-player/`): resolver server. Replays a `session.jsonl` to the VJ app (push transport driven by relayed `/vtr/play|stop|seek`), answers per-frame sync queries over a unix socket (for TD), primes punch-in state, and echoes rec state to controllers (`source IP : echo port`). Protocol: "OSC control" below.
 - **osc-editor** (Electron): DAW-style editor. Records clips via osc-tap, arranges them on tracks, exports a merged `session.jsonl`. Spawns and monitors both osc-tap and vtr-player, and delegates preview playback to the player (inline session load with routes + transport writes) — the player's resolver emits all preview OSC, so preview and replay behave identically, and sync clients follow the same transport.
 - **vtr.tox** (TouchDesigner, `td/`): mode-switched sync client. `record` follows VTR — the tap's rec notifications (`--td-notify`, default 127.0.0.1:10014) seek TD's timeline and start playback, while the tox beacons `/vtr/clock` back. `player` blocks each frame on a `resolve` query to vtr-player and applies the delta before the cook; position source is the TD timeline (deterministic offline rendering), the player transport (`follow` — tracks the editor preview live, no export needed), or bidirectional `sync` (seeking in TD or the editor propagates both ways). Build & docs: `td/README.md`.
-- **vtr_core** (Python, `td/`): reference implementation of the playback resolver; its pytest suite is the conformance reference for vtr-player's Rust resolver. Not used by the tox.
 
 ## Quick start
 
@@ -36,10 +35,6 @@ npm run typecheck
 npm run test:unit             # vitest
 npm run test:e2e              # playwright e2e (needs osc-tap debug build)
 RUN_LAUNCHD=1 npx playwright test e2e/launchd.spec.ts   # launchd agent test
-
-# vtr_core (resolver conformance reference)
-cd td
-uv run pytest
 ```
 
 CI (GitHub Actions) runs `cargo test` on macOS, plus editor lint / typecheck / unit tests on Linux and the Playwright e2e suite on macOS, for every push to `main` and every pull request.
