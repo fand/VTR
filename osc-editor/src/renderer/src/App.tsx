@@ -519,6 +519,33 @@ function App(): React.JSX.Element {
       .finally(() => setBootDone(true))
   }, [applyLoaded])
 
+  // Follow the shared transport: a seek or play/stop from TD or a controller
+  // (never the editor's own writes — those are suppressed in main) moves the
+  // visible playhead. Local-state only, so it can't echo back to the player.
+  useEffect(
+    () =>
+      window.api.preview.onTransport((s) => {
+        setPlayhead(s.playhead)
+        setPlaying(
+          s.playing ? { startPos: s.playhead, startedAt: performance.now(), duration } : null
+        )
+      }),
+    [duration]
+  )
+
+  // Session residency: keep the player holding the current merged project so
+  // a TD-side scrub always resolves against something. Debounced after edits;
+  // also fires once the boot load settles.
+  useEffect(() => {
+    if (!bootDone) return
+    const t = setTimeout(() => {
+      window.api.player
+        .loadInline(serializeProject(tracks, markers, ports, duration, edits, history.seq))
+        .catch(() => {})
+    }, 300)
+    return () => clearTimeout(t)
+  }, [bootDone, tracks, markers, ports, duration, edits, history.seq])
+
   const saveTo = useCallback(
     async (path: string): Promise<void> => {
       await window.api.project.save(

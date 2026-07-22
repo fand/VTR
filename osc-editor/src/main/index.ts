@@ -17,6 +17,7 @@ import { SESSION_FILE, exportSession } from './session'
 import { ensureWithin } from './paths'
 import { SpawnMode, TapManager } from './tap'
 import { PlayerManager } from './player'
+import { TransportFollow } from './transportFollow'
 import { findBinary } from './binary'
 import { addRecent, clearRecents, loadRecents, removeRecent } from './recents'
 import { appendUndo, clearUndoLog, loadUndoLog, transferUndoLog, truncateUndoAfter } from './undo'
@@ -362,6 +363,11 @@ app.whenReady().then(() => {
     // to start — the player just retries the connection.
     player = new PlayerManager(bin, dataDir, ports.echo, join(dataDir, 'osc-tap.sock'))
     player.spawnPlayer()
+    // Mirror the player's push transport back into the editor: a seek or
+    // play/stop from TD or a controller moves the renderer's playhead.
+    new TransportFollow(player, (s) =>
+      BrowserWindow.getAllWindows()[0]?.webContents.send('transport:update', s)
+    ).start()
   } catch (e) {
     playerError = (e as Error).message
     console.error(playerError)
@@ -535,6 +541,16 @@ app.whenReady().then(() => {
   ipcMain.handle('preview:stop', () => {
     player?.stopTransport().catch(() => {})
     return { position: preview.stop() }
+  })
+  // Session residency: keep the player holding the current merged project
+  // even when idle, so a TD-side scrub resolves against something. Called
+  // on project open and (debounced) after edits. Best-effort.
+  ipcMain.handle('player:loadInline', (_e, project: ProjectFile) => {
+    const merged = mergeProject(resolveClip, project)
+    const duration = Math.max(merged.duration, project.duration ?? 0)
+    player
+      ?.loadInline(merged.events, duration)
+      .catch((e) => console.log(`residency load failed: ${(e as Error).message}`))
   })
 
   createWindow()
