@@ -29,6 +29,7 @@ Not startable from this environment (needs TouchDesigner + osc-tap running). Pro
 
 Design discussions (other VJ apps, sync pull, port merge) concluded the resolver must live on the VTR side as a Rust process (protocol v2; top-level README and [../tox-rework/spec.md](../tox-rework/spec.md)). Consequences for this task:
 
+- The replacement tox client was implemented 2026-07-21 — see [../tox-rework/progress.md](../tox-rework/progress.md).
 - PR #7 (the in-TD player) was closed unmerged: the tox play side was superseded before manual verification ever ran.
 - Salvaged into the replacement PR: all docs, `td/src/vtr_core` + its 16 tests (now the **conformance reference** for the Rust resolver), and the CI job.
 - Dropped: `vtr_ext.py`, `build/build_vtr.py`, the tox build/usage README. They live on in the closed `feat/td` branch if the future tox rework (rec/clock + sync-query client) wants to crib from them.

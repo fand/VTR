@@ -95,3 +95,76 @@ test('echo port change drops the connection; same port is a no-op', async () => 
   await player.status()
   expect(connections()).toBe(2)
 })
+
+test('preview sync methods send the control cmds', async () => {
+  const seen: Record<string, unknown>[] = []
+  const { player } = await setup((req, reply) => {
+    seen.push(req)
+    reply({ ok: true })
+  })
+  const events = [{ t: 0.5, port: 10010, a: '/x', types: 'f', args: [0.1] }]
+  await player.loadInline(events, 12.5)
+  await player.seek(2.5)
+  await player.play()
+  await player.stopTransport()
+
+  expect(seen.map((r) => r.cmd)).toEqual(['load', 'seek', 'play', 'stop'])
+  expect(seen[0]).toMatchObject({
+    cmd: 'load',
+    events,
+    duration: 12.5,
+    name: '(editor)',
+    origin: 'editor',
+    keep: true
+  })
+  expect(seen[0]).not.toHaveProperty('path')
+  expect(seen[0]).not.toHaveProperty('routes')
+  expect(seen[1]).toMatchObject({ cmd: 'seek', t: 2.5 })
+})
+
+test('transport writes carry the editor origin', async () => {
+  const seen: Record<string, unknown>[] = []
+  const { player } = await setup((req, reply) => {
+    seen.push(req)
+    reply({ ok: true })
+  })
+  await player.seek(1.5)
+  await player.play()
+  await player.stopTransport()
+  expect(seen).toMatchObject([
+    { cmd: 'seek', t: 1.5, origin: 'editor' },
+    { cmd: 'play', origin: 'editor' },
+    { cmd: 'stop', origin: 'editor' }
+  ])
+})
+
+test('watch parses the transport snapshot', async () => {
+  const { player } = await setup((req, reply) => {
+    if (req.cmd === 'watch') {
+      expect(req.gen).toBe(7)
+      reply({ ok: true, gen: 8, origin: 'td', t: 3.25, playing: true })
+    }
+  })
+  await expect(player.watch(7)).resolves.toEqual({
+    gen: 8,
+    origin: 'td',
+    playhead: 3.25,
+    playing: true
+  })
+})
+
+test('watch rides its own connection so a pending watch never delays a command', async () => {
+  // The server handles each connection's lines in order, so a blocking
+  // watch on the command socket would head-of-line-delay every seek.
+  const watchReplies: ((v: Record<string, unknown>) => void)[] = []
+  const { player, connections } = await setup((req, reply) => {
+    if (req.cmd === 'watch') watchReplies.push(reply) // hold: simulate the long-poll blocking
+    else reply({ ok: true })
+  })
+  const watching = player.watch(0)
+  await new Promise((r) => setTimeout(r, 20)) // let the watch land server-side
+  await player.seek(1.0) // must resolve while the watch is still pending
+  expect(connections()).toBe(2)
+  watchReplies[0]({ ok: true, gen: 1, origin: 'osc', t: 1.0, playing: false })
+  await expect(watching).resolves.toMatchObject({ gen: 1, origin: 'osc' })
+})

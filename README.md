@@ -8,8 +8,9 @@ VJs' Timeline Recorder. Record, edit, and replay OSC for VJ performance archival
 
 - **osc-tap** (Rust): UDP proxy that forwards OSC unchanged to TD and logs parsed copies as JSONL. Control messages arrive on the listen port under the `/vtr` prefix: `/vtr/clock` stamps TD-timeline time (`tl`), `/vtr/rec*` starts/stops clips, and every `/vtr/*` datagram is relayed to vtr-player. Default ports: listen 10010, forward 127.0.0.1:10011, relay 127.0.0.1:10013.
 - **vtr-player** (Rust, `osc-tap/vtr-player/`): resolver server. Replays a `session.jsonl` to the VJ app (push transport driven by relayed `/vtr/play|stop|seek`), answers per-frame sync queries over a unix socket (for TD), primes punch-in state, and echoes rec state to controllers (`source IP : echo port`). Protocol: "OSC control" below.
-- **osc-editor** (Electron): DAW-style editor. Records clips via osc-tap, arranges them on tracks, previews to TD, exports a merged `session.jsonl`. Spawns and monitors both osc-tap and vtr-player.
-- **vtr_core** (Python, `td/`): reference implementation of the playback resolver; its pytest suite is the conformance reference for vtr-player's Rust resolver.
+- **osc-editor** (Electron): DAW-style editor. Records clips via osc-tap, arranges them on tracks, previews to TD, exports a merged `session.jsonl`. Spawns and monitors both osc-tap and vtr-player, and mirrors its preview into the player (inline session load + transport) so sync clients follow it.
+- **vtr.tox** (TouchDesigner, `td/`): mode-switched sync client. `record` follows VTR — the tap's rec notifications (`--td-notify`, default 127.0.0.1:10014) seek TD's timeline and start playback, while the tox beacons `/vtr/clock` back. `player` blocks each frame on a `resolve` query to vtr-player and applies the delta before the cook; position source is the TD timeline (deterministic offline rendering), the player transport (`follow` — tracks the editor preview live, no export needed), or bidirectional `sync` (seeking in TD or the editor propagates both ways). Build & docs: `td/README.md`.
+- **vtr_core** (Python, `td/`): reference implementation of the playback resolver; its pytest suite is the conformance reference for vtr-player's Rust resolver. Not used by the tox.
 
 ## Quick start
 
@@ -65,12 +66,26 @@ its non-`/vtr` siblings are dropped, so don't mix them in one bundle.
 | `/vtr/rec` | `0\|1` | tap | Controller-facing rec toggle: `1` starts a clip (no beacon seed), `0` stops it. The player echoes the same address back on state change. |
 | `/vtr/rec/start` | `[tl] [rate]` | tap + player | Start a clip. The optional `tl` updates the clock and starts the clip in one step, so the recording is synced from its first event — this is the official sync mechanism. The player additionally primes punch-in state at `tl`. |
 | `/vtr/rec/stop` | — | tap | Stop the clip. |
-| `/vtr/play` / `/vtr/stop` | — | player | Push-transport run/pause. |
-| `/vtr/seek` | `t` | player | Jump the push transport to `t`. |
+| `/vtr/play` / `/vtr/stop` | — | player | Push-transport run/pause (origin `osc`). |
+| `/vtr/seek` | `t` | player | Jump the push transport to `t` (origin `osc`). |
 
 All rec commands are idempotent: start-while-recording and stop-while-idle
 are no-ops. Non-numeric or non-finite args are ignored (the command still
 runs). Unknown `/vtr/*` addresses are dropped with a rate-limited log.
+
+The push transport is the single authoritative playhead: the editor and
+the TD tox (`Positionmode` = `sync`) both read and write it, so a seek or
+play/stop from either side — or a controller's `/vtr/*` — propagates to
+the others. Each write carries an `origin` and bumps a generation counter
+`gen`; a follower applies a change only when `gen` moved and the origin is
+not its own (echo suppression), and concurrent writers are arbitrated by a
+short hold window (last-touched wins). See `docs/tasks/tl-sync/`.
+
+With `--td-notify <addr>` the tap additionally reports every rec state
+change — regardless of initiator — as plain unwrapped OSC to that address:
+`/vtr/rec/start <tl> <rate>` (args omitted when the clock is unknown) and
+`/vtr/rec/stop`. This drives the tox's record-mode follow (seek + play);
+the editor enables it at `127.0.0.1:10014`.
 
 The editor talks to osc-tap over a unix-socket JSON Lines API:
 `start` (optional `tl`/`rate`) / `stop` / `status`, plus `wait` — a

@@ -8,6 +8,7 @@ import {
   type PlayerStatus,
   type PortConfig,
   type TapStatus,
+  type TransportState,
   type UndoEntry
 } from '../../shared/types'
 import { CurvePanel, PointAdd, PointPatch, PointSel } from './components/CurvePanel'
@@ -518,6 +519,65 @@ function App(): React.JSX.Element {
       .catch((e: Error) => setError(e.message))
       .finally(() => setBootDone(true))
   }, [applyLoaded])
+
+  // Follow the shared transport: a seek or play/stop from TD or a controller
+  // (never the editor's own writes — those are suppressed in main). A foreign
+  // seek during a local preview repositions the live stream too; a foreign
+  // play animates the playhead only (remote) — TD already receives events
+  // through its own resolve, so the editor does not start pushing OSC on top.
+  const playingRef = useRef(playing)
+  useEffect(() => {
+    playingRef.current = playing
+  }, [playing])
+  // Set once anything foreign has been applied: the boot seed below must
+  // never overwrite a live update that beat it.
+  const transportSeededRef = useRef(false)
+  useEffect(() => {
+    const apply = (s: TransportState): void => {
+      transportSeededRef.current = true
+      const p = playingRef.current
+      setPlayhead(s.playhead)
+      if (s.playing) {
+        if (p && !p.remote) {
+          window.api.preview.seek(s.playhead, false).catch((e) => setError((e as Error).message))
+          setPlaying({ ...p, startPos: s.playhead, startedAt: performance.now() })
+        } else {
+          setPlaying({ startPos: s.playhead, startedAt: performance.now(), duration, remote: true })
+        }
+      } else {
+        // Foreign stop: freeze a local preview stream where the transport says.
+        if (p && !p.remote) window.api.preview.stop().catch(() => {})
+        setPlaying(null)
+      }
+    }
+    const unsub = window.api.preview.onTransport(apply)
+    // Seed a fresh renderer from the last foreign state main saw — without
+    // this the playhead assumes 0 until the next transport change (e.g. a
+    // TD scrub that landed while the window was still loading).
+    if (!transportSeededRef.current)
+      window.api.preview
+        .lastTransport()
+        .then((s) => {
+          if (s && !transportSeededRef.current) apply(s)
+        })
+        .catch(() => {})
+    return unsub
+  }, [duration])
+
+  // Session residency: keep the player holding the current merged project so
+  // a TD-side scrub always resolves against something. Debounced after edits;
+  // also fires once the boot load settles. An empty no-project state loads
+  // nothing — it would clobber a session another client (the tox File
+  // workflow) loaded, for no benefit.
+  useEffect(() => {
+    if (!bootDone || (!projectFile && tracks.length === 0)) return
+    const t = setTimeout(() => {
+      window.api.player
+        .loadInline(serializeProject(tracks, markers, ports, duration, edits, history.seq))
+        .catch(() => {})
+    }, 300)
+    return () => clearTimeout(t)
+  }, [bootDone, projectFile, tracks, markers, ports, duration, edits, history.seq])
 
   const saveTo = useCallback(
     async (path: string): Promise<void> => {
@@ -1205,24 +1265,27 @@ function App(): React.JSX.Element {
     }
   }, [playing, tracks, markers, ports, duration, edits, playhead, pausePreview])
 
-  // Auto-pause when the playhead reaches the end.
+  // Auto-pause when the playhead reaches the end. Remote-driven playback is
+  // exempt: pausing would stop the shared transport someone else is driving.
   useEffect(() => {
-    if (!playing) return
+    if (!playing || playing.remote) return
     const remaining =
       (playing.duration - playing.startPos) * 1000 - (performance.now() - playing.startedAt)
     const timer = setTimeout(() => pausePreview(), Math.max(remaining, 0) + 100)
     return () => clearTimeout(timer)
   }, [playing, pausePreview])
 
-  // Seeking while playing repositions the live preview stream so playback
-  // keeps generating from the new spot; the visible playhead is driven by
-  // `playing`, so we roll its origin forward to match the jump.
+  // Every user seek mirrors into the shared transport — idle included, so
+  // a TD sync client follows the seekbar while the editor is stopped (the
+  // stream-side seek is a no-op then). While playing, it also repositions
+  // the live preview stream; the visible playhead is driven by `playing`,
+  // so we roll its origin forward to match the jump.
   const onSeek = useCallback(
     (sec: number) => {
       setPlayhead(sec)
+      window.api.preview.seek(sec).catch((e) => setError((e as Error).message))
       if (!playing) return
       setPlaying((p) => (p ? { ...p, startPos: sec, startedAt: performance.now() } : p))
-      window.api.preview.seek(sec).catch((e) => setError((e as Error).message))
     },
     [playing]
   )

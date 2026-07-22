@@ -87,6 +87,9 @@ export const DEFAULT_PORTS: PortConfig = { listen: 10010, forward: 10011, echo: 
 /** Loopback port the tap relays /vtr/* control datagrams to (vtr-player). */
 export const RELAY_PORT = 10013
 
+/** Loopback port the tap sends rec-transition OSC to (the TD tox). */
+export const TD_NOTIFY_PORT = 10014
+
 /**
  * Back-fill missing ports and drop legacy keys (the removed beacon port)
  * from older project files.
@@ -103,6 +106,18 @@ export interface PlayerStatus {
   playing: boolean
   playhead: number
   connections: number
+}
+
+/**
+ * Push-transport state: the shared playhead plus who last moved it. `gen`
+ * bumps on every accepted mutation; a follower applies an update only when
+ * `gen` changed and `origin` is not its own (echo suppression).
+ */
+export interface TransportState {
+  gen: number
+  origin: string
+  playhead: number
+  playing: boolean
 }
 
 /** Undo depth: the in-memory stacks and the compacted on-disk log share it. */

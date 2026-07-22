@@ -16,6 +16,13 @@ export interface PlayingState {
   /** performance.now() when playback started. */
   startedAt: number
   duration: number
+  /**
+   * Playback driven by the shared transport (TD or a controller), not the
+   * editor's own Preview stream: the playhead animates but no OSC push
+   * runs, and the end-of-project auto-pause must not fire (it would stop
+   * the shared transport that someone else is driving).
+   */
+  remote?: boolean
 }
 
 export const TRACK_HEIGHT = 64

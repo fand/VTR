@@ -21,6 +21,11 @@ struct Cli {
     #[arg(long, default_value = "127.0.0.1:10013")]
     relay: SocketAddr,
 
+    /// Send rec-transition OSC (/vtr/rec/start [tl rate], /vtr/rec/stop)
+    /// to this address (the TD tox). Disabled when omitted.
+    #[arg(long)]
+    td_notify: Option<SocketAddr>,
+
     /// Directory to write clip files to
     #[arg(long, default_value = ".")]
     outdir: PathBuf,
@@ -40,6 +45,7 @@ fn main() -> anyhow::Result<()> {
         listen: SocketAddr::from(([0, 0, 0, 0], cli.listen)),
         forward: cli.forward,
         relay: cli.relay,
+        td_notify: cli.td_notify,
         outdir: cli.outdir,
         beacon_max_age_s: 5.0,
     };

@@ -9,6 +9,7 @@ import type {
   ProjectFile,
   TapPush,
   TapStatus,
+  TransportState,
   UndoEntry
 } from '../shared/types'
 
@@ -26,7 +27,10 @@ const api = {
     }
   },
   player: {
-    status: (): Promise<PlayerStatus> => ipcRenderer.invoke('player:status')
+    status: (): Promise<PlayerStatus> => ipcRenderer.invoke('player:status'),
+    /** Keep the player holding the current project so TD-side scrubs resolve. */
+    loadInline: (project: ProjectFile): Promise<void> =>
+      ipcRenderer.invoke('player:loadInline', project)
   },
   clip: {
     events: (path: string): Promise<OscEvent[]> => ipcRenderer.invoke('clip:events', path),
@@ -67,16 +71,28 @@ const api = {
   preview: {
     play: (project: ProjectFile, fromSec: number): Promise<{ duration: number }> =>
       ipcRenderer.invoke('preview:play', project, fromSec),
-    /** Reposition the live stream mid-playback; false when not playing. */
-    seek: (fromSec: number): Promise<{ seeked: boolean }> =>
-      ipcRenderer.invoke('preview:seek', fromSec),
+    /**
+     * Reposition the live stream mid-playback; false when not playing.
+     * mirror=false skips the transport write — for seeks that CAME from
+     * the transport (follow apply), where mirroring would echo.
+     */
+    seek: (fromSec: number, mirror = true): Promise<{ seeked: boolean }> =>
+      ipcRenderer.invoke('preview:seek', fromSec, mirror),
     stop: (): Promise<{ position: number }> => ipcRenderer.invoke('preview:stop'),
     /** Async preview socket/send failures, for the error banner. */
     onError: (cb: (message: string) => void): (() => void) => {
       const listener = (_e: unknown, message: string): void => cb(message)
       ipcRenderer.on('preview:error', listener)
       return () => ipcRenderer.removeListener('preview:error', listener)
-    }
+    },
+    /** Foreign transport moves (TD/controller seek or play/stop) to follow. */
+    onTransport: (cb: (state: TransportState) => void): (() => void) => {
+      const listener = (_e: unknown, state: TransportState): void => cb(state)
+      ipcRenderer.on('transport:update', listener)
+      return () => ipcRenderer.removeListener('transport:update', listener)
+    },
+    /** Last foreign transport state (extrapolated), to seed a fresh renderer. */
+    lastTransport: (): Promise<TransportState | null> => ipcRenderer.invoke('transport:last')
   },
   undo: {
     load: (): Promise<UndoEntry[]> => ipcRenderer.invoke('undo:load'),

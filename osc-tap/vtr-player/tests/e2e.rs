@@ -10,8 +10,8 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use serde_json::{json, Value};
-use vtr_player::{control, start, Player, PlayerConfig};
+use serde_json::{Value, json};
+use vtr_player::{Player, PlayerConfig, control, start};
 
 struct Harness {
     player: Player,
@@ -232,7 +232,10 @@ fn seek_emits_coalesced_catchup_and_drops_stale_seeks() {
         if *got.last().unwrap() == 50.0 {
             break;
         }
-        assert!(Instant::now() < deadline, "final seek never applied: {got:?}");
+        assert!(
+            Instant::now() < deadline,
+            "final seek never applied: {got:?}"
+        );
     }
     assert!(
         got.len() < 50,
@@ -422,4 +425,193 @@ fn resolve_without_session_errors() {
     assert_eq!(r["ok"], false);
     let r = c.request(json!({"cmd": "nope"}));
     assert_eq!(r["ok"], false);
+}
+
+#[test]
+fn inline_load_replies_with_session_facts() {
+    let tmp = tempfile::tempdir().unwrap();
+    let h = start_player(tmp.path(), None);
+    let mut c = h.connect();
+    let resp = c.request(json!({
+        "cmd": "load",
+        "events": [ev(1.0, "/a", &[1.0]), ev(2.0, "/b", &[2.0])],
+        "duration": 30.0,
+        "name": "(editor)",
+    }));
+    assert_eq!(resp["ok"], true, "resp = {resp}");
+    assert_eq!(resp["duration"], 30.0);
+    assert_eq!(resp["events"], 2);
+    assert_eq!(resp["addresses"], 2);
+    assert_eq!(resp["skipped"], 0);
+    // No routes: the push transport stays silent for inline sessions.
+    assert_eq!(resp["routes"], json!({}));
+
+    let st = c.request(json!({"cmd": "status"}));
+    assert_eq!(st["status"]["loaded"], "(editor)");
+
+    // The inline session resolves like a file-loaded one.
+    let r = c.request(json!({"cmd": "resolve", "t": 1.5}));
+    assert_eq!(r["ok"], true, "resp = {r}");
+    assert_eq!(r["events"], json!([[10010, "/a", [1.0]]]));
+}
+
+#[test]
+fn transport_cmds_drive_playhead_and_follow_resolve() {
+    let tmp = tempfile::tempdir().unwrap();
+    let h = start_player(tmp.path(), None);
+    let mut c = h.connect();
+    let resp = c.request(json!({
+        "cmd": "load",
+        "events": [ev(0.05, "/a", &[1.0]), ev(0.10, "/a", &[2.0]), ev(5.0, "/a", &[3.0])],
+        "duration": 60.0,
+    }));
+    assert_eq!(resp["ok"], true, "resp = {resp}");
+
+    // seek goes through the emit loop's mailbox; poll until it lands.
+    assert_eq!(c.request(json!({"cmd": "seek", "t": 2.0}))["ok"], true);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let head = c.request(json!({"cmd": "status"}))["status"]["playhead"]
+            .as_f64()
+            .unwrap();
+        if (head - 2.0).abs() < 0.01 {
+            break;
+        }
+        assert!(Instant::now() < deadline, "seek never landed (head {head})");
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    // follow: resolve at the transport playhead, catch-up to the seek.
+    let r = c.request(json!({"cmd": "resolve", "follow": true}));
+    assert_eq!(r["ok"], true, "resp = {r}");
+    assert!(
+        (r["t"].as_f64().unwrap() - 2.0).abs() < 0.2,
+        "t = {}",
+        r["t"]
+    );
+    assert_eq!(r["playing"], false);
+    assert_eq!(r["events"], json!([[10010, "/a", [2.0]]]));
+
+    // play advances the playhead; stop freezes it.
+    let r = c.request(json!({"cmd": "play"}));
+    assert_eq!(r["playing"], true);
+    thread::sleep(Duration::from_millis(50));
+    let r = c.request(json!({"cmd": "resolve", "follow": true}));
+    assert!(r["t"].as_f64().unwrap() > 2.0, "t = {}", r["t"]);
+
+    let r = c.request(json!({"cmd": "stop"}));
+    assert_eq!(r["playing"], false);
+    let frozen = r["playhead"].as_f64().unwrap();
+    thread::sleep(Duration::from_millis(30));
+    let r = c.request(json!({"cmd": "resolve", "follow": true}));
+    assert!((r["t"].as_f64().unwrap() - frozen).abs() < 1e-6);
+}
+
+#[test]
+fn transport_cmds_carry_gen_and_origin_and_honor_hold() {
+    let tmp = tempfile::tempdir().unwrap();
+    let h = start_player(tmp.path(), None);
+    let mut c = h.connect();
+
+    // A seek reports a bumped gen and its origin.
+    let r = c.request(json!({"cmd": "seek", "t": 1.0, "origin": "editor"}));
+    assert_eq!(r["ok"], true, "resp = {r}");
+    let gen1 = r["gen"].as_u64().unwrap();
+    assert!(gen1 >= 1);
+    assert_eq!(r["origin"], "editor");
+    assert!((r["playhead"].as_f64().unwrap() - 1.0).abs() < 0.05);
+
+    // A foreign origin inside the hold window is rejected: gen unchanged,
+    // playhead unmoved.
+    let r = c.request(json!({"cmd": "seek", "t": 9.0, "origin": "td"}));
+    assert_eq!(r["gen"].as_u64().unwrap(), gen1, "hold should reject td");
+    assert_eq!(r["origin"], "editor");
+    assert!((r["playhead"].as_f64().unwrap() - 1.0).abs() < 0.05);
+
+    // Same origin still wins and bumps gen.
+    let r = c.request(json!({"cmd": "seek", "t": 3.0, "origin": "editor"}));
+    assert!(r["gen"].as_u64().unwrap() > gen1);
+
+    // status and resolve surface the same fields.
+    let s = c.request(json!({"cmd": "status"}));
+    assert_eq!(s["status"]["origin"], "editor");
+    assert!(s["status"]["gen"].as_u64().unwrap() > gen1);
+}
+
+#[test]
+fn load_with_keep_preserves_the_transport() {
+    let tmp = tempfile::tempdir().unwrap();
+    let h = start_player(tmp.path(), None);
+    let mut c = h.connect();
+    assert_eq!(
+        c.request(json!({"cmd": "load", "events": [ev(1.0, "/a", &[1.0])], "duration": 60.0}))
+            ["ok"],
+        true
+    );
+    let r = c.request(json!({"cmd": "seek", "t": 2.0, "origin": "editor"}));
+    let gen0 = r["gen"].as_u64().unwrap();
+
+    // keep: session swaps, transport untouched (position, gen, origin).
+    let r = c.request(json!({
+        "cmd": "load", "keep": true, "origin": "editor",
+        "events": [ev(1.0, "/a", &[2.0])], "duration": 60.0,
+    }));
+    assert_eq!(r["ok"], true, "resp = {r}");
+    let s = c.request(json!({"cmd": "status"}));
+    assert!((s["status"]["playhead"].as_f64().unwrap() - 2.0).abs() < 0.05);
+    assert_eq!(s["status"]["gen"].as_u64().unwrap(), gen0);
+    assert_eq!(s["status"]["origin"], "editor");
+
+    // Default load: stop + rewind, gen bumped with the loader's origin.
+    let r = c.request(json!({
+        "cmd": "load", "origin": "editor",
+        "events": [ev(1.0, "/a", &[3.0])], "duration": 60.0,
+    }));
+    assert_eq!(r["ok"], true, "resp = {r}");
+    let s = c.request(json!({"cmd": "status"}));
+    assert_eq!(s["status"]["playhead"], 0.0);
+    assert!(s["status"]["gen"].as_u64().unwrap() > gen0);
+    assert_eq!(s["status"]["origin"], "editor");
+}
+
+#[test]
+fn watch_blocks_until_gen_changes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let h = start_player(tmp.path(), None);
+    let mut c = h.connect();
+    let g = c.request(json!({"cmd": "status"}))["status"]["gen"]
+        .as_u64()
+        .unwrap();
+
+    // Watch on a second connection, blocking in a thread.
+    let mut w = h.connect();
+    let handle = thread::spawn(move || w.request(json!({"cmd": "watch", "gen": g})));
+
+    // Let the watcher block, then change the transport from another origin.
+    thread::sleep(Duration::from_millis(100));
+    c.request(json!({"cmd": "seek", "t": 4.0, "origin": "editor"}));
+
+    let r = handle.join().unwrap();
+    assert_eq!(r["ok"], true, "resp = {r}");
+    assert!(r["gen"].as_u64().unwrap() > g, "watch should wake: {r}");
+    assert_eq!(r["origin"], "editor");
+    assert!((r["t"].as_f64().unwrap() - 4.0).abs() < 0.05);
+}
+
+#[test]
+fn watch_times_out_with_same_gen() {
+    let tmp = tempfile::tempdir().unwrap();
+    let h = start_player(tmp.path(), None);
+    let mut c = h.connect();
+    let g = c.request(json!({"cmd": "status"}))["status"]["gen"]
+        .as_u64()
+        .unwrap();
+    // Nothing changes: watch returns after the server timeout, same gen.
+    let start = Instant::now();
+    let r = c.request(json!({"cmd": "watch", "gen": g}));
+    assert!(
+        start.elapsed() >= Duration::from_millis(900),
+        "should block ~1s"
+    );
+    assert_eq!(r["gen"].as_u64().unwrap(), g);
 }

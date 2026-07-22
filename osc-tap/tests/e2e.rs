@@ -19,6 +19,7 @@ fn start_tap(outdir: &std::path::Path) -> (Tap, UdpSocket, UdpSocket) {
         listen: "127.0.0.1:0".parse().unwrap(),
         forward: td.local_addr().unwrap(),
         relay: player.local_addr().unwrap(),
+        td_notify: None,
         outdir: outdir.to_path_buf(),
         beacon_max_age_s: 5.0,
     })
@@ -359,6 +360,7 @@ fn stale_beacon_omits_tl() {
         listen: "127.0.0.1:0".parse().unwrap(),
         forward: td.local_addr().unwrap(),
         relay: "127.0.0.1:9".parse().unwrap(),
+        td_notify: None,
         outdir: tmp.path().to_path_buf(),
         beacon_max_age_s: 0.3,
     })
@@ -385,6 +387,56 @@ fn stale_beacon_omits_tl() {
     // "omit when unknown": a stale extrapolation must not be stamped.
     let lines = read_lines(&clip);
     assert!(lines[1].get("tl").is_none(), "line = {}", lines[1]);
+}
+
+fn recv_notify(sock: &UdpSocket) -> OscMessage {
+    let mut buf = [0u8; 1024];
+    let (n, _) = sock.recv_from(&mut buf).unwrap();
+    let (_, packet) = rosc::decoder::decode_udp(&buf[..n]).unwrap();
+    match packet {
+        OscPacket::Message(m) => m,
+        p => panic!("expected message, got {p:?}"),
+    }
+}
+
+#[test]
+fn rec_transitions_notify_td() {
+    let tmp = tempfile::tempdir().unwrap();
+    let tox = UdpSocket::bind("127.0.0.1:0").unwrap();
+    tox.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    let td = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let tap = Tap::start(Config {
+        listen: "127.0.0.1:0".parse().unwrap(),
+        forward: td.local_addr().unwrap(),
+        relay: "127.0.0.1:9".parse().unwrap(),
+        td_notify: Some(tox.local_addr().unwrap()),
+        outdir: tmp.path().to_path_buf(),
+        beacon_max_age_s: 5.0,
+    })
+    .unwrap();
+    let handle = tap.handle();
+
+    // Editor path: control-socket start with a tl seed.
+    handle.start_clip(None, Some(42.0), Some(1.0)).unwrap();
+    let m = recv_notify(&tox);
+    assert_eq!(m.addr, "/vtr/rec/start");
+    assert_eq!(m.args, vec![OscType::Double(42.0), OscType::Double(1.0)]);
+    handle.stop_clip().unwrap();
+    assert_eq!(recv_notify(&tox).addr, "/vtr/rec/stop");
+
+    // Controller path: /vtr/rec/start over the listen port notifies too.
+    let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
+    tx.send_to(
+        &encode_msg("/vtr/rec/start", vec![OscType::Float(7.5)]),
+        tap.listen_addr,
+    )
+    .unwrap();
+    let m = recv_notify(&tox);
+    assert_eq!(m.addr, "/vtr/rec/start");
+    assert_eq!(m.args, vec![OscType::Double(7.5), OscType::Double(1.0)]);
+    tx.send_to(&encode_msg("/vtr/rec/stop", vec![]), tap.listen_addr)
+        .unwrap();
+    assert_eq!(recv_notify(&tox).addr, "/vtr/rec/stop");
 }
 
 #[test]

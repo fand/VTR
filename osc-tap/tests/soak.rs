@@ -21,6 +21,7 @@ fn start_tap(outdir: &std::path::Path) -> Tap {
         listen: "127.0.0.1:0".parse().unwrap(),
         forward,
         relay: "127.0.0.1:9".parse().unwrap(),
+        td_notify: None,
         outdir: outdir.to_path_buf(),
         beacon_max_age_s: 5.0,
     })
