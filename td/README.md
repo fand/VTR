@@ -39,9 +39,8 @@ One Base COMP, one `Mode` switch:
 
   Output lands in the `state` table DAT (one row per address:
   `port addr args…`), the `chop_out` CHOP (numeric channels, see below),
-  the `callbacks` DAT's `onEvents(events)` hook (ordered delta — use this
-  for triggers), and optionally as re-emitted OSC (`Emitosc`, one frame
-  late, migration aid only).
+  and the `callbacks` DAT's `onEvents(events)` hook (ordered delta — use
+  this for triggers).
 
   `chop_out` is the numeric sibling of the state DAT: one channel per
   numeric OSC argument, holding its latest value, so you can wire OSC
@@ -71,7 +70,6 @@ One Base COMP, one `Mode` switch:
 | VTR Play | `Positionmode` / `Offset` | `timeline` / 0 | Position source: `timeline` (root timeline − Offset), `follow` (player transport = editor preview, read-only), `sync` (bidirectional — TD and editor seeks propagate both ways), `internal` (Play/Rewind). |
 | VTR Play | `Play` / `Rewind` | — | Internal transport (`Positionmode` = `internal` only). |
 | VTR Play | `Triggerpatterns` | — | Space-separated OSC address patterns, matched server-side. |
-| VTR Play | `Emitosc` / `Playhost` / `Playport` | off | Legacy re-emit to the project's OSC-in (routes from the load reply; Playport overrides). |
 
 Degraded behavior (player mode): on a connect failure or query error the
 state freezes on the last applied values, the `info` DAT's `error` row

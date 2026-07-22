@@ -112,9 +112,6 @@ def build(td_dir):
     _par(play.appendToggle("Play"), False)
     play.appendPulse("Rewind")
     _par(play.appendStr("Triggerpatterns"), "")
-    _par(play.appendToggle("Emitosc"), False)
-    _par(play.appendStr("Playhost"), "")
-    _par(play.appendInt("Playport"), 0).normMax = 65535
 
     tap = comp.create(oscoutDAT, "oscout_tap")  # noqa: F821
     tap.par.address.expr = "parent().par.Taphost"
