@@ -29,16 +29,20 @@ vtr.tox ── /vtr/clock ビーコン (tl, rate) ──▶ osc-tap (UDP :10010)
 ## ② 編集 / プレビュー (osc-editor)
 
 ```
-clips/*.jsonl ──▶ osc-editor ──┬─▶ プレビュー OSC ──▶ TouchDesigner (UDP :10011)
-                               ├─▶ session.jsonl エクスポート
-                               └─▶ inline session load + transport 書込 ──▶ vtr-player
+clips/*.jsonl ──▶ osc-editor ──┬─▶ session.jsonl エクスポート
+                               └─▶ inline session load (routes 付き) + transport 書込 ──▶ vtr-player
                                      (unix socket vtr-player.sock)
+
+vtr-player ── プレビュー OSC (③ の再生経路と同一) ──▶ TouchDesigner (UDP :10011)
 ```
 
 - editor は osc-tap と vtr-player を spawn・監視する
   (tap は osc-tap.sock の JSON Lines API、player は stdin close で終了)。
-- プレビューを player にもミラーするので、sync クライアント(TD)が
-  editor の再生に追従できる。
+- プレビュー再生は player に委譲: editor は merge した project を routes 付きで
+  inline load し、transport を seek/play するだけ。OSC を出すのは player の
+  emit loop のみ(resolver 一本化 — preview と本番再生が同一挙動)。
+  停止中の seek も catch-up が dedup 付きで TD へ届く。
+- sync クライアント(TD)は同じ transport に追従する。
 
 ## ③ 再生 / 同期 (vtr-player)
 
@@ -64,7 +68,7 @@ osc-editor / vtr.tox(sync) ── transport 書込 (seek/play, gen+origin) ─�
 | 経路 | 手段 |
 |---|---|
 | TouchOSC → tap | UDP :10010 |
-| tap → TD (転送) / editor → TD (プレビュー) / player → TD (再生) | UDP :10011 |
+| tap → TD (転送) / player → TD (再生・プレビュー) | UDP :10011 |
 | tap → player (/vtr/* リレー) | UDP :10013 |
 | tap → TD (rec 通知) | UDP :10014 |
 | player → コントローラ (rec エコー) | UDP 送信元IP:9000 |

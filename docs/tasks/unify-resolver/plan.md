@@ -1,6 +1,10 @@
 # Plan: unify-resolver — delegate editor preview to vtr-player
 
-Status: not started. TODO: "editor preview の vtr-player 委譲(resolver を一本化)".
+Status: landed 2026-07-22 (all phases). One Rust change did prove necessary,
+contrary to the estimate below: the emit loop now carries its dedup state
+across session swaps, so a residency reload during playback no longer
+re-sends values the receivers already hold
+(`fix(player): carry emit-loop dedup state across session swaps`).
 
 ## Goal
 
