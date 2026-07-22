@@ -4,7 +4,7 @@
 mode-switched sync client. Source in `src/vtr_ext.py`, generator in
 `build/build_vtr.py`. Spec: [docs/tasks/tox-rework/](../docs/tasks/tox-rework/).
 Playback-resolution semantics live in the Rust resolver and its tests
-(`osc-tap/vtr-player/tests/conformance_*.rs`).
+(`vtr-tap/vtr-player/tests/conformance_*.rs`).
 
 ## vtr.tox
 

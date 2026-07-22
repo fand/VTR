@@ -6,9 +6,9 @@ VJs' Timeline Recorder. Record, edit, and replay OSC for VJ performance archival
 
 ## Components
 
-- **osc-tap** (Rust): UDP proxy that forwards OSC unchanged to TD and logs parsed copies as JSONL. Control messages arrive on the listen port under the `/vtr` prefix: `/vtr/clock` stamps TD-timeline time (`tl`), `/vtr/rec*` starts/stops clips, and every `/vtr/*` datagram is relayed to vtr-player. Default ports: listen 10010, forward 127.0.0.1:10011, relay 127.0.0.1:10013.
-- **vtr-player** (Rust, `osc-tap/vtr-player/`): resolver server. Replays a `session.jsonl` to the VJ app (push transport driven by relayed `/vtr/play|stop|seek`), answers per-frame sync queries over a unix socket (for TD), primes punch-in state, and echoes rec state to controllers (`source IP : echo port`). Protocol: "OSC control" below.
-- **osc-editor** (Electron): DAW-style editor. Records clips via osc-tap, arranges them on tracks, exports a merged `session.jsonl`. Spawns and monitors both osc-tap and vtr-player, and delegates preview playback to the player (inline session load with routes + transport writes) — the player's resolver emits all preview OSC, so preview and replay behave identically, and sync clients follow the same transport.
+- **vtr-tap** (Rust): UDP proxy that forwards OSC unchanged to TD and logs parsed copies as JSONL. Control messages arrive on the listen port under the `/vtr` prefix: `/vtr/clock` stamps TD-timeline time (`tl`), `/vtr/rec*` starts/stops clips, and every `/vtr/*` datagram is relayed to vtr-player. Default ports: listen 10010, forward 127.0.0.1:10011, relay 127.0.0.1:10013.
+- **vtr-player** (Rust, `vtr-tap/vtr-player/`): resolver server. Replays a `session.jsonl` to the VJ app (push transport driven by relayed `/vtr/play|stop|seek`), answers per-frame sync queries over a unix socket (for TD), primes punch-in state, and echoes rec state to controllers (`source IP : echo port`). Protocol: "OSC control" below.
+- **vtr-editor** (Electron): DAW-style editor. Records clips via vtr-tap, arranges them on tracks, exports a merged `session.jsonl`. Spawns and monitors both vtr-tap and vtr-player, and delegates preview playback to the player (inline session load with routes + transport writes) — the player's resolver emits all preview OSC, so preview and replay behave identically, and sync clients follow the same transport.
 - **vtr.tox** (TouchDesigner, `td/`): mode-switched sync client. `record` follows VTR — the tap's rec notifications (`--td-notify`, default 127.0.0.1:10014) seek TD's timeline and start playback, while the tox beacons `/vtr/clock` back. `player` blocks each frame on a `resolve` query to vtr-player and applies the delta before the cook; position source is the TD timeline (deterministic offline rendering), the player transport (`follow` — tracks the editor preview live, no export needed), or bidirectional `sync` (seeking in TD or the editor propagates both ways). Build & docs: `td/README.md`.
 
 ## Quick start
@@ -22,18 +22,18 @@ VJs' Timeline Recorder. Record, edit, and replay OSC for VJ performance archival
 
 ```sh
 # tap + player (one cargo workspace)
-cd osc-tap
+cd vtr-tap
 cargo test                    # unit + e2e + conformance, both crates
 cargo test --release -- --ignored   # 120Hz soak
 
-# editor (spawns tap from ../osc-tap/target)
-cd osc-editor
+# editor (spawns tap from ../vtr-tap/target)
+cd vtr-editor
 npm install
 npm run dev                   # optionally: -- path/to/project.oscproj
 npm run lint
 npm run typecheck
 npm run test:unit             # vitest
-npm run test:e2e              # playwright e2e (needs osc-tap debug build)
+npm run test:e2e              # playwright e2e (needs vtr-tap debug build)
 RUN_LAUNCHD=1 npx playwright test e2e/launchd.spec.ts   # launchd agent test
 ```
 
@@ -82,7 +82,7 @@ change — regardless of initiator — as plain unwrapped OSC to that address:
 `/vtr/rec/stop`. This drives the tox's record-mode follow (seek + play);
 the editor enables it at `127.0.0.1:10014`.
 
-The editor talks to osc-tap over a unix-socket JSON Lines API:
+The editor talks to vtr-tap over a unix-socket JSON Lines API:
 `start` (optional `tl`/`rate`) / `stop` / `status`, plus `wait` — a
 long-poll on the recording event log (`rec_started` / `rec_stopped`) that
 drives the editor's UI.
@@ -110,12 +110,12 @@ Clip and `session.jsonl` event lines share one schema:
 Session files wrap events in `{"type":"session_start",...}` /
 `{"type":"session_end","t":...}` marker lines. `session_start` carries
 `tl` (timeline seconds at clip start) when the clock is known. Clips recorded
-by osc-tap also carry a `{"type":"summary","t":...,"events":N,"dropped":N,"write_errors":N,"write_error":"..."}`
+by vtr-tap also carry a `{"type":"summary","t":...,"events":N,"dropped":N,"write_errors":N,"write_error":"..."}`
 line right before `session_end`: the clip's health at stop time (`write_error`
 is omitted when the clip is clean). Readers should skip unknown `type` lines.
 
 ## Process model
 
-osc-tap runs as a child process in dev. Packaged builds on macOS run it as a
-launchd user agent (`com.fand.vtr.osc-tap`): crash → auto-restart, editor quit →
-bootout. Force with `OSC_TAP_SPAWN=launchd|child`.
+vtr-tap runs as a child process in dev. Packaged builds on macOS run it as a
+launchd user agent (`com.fand.vtr.vtr-tap`): crash → auto-restart, editor quit →
+bootout. Force with `VTR_TAP_SPAWN=launchd|child`.

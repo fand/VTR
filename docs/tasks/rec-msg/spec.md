@@ -6,16 +6,16 @@ Status: implemented (2026-07-17).
 
 The VJ app (TD) starts and stops recording over OSC, so a performance can be
 captured without touching the editor. Recording must work even when the
-editor is dead (launchd mode keeps osc-tap alive).
+editor is dead (launchd mode keeps vtr-tap alive).
 
 ## OSC API
 
-osc-tap accepts two new addresses on the existing beacon port (default
+vtr-tap accepts two new addresses on the existing beacon port (default
 10012), next to `/clock`:
 
 - `/rec/start [tl] [rate]` — start a clip.
   - `tl` (float/double/int, optional): master timeline seconds at this
-    moment. When present, osc-tap updates the beacon state first, then
+    moment. When present, vtr-tap updates the beacon state first, then
     starts the clip — one atomic step, so the clip has a correct `tl` from
     its first event. Args mirror `/clock`: `rate` defaults to 1.0.
   - Without `tl`, the clip starts with whatever beacon state exists.
@@ -55,14 +55,14 @@ independent axes; we chose one point on each:
 
 ### Protocol
 
-- osc-tap keeps a ring buffer of events with a monotonically increasing
+- vtr-tap keeps a ring buffer of events with a monotonically increasing
   `seq`. Events: `rec_started {clip, tl?}`, `rec_stopped {clip}` — an
   extensible envelope; future types (e.g. `beacon_lost`) are new variants.
   Local (control-socket) and remote (OSC) start/stops emit the same events.
 - New control command: `{"cmd":"wait","since":N}`. Blocks until an event
   with seq > N exists (or a server-side timeout), then replies
   `{"ok":true,"seq":M,"events":[...]}` (empty on timeout).
-- If `N` is no longer in the buffer (overflow, or osc-tap restarted and seq
+- If `N` is no longer in the buffer (overflow, or vtr-tap restarted and seq
   went backwards), the reply carries `"reset":true` plus a full status
   snapshot; the editor re-baselines from it.
 - `status` gains `rec_t` (seconds since clip start) and `last_clip` (most

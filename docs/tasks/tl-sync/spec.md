@@ -17,7 +17,7 @@ static:
 
 Three playheads exist (editor `Preview`, TD root timeline, player
 transport) and writes flow one way only: editor → player (the preview
-mirror in `osc-editor/src/main/index.ts`), player → TD (`follow`). The goal:
+mirror in `vtr-editor/src/main/index.ts`), player → TD (`follow`). The goal:
 seek or play/pause **either** in TD or in the editor and have the other
 side track automatically — no master switch.
 

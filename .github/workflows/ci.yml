@@ -11,38 +11,38 @@ concurrency:
 
 jobs:
   tap:
-    name: osc-tap + vtr-player (cargo test)
+    name: vtr-tap + vtr-player (cargo test)
     runs-on: macos-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: osc-tap
+          workspaces: vtr-tap
       - run: cargo test
-        working-directory: osc-tap
+        working-directory: vtr-tap
 
   editor-checks:
-    name: osc-editor (lint / typecheck / unit)
+    name: vtr-editor (lint / typecheck / unit)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
       run:
-        working-directory: osc-editor
+        working-directory: vtr-editor
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: osc-editor/package-lock.json
+          cache-dependency-path: vtr-editor/package-lock.json
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run test:unit
 
   editor-e2e:
-    name: osc-editor (playwright e2e)
+    name: vtr-editor (playwright e2e)
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
@@ -51,15 +51,15 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: osc-editor/package-lock.json
+          cache-dependency-path: vtr-editor/package-lock.json
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: osc-tap
-      # e2e specs point OSC_TAP_BIN / VTR_PLAYER_BIN at the debug binaries;
+          workspaces: vtr-tap
+      # e2e specs point VTR_TAP_BIN / VTR_PLAYER_BIN at the debug binaries;
       # the workspace default-members build both.
       - run: cargo build
-        working-directory: osc-tap
+        working-directory: vtr-tap
       - run: npm ci
-        working-directory: osc-editor
+        working-directory: vtr-editor
       - run: npm run test:e2e
-        working-directory: osc-editor
+        working-directory: vtr-editor

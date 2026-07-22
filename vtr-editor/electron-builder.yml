@@ -1,0 +1,55 @@
+# Must match the AppUserModelId set in src/main/index.ts (Windows taskbar grouping).
+appId: com.fand.vtr
+productName: VTR
+directories:
+  buildResources: build
+files:
+  - '!**/.vscode/*'
+  - '!src/*'
+  - '!electron.vite.config.{js,ts,mjs,cjs}'
+  - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
+  - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
+  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+asarUnpack:
+  - resources/**
+# Ship the Rust binaries next to the asar; findBinary looks here when packaged.
+extraResources:
+  - from: ../vtr-tap/target/release/vtr-tap
+    to: bin/vtr-tap
+  - from: ../vtr-tap/target/release/vtr-player
+    to: bin/vtr-player
+fileAssociations:
+  - ext: oscproj
+    name: VTR Project
+    role: Editor
+    # .oscproj is a directory bundle; Finder shows it as a single file.
+    isPackage: true
+win:
+  executableName: vtr
+nsis:
+  artifactName: ${name}-${version}-setup.${ext}
+  shortcutName: ${productName}
+  uninstallDisplayName: ${productName}
+  createDesktopShortcut: always
+mac:
+  entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    - NSCameraUsageDescription: Application requests access to the device's camera.
+    - NSMicrophoneUsageDescription: Application requests access to the device's microphone.
+    - NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
+    - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
+  notarize: false
+dmg:
+  artifactName: ${name}-${version}.${ext}
+linux:
+  target:
+    - AppImage
+    - snap
+    - deb
+  maintainer: electronjs.org
+  category: Utility
+appImage:
+  artifactName: ${name}-${version}.${ext}
+npmRebuild: false
+# No `publish` block: there is no updater yet, and the template URL was a
+# dead placeholder. Add one when an update server exists.

@@ -8,7 +8,7 @@ re-sends values the receivers already hold
 
 ## Goal
 
-Delete the editor's own preview playback (`osc-editor/src/main/preview.ts`,
+Delete the editor's own preview playback (`vtr-editor/src/main/preview.ts`,
 a naive event scheduler) and let vtr-player's emit loop send all preview
 OSC. One resolver (`vtr-player/src/resolver.rs`, conformance-tested against
 `td/tests/`) then serves every playback path: editor preview, file replay,
@@ -74,7 +74,7 @@ So: **no Rust changes**. The work is TS-side rewiring plus docs/tests.
 
 ## Phase 1 — PlayerManager API (TS)
 
-`osc-editor/src/main/player.ts`:
+`vtr-editor/src/main/player.ts`:
 
 - `loadInline(events, duration, routes)` — pass `routes` through to the
   `load` request. Update the comment (the player now emits; the editor no
@@ -88,7 +88,7 @@ Commit: `feat(editor): pass routes on inline load, return transport snapshots`
 
 ## Phase 2 — main-process rewiring
 
-`osc-editor/src/main/index.ts`, delete `preview.ts` + `preview.test.ts`:
+`vtr-editor/src/main/index.ts`, delete `preview.ts` + `preview.test.ts`:
 
 - Shared helper `routesFor(events, forwardPort)` used by `preview:play`
   and `player:loadInline`.

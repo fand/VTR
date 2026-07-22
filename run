@@ -4,18 +4,18 @@
 set -e
 cd "$(dirname "$0")"
 
-# Dev spawns osc-tap and vtr-player from osc-tap/target; build the
+# Dev spawns vtr-tap and vtr-player from vtr-tap/target; build the
 # workspace (both binaries) if either is missing.
-have() { [ -x "osc-tap/target/release/$1" ] || [ -x "osc-tap/target/debug/$1" ]; }
-if ! have osc-tap || ! have vtr-player; then
-  echo "building osc-tap workspace..."
-  (cd osc-tap && cargo build --release)
+have() { [ -x "vtr-tap/target/release/$1" ] || [ -x "vtr-tap/target/debug/$1" ]; }
+if ! have vtr-tap || ! have vtr-player; then
+  echo "building vtr-tap workspace..."
+  (cd vtr-tap && cargo build --release)
 fi
 
-if [ ! -d osc-editor/node_modules ]; then
+if [ ! -d vtr-editor/node_modules ]; then
   echo "installing editor deps..."
-  (cd osc-editor && npm install)
+  (cd vtr-editor && npm install)
 fi
 
-cd osc-editor
+cd vtr-editor
 exec npm run dev -- "$@"
