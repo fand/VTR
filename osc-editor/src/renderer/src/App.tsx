@@ -8,6 +8,7 @@ import {
   type PlayerStatus,
   type PortConfig,
   type TapStatus,
+  type TransportState,
   type UndoEntry
 } from '../../shared/types'
 import { CurvePanel, PointAdd, PointPatch, PointSel } from './components/CurvePanel'
@@ -528,26 +529,40 @@ function App(): React.JSX.Element {
   useEffect(() => {
     playingRef.current = playing
   }, [playing])
-  useEffect(
-    () =>
-      window.api.preview.onTransport((s) => {
-        const p = playingRef.current
-        setPlayhead(s.playhead)
-        if (s.playing) {
-          if (p && !p.remote) {
-            window.api.preview.seek(s.playhead, false).catch((e) => setError((e as Error).message))
-            setPlaying({ ...p, startPos: s.playhead, startedAt: performance.now() })
-          } else {
-            setPlaying({ startPos: s.playhead, startedAt: performance.now(), duration, remote: true })
-          }
+  // Set once anything foreign has been applied: the boot seed below must
+  // never overwrite a live update that beat it.
+  const transportSeededRef = useRef(false)
+  useEffect(() => {
+    const apply = (s: TransportState): void => {
+      transportSeededRef.current = true
+      const p = playingRef.current
+      setPlayhead(s.playhead)
+      if (s.playing) {
+        if (p && !p.remote) {
+          window.api.preview.seek(s.playhead, false).catch((e) => setError((e as Error).message))
+          setPlaying({ ...p, startPos: s.playhead, startedAt: performance.now() })
         } else {
-          // Foreign stop: freeze a local preview stream where the transport says.
-          if (p && !p.remote) window.api.preview.stop().catch(() => {})
-          setPlaying(null)
+          setPlaying({ startPos: s.playhead, startedAt: performance.now(), duration, remote: true })
         }
-      }),
-    [duration]
-  )
+      } else {
+        // Foreign stop: freeze a local preview stream where the transport says.
+        if (p && !p.remote) window.api.preview.stop().catch(() => {})
+        setPlaying(null)
+      }
+    }
+    const unsub = window.api.preview.onTransport(apply)
+    // Seed a fresh renderer from the last foreign state main saw — without
+    // this the playhead assumes 0 until the next transport change (e.g. a
+    // TD scrub that landed while the window was still loading).
+    if (!transportSeededRef.current)
+      window.api.preview
+        .lastTransport()
+        .then((s) => {
+          if (s && !transportSeededRef.current) apply(s)
+        })
+        .catch(() => {})
+    return unsub
+  }, [duration])
 
   // Session residency: keep the player holding the current merged project so
   // a TD-side scrub always resolves against something. Debounced after edits;

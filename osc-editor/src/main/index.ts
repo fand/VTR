@@ -28,6 +28,7 @@ import {
   type PortConfig,
   type ProjectFile,
   type TapPush,
+  type TransportState,
   type UndoEntry
 } from '../shared/types'
 
@@ -129,6 +130,9 @@ function requireTap(): TapManager {
 
 let player: PlayerManager | null = null
 let playerError: string | null = null
+// Last foreign transport state, kept so a renderer that loads (or reloads)
+// after a change can seed its playhead instead of assuming 0.
+let lastTransport: { state: TransportState; at: number } | null = null
 
 function requirePlayer(): PlayerManager {
   if (!player) throw new Error(playerError ?? 'vtr-player not running')
@@ -365,9 +369,10 @@ app.whenReady().then(() => {
     player.spawnPlayer()
     // Mirror the player's push transport back into the editor: a seek or
     // play/stop from TD or a controller moves the renderer's playhead.
-    new TransportFollow(player, (s) =>
+    new TransportFollow(player, (s) => {
+      lastTransport = { state: s, at: Date.now() }
       BrowserWindow.getAllWindows()[0]?.webContents.send('transport:update', s)
-    ).start()
+    }).start()
   } catch (e) {
     playerError = (e as Error).message
     console.error(playerError)
@@ -547,6 +552,15 @@ app.whenReady().then(() => {
   // Session residency: keep the player holding the current merged project
   // even when idle, so a TD-side scrub resolves against something. Called
   // on project open and (debounced) after edits. Best-effort.
+  // Seed for a freshly (re)loaded renderer: the last foreign transport
+  // state, extrapolated while playing so the playhead lands where the
+  // transport actually is, not where it was at the last gen bump.
+  ipcMain.handle('transport:last', (): TransportState | null => {
+    if (!lastTransport) return null
+    const { state, at } = lastTransport
+    if (!state.playing) return state
+    return { ...state, playhead: state.playhead + (Date.now() - at) / 1000 }
+  })
   ipcMain.handle('player:loadInline', (_e, project: ProjectFile) => {
     const merged = mergeProject(resolveClip, project)
     const duration = Math.max(merged.duration, project.duration ?? 0)

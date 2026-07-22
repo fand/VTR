@@ -90,7 +90,9 @@ const api = {
       const listener = (_e: unknown, state: TransportState): void => cb(state)
       ipcRenderer.on('transport:update', listener)
       return () => ipcRenderer.removeListener('transport:update', listener)
-    }
+    },
+    /** Last foreign transport state (extrapolated), to seed a fresh renderer. */
+    lastTransport: (): Promise<TransportState | null> => ipcRenderer.invoke('transport:last')
   },
   undo: {
     load: (): Promise<UndoEntry[]> => ipcRenderer.invoke('undo:load'),
