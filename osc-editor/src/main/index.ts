@@ -5,7 +5,6 @@ import icon from '../../resources/icon.png?asset'
 import { basename, dirname, join, resolve } from 'path'
 import { clipSummary, readClip } from './clips'
 import { mergeProject } from './merge'
-import { Preview } from './preview'
 import {
   commitProject,
   loadProject,
@@ -25,6 +24,7 @@ import {
   DEFAULT_PORTS,
   normalizePorts,
   type LoadedProject,
+  type OscEvent,
   type PortConfig,
   type ProjectFile,
   type TapPush,
@@ -110,6 +110,16 @@ const requireGranted = (p: string): string => {
     throw new Error(`project path not granted by a dialog: ${p}`)
   }
   return projectPath
+}
+
+// Inline-load routes: every port seen in the merged events maps to the
+// forward port (the player emits only on routed ports). The old direct
+// preview also sent everything to the forward port, whatever port the
+// clip was recorded on.
+function routesFor(events: OscEvent[], forward: number): Record<string, number> {
+  const routes: Record<string, number> = {}
+  for (const e of events) routes[e.port] = forward
+  return routes
 }
 
 // The undo log lives in the project bundle; untitled sessions stage it in
@@ -524,32 +534,32 @@ app.whenReady().then(() => {
     return exportSession(resolveClip, project, outPath)
   })
 
-  const preview = new Preview(undefined, (message) => {
-    BrowserWindow.getAllWindows()[0]?.webContents.send('preview:error', message)
-  })
-  ipcMain.handle('preview:play', (_e, project: ProjectFile, fromSec: number) => {
+  // Preview playback is delegated to vtr-player: inline-load the merged
+  // project with routes, then drive the shared push transport. The player's
+  // emit loop is the only preview emitter — one resolver serves preview,
+  // file replay, and TD scrubs alike. Errors reject to the renderer's
+  // banner; there is no editor-side fallback path anymore.
+  const forwardPort = (): number => tap?.ports.forward ?? DEFAULT_PORTS.forward
+  ipcMain.handle('preview:play', async (_e, project: ProjectFile, fromSec: number) => {
     const merged = mergeProject(resolveClip, project)
     const duration = Math.max(merged.duration, project.duration ?? 0)
-    preview.play(merged.events, fromSec, tap?.ports.forward ?? DEFAULT_PORTS.forward)
-    // Mirror into vtr-player (inline session + transport) so sync clients
-    // (the TD tox in follow mode) track the preview. Best-effort: preview
-    // itself must not fail when the player is down.
-    void player
-      ?.loadInline(merged.events, duration, {})
-      .then(() => player?.seek(fromSec))
-      .then(() => player?.play())
-      .catch((e) => console.log(`preview player sync failed: ${(e as Error).message}`))
-    return { duration }
+    const p = requirePlayer()
+    await p.loadInline(merged.events, duration, routesFor(merged.events, forwardPort()))
+    await p.seek(fromSec)
+    const transport = await p.play()
+    return { duration, transport }
   })
   // mirror=false: the seek came FROM the shared transport (follow apply) —
-  // writing it back would be an echo, only saved by the hold rule.
-  ipcMain.handle('preview:seek', (_e, fromSec: number, mirror = true) => {
-    if (mirror) player?.seek(fromSec).catch(() => {})
-    return { seeked: preview.seek(fromSec) }
+  // writing it back would be an echo. With the player emitting, an echoed
+  // seek is a pure no-op request.
+  ipcMain.handle('preview:seek', async (_e, fromSec: number, mirror = true) => {
+    if (!mirror) return { seeked: false }
+    const transport = await requirePlayer().seek(fromSec)
+    return { seeked: transport.playing, transport }
   })
-  ipcMain.handle('preview:stop', () => {
-    player?.stopTransport().catch(() => {})
-    return { position: preview.stop() }
+  ipcMain.handle('preview:stop', async () => {
+    const transport = await requirePlayer().stopTransport()
+    return { position: transport.playhead }
   })
   // Session residency: keep the player holding the current merged project
   // even when idle, so a TD-side scrub resolves against something. Called
@@ -567,7 +577,7 @@ app.whenReady().then(() => {
     const merged = mergeProject(resolveClip, project)
     const duration = Math.max(merged.duration, project.duration ?? 0)
     player
-      ?.loadInline(merged.events, duration, {})
+      ?.loadInline(merged.events, duration, routesFor(merged.events, forwardPort()))
       .catch((e) => console.log(`residency load failed: ${(e as Error).message}`))
   })
 
