@@ -103,7 +103,7 @@ test('preview sync methods send the control cmds', async () => {
     reply({ ok: true })
   })
   const events = [{ t: 0.5, port: 10010, a: '/x', types: 'f', args: [0.1] }]
-  await player.loadInline(events, 12.5)
+  await player.loadInline(events, 12.5, { '10010': 10011 })
   await player.seek(2.5)
   await player.play()
   await player.stopTransport()
@@ -113,13 +113,29 @@ test('preview sync methods send the control cmds', async () => {
     cmd: 'load',
     events,
     duration: 12.5,
+    routes: { '10010': 10011 },
     name: '(editor)',
     origin: 'editor',
     keep: true
   })
   expect(seen[0]).not.toHaveProperty('path')
-  expect(seen[0]).not.toHaveProperty('routes')
   expect(seen[1]).toMatchObject({ cmd: 'seek', t: 2.5 })
+})
+
+test('transport commands return the reply snapshot', async () => {
+  const { player } = await setup((req, reply) => {
+    if (req.cmd === 'seek') reply({ ok: true, playing: false, playhead: 2.5, gen: 3, origin: 'editor' })
+    else if (req.cmd === 'play') reply({ ok: true, playing: true, playhead: 2.5, gen: 4, origin: 'editor' })
+    else reply({ ok: true, playing: false, playhead: 6.75, gen: 5, origin: 'editor' })
+  })
+  await expect(player.seek(2.5)).resolves.toEqual({
+    gen: 3,
+    origin: 'editor',
+    playhead: 2.5,
+    playing: false
+  })
+  await expect(player.play()).resolves.toMatchObject({ playing: true, gen: 4 })
+  await expect(player.stopTransport()).resolves.toMatchObject({ playhead: 6.75, playing: false })
 })
 
 test('transport writes carry the editor origin', async () => {

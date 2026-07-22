@@ -535,7 +535,7 @@ app.whenReady().then(() => {
     // (the TD tox in follow mode) track the preview. Best-effort: preview
     // itself must not fail when the player is down.
     void player
-      ?.loadInline(merged.events, duration)
+      ?.loadInline(merged.events, duration, {})
       .then(() => player?.seek(fromSec))
       .then(() => player?.play())
       .catch((e) => console.log(`preview player sync failed: ${(e as Error).message}`))
@@ -567,7 +567,7 @@ app.whenReady().then(() => {
     const merged = mergeProject(resolveClip, project)
     const duration = Math.max(merged.duration, project.duration ?? 0)
     player
-      ?.loadInline(merged.events, duration)
+      ?.loadInline(merged.events, duration, {})
       .catch((e) => console.log(`residency load failed: ${(e as Error).message}`))
   })
 
