@@ -72,11 +72,11 @@ pub fn spawn(
             }
             for m in &msgs {
                 match m.addr.as_str() {
-                    "/vtr/play" => transport.play(),
-                    "/vtr/stop" => transport.stop(),
+                    "/vtr/play" => transport.play(""),
+                    "/vtr/stop" => transport.stop(""),
                     "/vtr/seek" => {
                         if let Some(t) = arg_as_f64(m.args.first()).filter(|v| v.is_finite()) {
-                            transport.request_seek(t);
+                            transport.request_seek(t, "");
                         }
                     }
                     // Punch-in priming: resolve at t and emit to the app,
@@ -84,7 +84,7 @@ pub fn spawn(
                     "/vtr/rec/start" => {
                         if let Some(t) = arg_as_f64(m.args.first()).filter(|v| v.is_finite()) {
                             if shared.snapshot().1.is_some() {
-                                transport.request_seek(t);
+                                transport.request_seek(t, "");
                             }
                         }
                     }

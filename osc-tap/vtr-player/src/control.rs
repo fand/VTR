@@ -19,12 +19,12 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 
 use anyhow::{Context, Result};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::pattern::TriggerPatterns;
 use crate::resolver::{DedupResolver, Mode, Resolver};
@@ -101,18 +101,18 @@ fn dispatch(request: &Value, ctx: &Ctx, conn: &mut ConnState) -> Value {
         Some("load") => load(request, ctx),
         Some("resolve") => resolve(request, ctx, conn),
         Some("play") => {
-            ctx.transport.play();
+            ctx.transport.play("");
             transport_reply(ctx)
         }
         Some("stop") => {
-            ctx.transport.stop();
+            ctx.transport.stop("");
             transport_reply(ctx)
         }
         Some("seek") => {
             let Some(t) = request["t"].as_f64().filter(|v| v.is_finite()) else {
                 return json!({"ok": false, "error": "missing t"});
             };
-            ctx.transport.request_seek(t);
+            ctx.transport.request_seek(t, "");
             transport_reply(ctx)
         }
         Some("status") => status(ctx),
