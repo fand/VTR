@@ -47,7 +47,7 @@ The `session_start` header carries `routes: ["<listen>-><forward>"]`. Events sto
 Position is computed every frame; the engine compares it to the previous position:
 
 - **Continuous forward** (0 < Δ ≤ jump threshold, default 0.5 s): dispatch all events in `(prev, pos]` in order — full fidelity, no coalescing, triggers fire.
-- **Seek** (forward jump > threshold, any backward move, file load, transport start): per-address catch-up — for each address with an event ≤ pos, emit its last value; coalesced (one message per address), triggers suppressed. Backward scrubbing is a seek every frame, restricted to addresses touched in `(pos, prev]`, so it stays cheap.
+- **Seek** (forward jump > threshold, any backward move, file load, transport start): per-address catch-up — for each address, emit its last value ≤ pos, or its first value when pos precedes all its events (values extend flat before the first data point, like DAW automation); coalesced (one message per address), triggers suppressed. Backward scrubbing is a seek every frame, restricted to addresses touched in `(pos, prev]`, so it stays cheap.
 
 ### In-memory model
 

@@ -1,6 +1,7 @@
 # Plan: curve-extend — extend values before an address's first data point
 
-Status: planned.
+Status: done. (The Python reference in items 1–2 was removed before
+implementation; the Rust resolver + conformance suite carry the change.)
 
 ## Goal
 
