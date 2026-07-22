@@ -534,8 +534,10 @@ app.whenReady().then(() => {
       .catch((e) => console.log(`preview player sync failed: ${(e as Error).message}`))
     return { duration }
   })
-  ipcMain.handle('preview:seek', (_e, fromSec: number) => {
-    player?.seek(fromSec).catch(() => {})
+  // mirror=false: the seek came FROM the shared transport (follow apply) —
+  // writing it back would be an echo, only saved by the hold rule.
+  ipcMain.handle('preview:seek', (_e, fromSec: number, mirror = true) => {
+    if (mirror) player?.seek(fromSec).catch(() => {})
     return { seeked: preview.seek(fromSec) }
   })
   ipcMain.handle('preview:stop', () => {

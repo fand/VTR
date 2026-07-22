@@ -520,15 +520,31 @@ function App(): React.JSX.Element {
   }, [applyLoaded])
 
   // Follow the shared transport: a seek or play/stop from TD or a controller
-  // (never the editor's own writes — those are suppressed in main) moves the
-  // visible playhead. Local-state only, so it can't echo back to the player.
+  // (never the editor's own writes — those are suppressed in main). A foreign
+  // seek during a local preview repositions the live stream too; a foreign
+  // play animates the playhead only (remote) — TD already receives events
+  // through its own resolve, so the editor does not start pushing OSC on top.
+  const playingRef = useRef(playing)
+  useEffect(() => {
+    playingRef.current = playing
+  }, [playing])
   useEffect(
     () =>
       window.api.preview.onTransport((s) => {
+        const p = playingRef.current
         setPlayhead(s.playhead)
-        setPlaying(
-          s.playing ? { startPos: s.playhead, startedAt: performance.now(), duration } : null
-        )
+        if (s.playing) {
+          if (p && !p.remote) {
+            window.api.preview.seek(s.playhead, false).catch((e) => setError((e as Error).message))
+            setPlaying({ ...p, startPos: s.playhead, startedAt: performance.now() })
+          } else {
+            setPlaying({ startPos: s.playhead, startedAt: performance.now(), duration, remote: true })
+          }
+        } else {
+          // Foreign stop: freeze a local preview stream where the transport says.
+          if (p && !p.remote) window.api.preview.stop().catch(() => {})
+          setPlaying(null)
+        }
       }),
     [duration]
   )
@@ -1234,9 +1250,10 @@ function App(): React.JSX.Element {
     }
   }, [playing, tracks, markers, ports, duration, edits, playhead, pausePreview])
 
-  // Auto-pause when the playhead reaches the end.
+  // Auto-pause when the playhead reaches the end. Remote-driven playback is
+  // exempt: pausing would stop the shared transport someone else is driving.
   useEffect(() => {
-    if (!playing) return
+    if (!playing || playing.remote) return
     const remaining =
       (playing.duration - playing.startPos) * 1000 - (performance.now() - playing.startedAt)
     const timer = setTimeout(() => pausePreview(), Math.max(remaining, 0) + 100)

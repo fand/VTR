@@ -71,9 +71,13 @@ const api = {
   preview: {
     play: (project: ProjectFile, fromSec: number): Promise<{ duration: number }> =>
       ipcRenderer.invoke('preview:play', project, fromSec),
-    /** Reposition the live stream mid-playback; false when not playing. */
-    seek: (fromSec: number): Promise<{ seeked: boolean }> =>
-      ipcRenderer.invoke('preview:seek', fromSec),
+    /**
+     * Reposition the live stream mid-playback; false when not playing.
+     * mirror=false skips the transport write — for seeks that CAME from
+     * the transport (follow apply), where mirroring would echo.
+     */
+    seek: (fromSec: number, mirror = true): Promise<{ seeked: boolean }> =>
+      ipcRenderer.invoke('preview:seek', fromSec, mirror),
     stop: (): Promise<{ position: number }> => ipcRenderer.invoke('preview:stop'),
     /** Async preview socket/send failures, for the error banner. */
     onError: (cb: (message: string) => void): (() => void) => {
