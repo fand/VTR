@@ -40,6 +40,9 @@ async function launchApp(): Promise<{ app: ElectronApplication; page: Page; work
     env: {
       ...process.env,
       OSC_TAP_BIN: join(__dirname, '../../osc-tap/target/debug/osc-tap'),
+      // Preview is delegated to vtr-player; findBinary can't see the cargo
+      // tree from out/main, so point straight at the debug build.
+      VTR_PLAYER_BIN: join(__dirname, '../../osc-tap/target/debug/vtr-player'),
       OSC_EDITOR_HIDDEN: '1',
       OSC_EDITOR_DATA_DIR: workdir
     }
