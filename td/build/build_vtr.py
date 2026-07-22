@@ -104,8 +104,8 @@ def build(td_dir):
     _par(play.appendFile("File"), "")
     play.appendPulse("Reload")
     pm = play.appendMenu("Positionmode")[0]
-    pm.menuNames = ["timeline", "follow", "internal"]
-    pm.menuLabels = ["TD Timeline", "Follow Player", "Internal"]
+    pm.menuNames = ["timeline", "follow", "sync", "internal"]
+    pm.menuLabels = ["TD Timeline", "Follow Player", "Sync (bidirectional)", "Internal"]
     pm.default = "timeline"
     pm.val = "timeline"
     _par(play.appendFloat("Offset"), 0.0)

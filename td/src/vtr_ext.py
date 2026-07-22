@@ -8,11 +8,13 @@ The tox is a thin client with a Mode switch: no session parsing, no resolver.
   tap's listen port.
 - player: every frame blocks on a resolve query to vtr-player's unix socket
   and applies the delta before the frame cooks. Position source
-  (`Positionmode`): the TD timeline (deterministic — offline rendering),
-  the player's push-transport playhead (follows the editor preview), or an
-  internal transport.
+  (`Positionmode`): the TD timeline (`timeline`, deterministic — offline
+  rendering), the player's push-transport playhead (`follow`, read-only —
+  tracks the editor preview), bidirectional glue between the two (`sync` —
+  seeking in TD or the editor propagates both ways), or an internal
+  transport (`internal`).
 
-Spec: docs/tasks/tox-rework/spec.md + plan.md.
+Spec: docs/tasks/tox-rework/spec.md + plan.md; sync: docs/tasks/tl-sync/.
 """
 
 import json
@@ -32,6 +34,15 @@ RECONNECT_S = 1.0
 # keeps player sync and the clock beacon alive through a pause.
 HEARTBEAT_MS = 50
 
+# Sync mode (Positionmode "sync"): TD is glued to the player transport both
+# ways. TD gives no scrub-gesture event, so a user seek is inferred from a
+# discontinuity between the timeline and the transport.
+# JUMP: a gap this large (seconds) is a deliberate seek — write it back.
+SYNC_JUMP_EPS = 0.25
+# DRIFT: below this (frames) the timeline is silently re-glued to the
+# transport; never written back (frame quantization + wall-clock drift).
+SYNC_DRIFT_FRAMES = 2.0
+
 
 class VTRExt:
     def __init__(self, ownerComp):
@@ -48,6 +59,7 @@ class VTRExt:
         self._next_connect = 0.0  # absTime gate on reconnect attempts
         self._pos = 0.0  # internal transport position (Positionmode internal)
         self._last_abs = None
+        self._sync_gen = -1  # last transport gen applied (Positionmode sync)
         self._oscouts = {}  # (host, port) -> oscout DAT
         self._warned_ports = set()
         self._reset_state()
@@ -146,6 +158,8 @@ class VTRExt:
             # A jump in the queried t IS the seek; only the internal
             # transport's time base needs resetting.
             self._last_abs = None
+            # Entering sync re-baselines from the transport on the next tick.
+            self._sync_gen = -1
 
     def OnPulse(self, par):
         if par.name == "Rewind":
@@ -198,6 +212,16 @@ class VTRExt:
     def _player_tick(self):
         p = self.ownerComp.par
         mode = str(p.Positionmode.eval())
+        if mode == "sync":
+            if not self._ensure_connected():
+                return  # degraded: state freezes on the last applied values
+            try:
+                if self._pending_load:
+                    self._load()
+                self._sync_tick(p)
+            except Exception as e:
+                self._drop_socket("{}".format(e))
+            return
         if mode == "follow":
             # Track vtr-player's push transport: the editor preview (or a
             # controller's /vtr/play|seek) drives it, TD follows.
@@ -229,6 +253,52 @@ class VTRExt:
             self._set_error(reply.get("error", "resolve failed"))
             return
         self._set_error("")
+        self._apply(reply.get("events", []))
+
+    def _sync_tick(self, p):
+        """Bidirectional glue between the root timeline and the player
+        transport. TD gives no scrub event, so a user seek is inferred from a
+        discontinuity between the timeline and the transport's playhead."""
+        tl = op("/").time  # noqa: F821
+        rate = float(tl.rate) or 60.0
+        offset = float(p.Offset.eval())
+        actual_td = float(tl.seconds)
+        actual_play = bool(tl.play)
+
+        # Resolve at the transport playhead; the reply is authoritative.
+        reply = self._request({"cmd": "resolve", "follow": True})
+        if not reply.get("ok"):
+            self._set_error(reply.get("error", "resolve failed"))
+            return
+        self._set_error("")
+        t = float(reply.get("t", 0.0))
+        tr_play = bool(reply.get("playing"))
+        gen = int(reply.get("gen", 0))
+        origin = str(reply.get("origin", ""))
+        target_td = t + offset
+
+        # 1. User gestures on the TD timeline → write back (origin "td").
+        #    A large gap is a deliberate seek; a play-flag mismatch is a
+        #    transport toggle. The transport's hold rule arbitrates.
+        user_seek = abs(actual_td - target_td) > SYNC_JUMP_EPS
+        if user_seek:
+            self._request({"cmd": "seek", "t": actual_td - offset, "origin": "td"})
+        if actual_play != tr_play:
+            cmd = "play" if actual_play else "stop"
+            self._request({"cmd": cmd, "origin": "td"})
+
+        # 2. Follow the transport — unless the user just took the timeline
+        #    over this tick (then it owns the position, corrected next tick).
+        if not user_seek:
+            foreign = gen != self._sync_gen and origin != "td"
+            if foreign:
+                tl.frame = target_td * rate + 1.0
+                tl.play = tr_play
+            elif tr_play and abs(actual_td - target_td) > SYNC_DRIFT_FRAMES / rate:
+                # Silent drift correction; not a user action, no write-back.
+                tl.frame = target_td * rate + 1.0
+        self._sync_gen = gen
+
         self._apply(reply.get("events", []))
 
     def _ensure_connected(self):
@@ -403,6 +473,8 @@ class VTRExt:
                     pass
         self.rfile = None
         self.sock = None
+        # A reconnect re-baselines from the transport, no write-back.
+        self._sync_gen = -1
         self._set_info("connected", "0")
 
     def _drop_socket(self, msg):
