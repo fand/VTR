@@ -27,9 +27,14 @@ One Base COMP, one `Mode` switch:
   - `timeline` — TD root timeline − `Offset`. Deterministic by
     construction: two offline exports of the same session produce
     identical frames. This is the offline-render mode.
-  - `follow` — the player's push-transport playhead. The editor mirrors
-    its preview into the player (inline load + play/seek), so **playing in
-    the editor drives TD live** — no export, no `File`.
+  - `follow` — the player's push-transport playhead (read-only). The editor
+    mirrors its preview into the player (inline load + play/seek), so
+    **playing in the editor drives TD live** — no export, no `File`.
+  - `sync` — bidirectional glue between the root timeline and the
+    transport. A discontinuity between them is read as a user seek and
+    written back (origin `td`); foreign moves (editor/controller) drive the
+    timeline. So **scrubbing either TD or the editor moves both**. A reconnect
+    re-baselines from the transport. Live only — not for offline render.
   - `internal` — the tox's own transport (`Play` / `Rewind`).
 
   Output lands in the `state` table DAT (one row per address:
@@ -63,7 +68,7 @@ One Base COMP, one `Mode` switch:
 | VTR Rec | `Notifyport` | 10014 | Where the tap's `--td-notify` rec notifications arrive. |
 | VTR Play | `Sockpath` | `~/Library/Application Support/VTR/vtr-player.sock` | vtr-player control socket (`~` expanded). |
 | VTR Play | `File` / `Reload` | — | session.jsonl to `load`. Leave empty when the editor (or another client) loads the session. The player holds ONE global session: loading here swaps it for every client. |
-| VTR Play | `Positionmode` / `Offset` | `timeline` / 0 | Position source: `timeline` (root timeline − Offset), `follow` (player transport = editor preview), `internal` (Play/Rewind). |
+| VTR Play | `Positionmode` / `Offset` | `timeline` / 0 | Position source: `timeline` (root timeline − Offset), `follow` (player transport = editor preview, read-only), `sync` (bidirectional — TD and editor seeks propagate both ways), `internal` (Play/Rewind). |
 | VTR Play | `Play` / `Rewind` | — | Internal transport (`Positionmode` = `internal` only). |
 | VTR Play | `Triggerpatterns` | — | Space-separated OSC address patterns, matched server-side. |
 | VTR Play | `Emitosc` / `Playhost` / `Playport` | off | Legacy re-emit to the project's OSC-in (routes from the load reply; Playport overrides). |
@@ -104,10 +109,15 @@ and saves `td/vtr.tox`.
 4. Editor follow: with `Positionmode` = `follow` and `File` empty, pressing
    play in the editor moves the `state` DAT in TD; scrubbing the editor
    seekbar scrubs TD; stop freezes it.
-5. Determinism: two offline exports (Export Movie, non-realtime) of the
+5. Sync (bidirectional): with `Positionmode` = `sync`, dragging the TD root
+   timeline moves the editor playhead, and scrubbing the editor seekbar
+   moves the TD timeline; play/pause propagates both ways; a controller
+   `/vtr/seek` moves both. No oscillation after a single seek settles;
+   steady playback drives no write-backs.
+6. Determinism: two offline exports (Export Movie, non-realtime) of the
    same session produce identical frames; killing vtr-player mid-render
    fails loudly (error row + frozen state) and recovers when it respawns.
-6. No re-recording: replay traffic never reaches the tap's listen port.
+7. No re-recording: replay traffic never reaches the tap's listen port.
 
 ## vtr_core
 

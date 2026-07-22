@@ -1,6 +1,7 @@
 # Timeline sync — bidirectional seek/transport between TD and the editor
 
-Status: spec draft (2026-07-22).
+Status: implemented (2026-07-22) — player, editor, and tox source landed;
+tox binary rebuild and manual TD verification (checklist below) pending.
 
 ## Problem
 

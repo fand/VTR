@@ -1,9 +1,11 @@
 # Plan: tl-sync — bidirectional TD/editor timeline sync
 
-Status: agreed (2026-07-22). Spec: [spec.md](spec.md). Five phases in
-dependency order; each is independently testable and committable. Phases
-1–3 complete the editor side and run entirely in CI (cargo + vitest); a TD
-install is needed only from phase 4 on.
+Status: phases 1–5 landed (2026-07-22); tox binary rebuild + manual TD
+verification pending (needs a TD install). Spec: [spec.md](spec.md). Five
+phases in dependency order; each is independently testable and committable.
+Phases 1–3 complete the editor side and run entirely in CI (cargo +
+vitest); a TD install is needed only from phase 4 on. Phase 3 shipped as
+two commits (player API, then the follow-loop + renderer wiring).
 
 ## Phase 1 — transport gen/origin + sessionless seek (Rust, foundation)
 
