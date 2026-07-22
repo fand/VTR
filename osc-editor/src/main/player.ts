@@ -125,10 +125,18 @@ export class PlayerManager {
    * Inline-load the current merged project (no file involved) so sync
    * clients (the TD tox) resolve against what the editor is playing.
    * No routes: the player's own push transport stays silent — the editor
-   * keeps pushing preview OSC to the app itself.
+   * keeps pushing preview OSC to the app itself. keep:true swaps the
+   * session without touching the transport, so a residency reload during
+   * playback never yanks followers to zero; origin tags the swap as ours.
    */
   async loadInline(events: OscEvent[], duration: number): Promise<void> {
-    await this.request('load', { events, duration, name: '(editor)' })
+    await this.request('load', {
+      events,
+      duration,
+      name: '(editor)',
+      origin: EDITOR_ORIGIN,
+      keep: true
+    })
   }
 
   async play(origin: string = EDITOR_ORIGIN): Promise<void> {

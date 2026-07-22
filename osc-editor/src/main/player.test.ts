@@ -109,7 +109,14 @@ test('preview sync methods send the control cmds', async () => {
   await player.stopTransport()
 
   expect(seen.map((r) => r.cmd)).toEqual(['load', 'seek', 'play', 'stop'])
-  expect(seen[0]).toMatchObject({ cmd: 'load', events, duration: 12.5, name: '(editor)' })
+  expect(seen[0]).toMatchObject({
+    cmd: 'load',
+    events,
+    duration: 12.5,
+    name: '(editor)',
+    origin: 'editor',
+    keep: true
+  })
   expect(seen[0]).not.toHaveProperty('path')
   expect(seen[0]).not.toHaveProperty('routes')
   expect(seen[1]).toMatchObject({ cmd: 'seek', t: 2.5 })

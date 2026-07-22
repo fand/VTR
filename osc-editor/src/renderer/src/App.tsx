@@ -535,16 +535,18 @@ function App(): React.JSX.Element {
 
   // Session residency: keep the player holding the current merged project so
   // a TD-side scrub always resolves against something. Debounced after edits;
-  // also fires once the boot load settles.
+  // also fires once the boot load settles. An empty no-project state loads
+  // nothing — it would clobber a session another client (the tox File
+  // workflow) loaded, for no benefit.
   useEffect(() => {
-    if (!bootDone) return
+    if (!bootDone || (!projectFile && tracks.length === 0)) return
     const t = setTimeout(() => {
       window.api.player
         .loadInline(serializeProject(tracks, markers, ports, duration, edits, history.seq))
         .catch(() => {})
     }, 300)
     return () => clearTimeout(t)
-  }, [bootDone, tracks, markers, ports, duration, edits, history.seq])
+  }, [bootDone, projectFile, tracks, markers, ports, duration, edits, history.seq])
 
   const saveTo = useCallback(
     async (path: string): Promise<void> => {
