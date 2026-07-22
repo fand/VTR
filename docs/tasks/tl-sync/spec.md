@@ -82,6 +82,17 @@ on replies.
   plumbing, liveness built in, no subscriber registry. `t` is the playhead
   at reply time; between replies the client extrapolates
   (`t + elapsed` while playing) exactly like the transport itself does.
+  The server handles each connection's lines strictly in order, so a
+  watch client MUST keep the long-poll on its own connection — on a
+  shared one it head-of-line-blocks every command, including the very
+  write that would wake it.
+- `load` gains optional `"origin"` (stamped on the transport reset's gen
+  bump, so the loader's own follower suppresses the echo) and
+  `"keep":true` (swap the session without touching the transport — no
+  stop, no rewind, no gen bump; the resolver-epoch reset still gives
+  every connection a full catch-up). The editor's inline loads use both,
+  so a residency reload during playback never yanks followers to zero;
+  File-workflow loads keep the historical stop+rewind.
 - **Seeks apply without a session.** Today `emit_loop` takes the seek
   mailbox only when a session is loaded, so a sessionless `seek` updates
   nothing. The playhead becomes session-independent: `play`/`stop`/`seek`
@@ -145,11 +156,14 @@ wins over a stale local timeline.
 
 ## Editor
 
-- **Read**: keep one `watch` outstanding (re-issued on reply/timeout,
-  riding PlayerManager's existing request plumbing with a longer
-  per-request timeout for this command). On a reply with a foreign
-  origin: move the renderer playhead; if previewing, apply via the
-  existing paths — `preview.seek(t)` / start / `preview.stop()`. Between
+- **Read**: keep one `watch` outstanding (re-issued on reply/timeout, on
+  a dedicated connection — see the protocol note). On a reply with a
+  foreign origin: move the renderer playhead; a foreign seek during a
+  local preview repositions the live stream (without mirroring back —
+  that write would be an echo); a foreign play animates the playhead as
+  remote-driven only (no OSC push — TD gets events via its own resolve —
+  and no end-of-project auto-pause, which would stop the shared
+  transport); a foreign stop freezes a running local stream. Between
   replies the renderer extrapolates from `(t, playing, reply time)`.
 - **Write**: seekbar / play / stop IPC handlers pass `origin:"editor"` on
   the mirror calls they already make. No new write paths.
