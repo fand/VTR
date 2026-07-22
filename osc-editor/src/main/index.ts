@@ -130,6 +130,7 @@ function requireTap(): TapManager {
 
 let player: PlayerManager | null = null
 let playerError: string | null = null
+let transportFollow: TransportFollow | null = null
 // Last foreign transport state, kept so a renderer that loads (or reloads)
 // after a change can seed its playhead instead of assuming 0.
 let lastTransport: { state: TransportState; at: number } | null = null
@@ -369,10 +370,11 @@ app.whenReady().then(() => {
     player.spawnPlayer()
     // Mirror the player's push transport back into the editor: a seek or
     // play/stop from TD or a controller moves the renderer's playhead.
-    new TransportFollow(player, (s) => {
+    transportFollow = new TransportFollow(player, (s) => {
       lastTransport = { state: s, at: Date.now() }
       BrowserWindow.getAllWindows()[0]?.webContents.send('transport:update', s)
-    }).start()
+    })
+    transportFollow.start()
   } catch (e) {
     playerError = (e as Error).message
     console.error(playerError)
@@ -599,6 +601,7 @@ app.whenReady().then(() => {
 })
 
 app.on('will-quit', () => {
+  transportFollow?.stop()
   tap?.shutdown()
   player?.shutdown()
 })
