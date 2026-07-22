@@ -176,6 +176,23 @@ impl Transport {
         self.inner.changed.notify_all();
     }
 
+    /// Punch-in priming (`/vtr/rec/start`): apply unconditionally —
+    /// recording wins over any transport tug-of-war, so the hold rule does
+    /// not apply — and without becoming a holder (origin "", no
+    /// `last_write`), so the next writer is accepted at once. Still bumps
+    /// the generation: followers re-baseline to the primed position.
+    pub fn prime_seek(&self, t: f64) {
+        let mut st = self.inner.state.lock().unwrap();
+        st.base_t = t;
+        st.anchor = Instant::now();
+        st.generation += 1;
+        st.origin.clear();
+        st.last_write = None;
+        drop(st);
+        *self.inner.seek.lock().unwrap() = Some(t);
+        self.inner.changed.notify_all();
+    }
+
     pub fn playhead(&self) -> f64 {
         self.inner.state.lock().unwrap().playhead()
     }
@@ -380,6 +397,23 @@ mod tests {
         // Same origin still wins.
         t.request_seek(7.0, "editor");
         assert_eq!(t.snapshot().t, 7.0);
+    }
+
+    #[test]
+    fn prime_seek_bypasses_hold_without_taking_it() {
+        let t = transport();
+        t.request_seek(5.0, "editor");
+        // Punch-in applies mid-hold, bumps the generation, clears the origin.
+        t.prime_seek(9.0);
+        let s = t.snapshot();
+        assert_eq!(s.t, 9.0);
+        assert_eq!(s.generation, 2);
+        assert_eq!(s.origin, "");
+        // Priming is not a holder: a foreign writer is accepted at once.
+        t.request_seek(3.0, "td");
+        let s = t.snapshot();
+        assert_eq!(s.t, 3.0);
+        assert_eq!(s.origin, "td");
     }
 
     #[test]

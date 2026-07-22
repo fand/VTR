@@ -82,12 +82,13 @@ pub fn spawn(
                         }
                     }
                     // Punch-in priming: resolve at t and emit to the app,
-                    // only with a session loaded and a t given. Internal
-                    // priming, not a user gesture — origin stays "".
+                    // only with a session loaded and a t given. Not a user
+                    // gesture — it bypasses the hold rule (recording wins)
+                    // and takes no hold itself.
                     "/vtr/rec/start" => {
                         if let Some(t) = arg_as_f64(m.args.first()).filter(|v| v.is_finite()) {
                             if shared.snapshot().1.is_some() {
-                                transport.request_seek(t, "");
+                                transport.prime_seek(t);
                             }
                         }
                     }
