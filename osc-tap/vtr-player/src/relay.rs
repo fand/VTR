@@ -72,15 +72,18 @@ pub fn spawn(
             }
             for m in &msgs {
                 match m.addr.as_str() {
-                    "/vtr/play" => transport.play(""),
-                    "/vtr/stop" => transport.stop(""),
+                    // Controller transport commands share the origin "osc",
+                    // so both TD and the editor follow them.
+                    "/vtr/play" => transport.play("osc"),
+                    "/vtr/stop" => transport.stop("osc"),
                     "/vtr/seek" => {
                         if let Some(t) = arg_as_f64(m.args.first()).filter(|v| v.is_finite()) {
-                            transport.request_seek(t, "");
+                            transport.request_seek(t, "osc");
                         }
                     }
                     // Punch-in priming: resolve at t and emit to the app,
-                    // only with a session loaded and a t given.
+                    // only with a session loaded and a t given. Internal
+                    // priming, not a user gesture — origin stays "".
                     "/vtr/rec/start" => {
                         if let Some(t) = arg_as_f64(m.args.first()).filter(|v| v.is_finite()) {
                             if shared.snapshot().1.is_some() {

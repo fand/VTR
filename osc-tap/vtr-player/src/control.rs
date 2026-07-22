@@ -5,8 +5,8 @@
 //! Requests:  {"cmd":"load","path":"…"|"events":[…],"name"?:"…","duration"?:D,
 //!             "triggers"?:[…],"routes"?:{"10010":9000}}
 //!          | {"cmd":"resolve","t":T} | {"cmd":"resolve","follow":true}
-//!          | {"cmd":"play"} | {"cmd":"stop"} | {"cmd":"seek","t":T}
-//!          | {"cmd":"status"}
+//!          | {"cmd":"play"|"stop"|"seek","origin"?:"…"[,"t":T]}
+//!          | {"cmd":"watch","gen":N} | {"cmd":"status"}
 //! Responses: {"ok":true,...} | {"ok":false,"error":"..."}
 //!
 //! `events` is the inline form of `load`: the same objects as session.jsonl
@@ -14,6 +14,13 @@
 //! touching disk. `resolve` with `follow` resolves at the push transport's
 //! playhead (reply carries `t`), so a client can track the transport that
 //! `play`/`stop`/`seek` (or relayed `/vtr/*`) drive.
+//!
+//! Transport replies carry `gen` (a counter that bumps on every accepted
+//! mutation) and `origin` (who wrote last). A follower suppresses its own
+//! echo by applying a state only when `gen` moved and `origin` is not its
+//! own. `watch` long-polls: it blocks until `gen` differs from the given
+//! value (or a ~1 s timeout), then replies with the current transport
+//! snapshot — the transport-axis analogue of the tap's `wait`.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
@@ -22,6 +29,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use serde_json::{Map, Value, json};
@@ -38,12 +46,20 @@ pub struct Ctx {
     pub connections: AtomicU64,
 }
 
+/// `watch` long-poll timeout: on no change, reply with the same gen and
+/// let the client re-issue. Bounds per-request blocking, not correctness.
+const WATCH_TIMEOUT: Duration = Duration::from_millis(1000);
+
 /// Per-connection resolver, rebuilt when the session epoch moves (a `load`
 /// anywhere resets every connection: the next `resolve` is a full
 /// catch-up).
 struct ConnState {
     epoch: u64,
     resolver: Option<DedupResolver>,
+}
+
+fn origin_of(request: &Value) -> &str {
+    request["origin"].as_str().unwrap_or("")
 }
 
 /// Serve the control API. Blocks forever.
@@ -101,30 +117,48 @@ fn dispatch(request: &Value, ctx: &Ctx, conn: &mut ConnState) -> Value {
         Some("load") => load(request, ctx),
         Some("resolve") => resolve(request, ctx, conn),
         Some("play") => {
-            ctx.transport.play("");
+            ctx.transport.play(origin_of(request));
             transport_reply(ctx)
         }
         Some("stop") => {
-            ctx.transport.stop("");
+            ctx.transport.stop(origin_of(request));
             transport_reply(ctx)
         }
         Some("seek") => {
             let Some(t) = request["t"].as_f64().filter(|v| v.is_finite()) else {
                 return json!({"ok": false, "error": "missing t"});
             };
-            ctx.transport.request_seek(t, "");
+            ctx.transport.request_seek(t, origin_of(request));
             transport_reply(ctx)
         }
+        Some("watch") => watch(request, ctx),
         Some("status") => status(ctx),
         _ => json!({"ok": false, "error": "unknown cmd"}),
     }
 }
 
 fn transport_reply(ctx: &Ctx) -> Value {
+    let s = ctx.transport.snapshot();
     json!({
         "ok": true,
-        "playing": ctx.transport.playing(),
-        "playhead": ctx.transport.playhead(),
+        "playing": s.playing,
+        "playhead": s.t,
+        "gen": s.generation,
+        "origin": s.origin,
+    })
+}
+
+/// Long-poll the transport: block until `gen` moves (or a timeout), then
+/// reply with the current snapshot. A timeout replies with the same gen.
+fn watch(request: &Value, ctx: &Ctx) -> Value {
+    let since = request["gen"].as_u64().unwrap_or(0);
+    let s = ctx.transport.watch(since, WATCH_TIMEOUT);
+    json!({
+        "ok": true,
+        "gen": s.generation,
+        "origin": s.origin,
+        "t": s.t,
+        "playing": s.playing,
     })
 }
 
@@ -197,10 +231,11 @@ fn load(request: &Value, ctx: &Ctx) -> Value {
 }
 
 fn resolve(request: &Value, ctx: &Ctx, conn: &mut ConnState) -> Value {
-    // follow: resolve at the push transport's playhead, so a per-frame
-    // client can track a transport someone else drives (editor preview).
+    // One transport snapshot for the whole reply: follow resolves at its
+    // playhead, and gen/origin let the client suppress its own echo.
+    let tr = ctx.transport.snapshot();
     let t = if request["follow"].as_bool() == Some(true) {
-        ctx.transport.playhead()
+        tr.t
     } else {
         let Some(t) = request["t"].as_f64().filter(|v| v.is_finite()) else {
             return json!({"ok": false, "error": "missing t"});
@@ -228,19 +263,24 @@ fn resolve(request: &Value, ctx: &Ctx, conn: &mut ConnState) -> Value {
         "ok": true,
         "mode": match mode { Mode::Pump => "pump", Mode::Seek => "seek" },
         "t": t,
-        "playing": ctx.transport.playing(),
+        "playing": tr.playing,
+        "gen": tr.generation,
+        "origin": tr.origin,
         "events": events,
     })
 }
 
 fn status(ctx: &Ctx) -> Value {
     let (_, loaded) = ctx.shared.snapshot();
+    let s = ctx.transport.snapshot();
     json!({
         "ok": true,
         "status": {
             "loaded": loaded.map(|l| l.path.clone()),
-            "playing": ctx.transport.playing(),
-            "playhead": ctx.transport.playhead(),
+            "playing": s.playing,
+            "playhead": s.t,
+            "gen": s.generation,
+            "origin": s.origin,
             "connections": ctx.connections.load(Ordering::Relaxed),
         }
     })
