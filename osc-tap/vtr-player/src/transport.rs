@@ -167,12 +167,15 @@ impl Transport {
         }
         // Move the playhead synchronously so reads/replies never observe a
         // bumped generation against a stale position; the mailbox only asks the
-        // emit loop to push the resolved frame (needed while paused).
+        // emit loop to push the resolved frame (needed while paused). The
+        // mailbox write stays under the state lock (state → seek, same
+        // order as on_load) so racing seeks can't leave the mailbox
+        // holding a t the state has already superseded.
         st.base_t = t;
         st.anchor = now;
         st.commit(origin, now);
-        drop(st);
         *self.inner.seek.lock().unwrap() = Some(t);
+        drop(st);
         self.inner.changed.notify_all();
     }
 
@@ -188,8 +191,8 @@ impl Transport {
         st.generation += 1;
         st.origin.clear();
         st.last_write = None;
-        drop(st);
         *self.inner.seek.lock().unwrap() = Some(t);
+        drop(st);
         self.inner.changed.notify_all();
     }
 
