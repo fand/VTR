@@ -114,3 +114,34 @@ test('preview sync methods send the control cmds', async () => {
   expect(seen[0]).not.toHaveProperty('routes')
   expect(seen[1]).toMatchObject({ cmd: 'seek', t: 2.5 })
 })
+
+test('transport writes carry the editor origin', async () => {
+  const seen: Record<string, unknown>[] = []
+  const { player } = await setup((req, reply) => {
+    seen.push(req)
+    reply({ ok: true })
+  })
+  await player.seek(1.5)
+  await player.play()
+  await player.stopTransport()
+  expect(seen).toMatchObject([
+    { cmd: 'seek', t: 1.5, origin: 'editor' },
+    { cmd: 'play', origin: 'editor' },
+    { cmd: 'stop', origin: 'editor' }
+  ])
+})
+
+test('watch parses the transport snapshot', async () => {
+  const { player } = await setup((req, reply) => {
+    if (req.cmd === 'watch') {
+      expect(req.gen).toBe(7)
+      reply({ ok: true, gen: 8, origin: 'td', t: 3.25, playing: true })
+    }
+  })
+  await expect(player.watch(7)).resolves.toEqual({
+    gen: 8,
+    origin: 'td',
+    playhead: 3.25,
+    playing: true
+  })
+})

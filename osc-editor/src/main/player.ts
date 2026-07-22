@@ -1,12 +1,17 @@
 import { ChildProcess, spawn } from 'child_process'
 import net from 'net'
 import { join } from 'path'
-import { RELAY_PORT, type OscEvent, type PlayerStatus } from '../shared/types'
+import { RELAY_PORT, type OscEvent, type PlayerStatus, type TransportState } from '../shared/types'
 
 const REQUEST_TIMEOUT_MS = 3000
+/** Long-poll requests (watch) must outlive vtr-player's ~1s server timeout. */
+const WATCH_TIMEOUT_MS = 5000
 const CONNECT_DEADLINE_MS = 5000
 const RESPAWN_DELAY_MS = 1000
 const RESPAWN_DELAY_MAX_MS = 10_000
+
+/** The editor's own origin tag on transport writes (for echo suppression). */
+export const EDITOR_ORIGIN = 'editor'
 
 interface Pending {
   resolve: (v: Record<string, unknown>) => void
@@ -126,21 +131,37 @@ export class PlayerManager {
     await this.request('load', { events, duration, name: '(editor)' })
   }
 
-  async play(): Promise<void> {
-    await this.request('play')
+  async play(origin: string = EDITOR_ORIGIN): Promise<void> {
+    await this.request('play', { origin })
   }
 
-  async stopTransport(): Promise<void> {
-    await this.request('stop')
+  async stopTransport(origin: string = EDITOR_ORIGIN): Promise<void> {
+    await this.request('stop', { origin })
   }
 
-  async seek(t: number): Promise<void> {
-    await this.request('seek', { t })
+  async seek(t: number, origin: string = EDITOR_ORIGIN): Promise<void> {
+    await this.request('seek', { t, origin })
+  }
+
+  /**
+   * Long-poll the transport: resolves when its generation differs from
+   * `gen`, or vtr-player's server-side timeout fires (same gen returned).
+   * The follow loop re-issues on every resolution.
+   */
+  async watch(gen: number): Promise<TransportState> {
+    const r = await this.request('watch', { gen }, WATCH_TIMEOUT_MS)
+    return {
+      gen: Number(r.gen ?? 0),
+      origin: String(r.origin ?? ''),
+      playhead: Number(r.t ?? 0),
+      playing: Boolean(r.playing)
+    }
   }
 
   private async request(
     cmd: string,
-    extra?: Record<string, unknown>
+    extra?: Record<string, unknown>,
+    timeoutMs = this.requestTimeoutMs
   ): Promise<Record<string, unknown>> {
     const sock = await this.connect()
     const id = this.nextId++
@@ -158,7 +179,7 @@ export class PlayerManager {
         timer: setTimeout(() => {
           this.pending.delete(id)
           reject(new Error(`vtr-player ${cmd}: timed out`))
-        }, this.requestTimeoutMs)
+        }, timeoutMs)
       }
       this.pending.set(id, entry)
       sock.write(JSON.stringify({ id, cmd, ...extra }) + '\n')

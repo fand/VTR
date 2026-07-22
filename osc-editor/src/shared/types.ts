@@ -108,6 +108,18 @@ export interface PlayerStatus {
   connections: number
 }
 
+/**
+ * Push-transport state: the shared playhead plus who last moved it. `gen`
+ * bumps on every accepted mutation; a follower applies an update only when
+ * `gen` changed and `origin` is not its own (echo suppression).
+ */
+export interface TransportState {
+  gen: number
+  origin: string
+  playhead: number
+  playing: boolean
+}
+
 /** Undo depth: the in-memory stacks and the compacted on-disk log share it. */
 export const UNDO_CAP = 1000
 
