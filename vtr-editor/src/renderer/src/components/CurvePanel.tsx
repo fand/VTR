@@ -46,6 +46,9 @@ const DRAW_STEP_PX = 4
 /** Candidate grid intervals; 0.1 for values, 1s for time at typical scales. */
 const GRID_STEPS = [0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 30, 60, 120]
 
+/** Min px between time grid lines; fits a HH:MM:SS.mmm label. */
+const TIME_GRID_MIN_PX = 90
+
 /** Smallest step that keeps grid lines at least minPx apart. */
 function gridStep(range: number, pixels: number, minPx: number): number {
   for (const s of GRID_STEPS) {
@@ -417,7 +420,7 @@ export function CurvePanel({
   // Snap on: dragged times/values lock onto the same grid the editor draws.
   const snapTime = (t: number): number => {
     if (!snap) return t
-    const step = gridStep(tRange, innerW - 2 * PAD, 50)
+    const step = gridStep(tRange, innerW - 2 * PAD, TIME_GRID_MIN_PX)
     return Math.round(t / step) * step
   }
   const snapValue = (v: number, min: number, max: number): number => {
@@ -928,7 +931,7 @@ export function CurvePanel({
   const renderGrid = (): React.JSX.Element | null => {
     if (clips.length === 0) return null
     const lines: React.JSX.Element[] = []
-    const tStep = gridStep(tRange, innerW - 2 * PAD, 50)
+    const tStep = gridStep(tRange, innerW - 2 * PAD, TIME_GRID_MIN_PX)
     for (let i = Math.ceil(tMin / tStep - 1e-6); i * tStep <= tMax + 1e-6; i++) {
       const px = x(i * tStep)
       lines.push(
@@ -949,13 +952,13 @@ export function CurvePanel({
   // or drag seeks, clamped to the shown clips' span. Reads scrollLeft from
   // the DOM so a scrub mid-scroll never uses a stale offset.
   const rulerMarks = (): React.JSX.Element[] => {
-    const tStep = gridStep(tRange, innerW - 2 * PAD, 50)
+    const tStep = gridStep(tRange, innerW - 2 * PAD, TIME_GRID_MIN_PX)
     const out: React.JSX.Element[] = []
     for (let i = Math.ceil(tMin / tStep - 1e-6); i * tStep <= tMax + 1e-6; i++) {
       const t = i * tStep
       out.push(
         <span key={i} className="curve-grid-label curve-ruler-mark" style={{ left: x(t) }}>
-          {formatRulerLabel(t)}
+          {formatRulerLabel(t, tStep)}
         </span>
       )
     }

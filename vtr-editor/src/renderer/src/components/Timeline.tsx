@@ -208,7 +208,7 @@ function PlayheadLine({
 
 function rulerStep(pxPerSec: number): number {
   for (const s of RULER_STEPS) {
-    if (s * pxPerSec >= 70) return s
+    if (s * pxPerSec >= 90) return s
   }
   return RULER_STEPS[RULER_STEPS.length - 1]
 }
@@ -572,7 +572,7 @@ export function Timeline({
   const step = rulerStep(pxPerSec)
   const marks: number[] = []
   // Marks stop at the timeline end (the tail pad shows no times). A mark's
-  // label sticks out ~48px right of its tick; skip marks whose label would
+  // label sticks out ~80px right of its tick; skip marks whose label would
   // poke past the content edge and stretch scrollWidth (the full timeline
   // must fit the viewport at min zoom). Only the visible scroll range gets
   // marks; the loop is bounded by the viewport, never by `end`.
@@ -580,7 +580,7 @@ export function Timeline({
   const visT1 = (scrollX + (viewW || 1600)) / pxPerSec
   for (let i = Math.floor(visT0 / step); ; i++) {
     const s = i * step
-    if (s > end || s > visT1 || s * pxPerSec + 48 > widthPx) break
+    if (s > end || s > visT1 || s * pxPerSec + 80 > widthPx) break
     marks.push(Math.round(s * 1e6) / 1e6)
   }
 
@@ -677,7 +677,7 @@ export function Timeline({
             >
               {marks.map((s) => (
                 <div key={s} className="ruler-mark" style={{ left: s * pxPerSec }}>
-                  {formatRulerLabel(s)}
+                  {formatRulerLabel(s, step)}
                 </div>
               ))}
               {markers.map((m, i) => (

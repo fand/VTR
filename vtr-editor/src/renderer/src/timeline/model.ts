@@ -137,13 +137,24 @@ export function tracksFromProject(project: LoadedProject, nextId: () => number):
   }))
 }
 
-/** Ruler tick label; shared by the timeline ruler and the curve editor's time axis. */
-export function formatRulerLabel(s: number): string {
-  if (s >= 60) {
-    const m = Math.floor(s / 60)
-    const sec = s % 60
-    return sec === 0 ? `${m}m` : `${m}m${sec.toFixed(0)}`
-  }
-  // ≤3 decimals, no trailing zeros (the curve grid steps go below 0.1s).
-  return s < 1 ? String(Number(s.toFixed(3))) : `${s.toFixed(0)}s`
+function pad(n: number, w: number): string {
+  return String(n).padStart(w, '0')
+}
+
+/** HH:MM:SS.mmm; shared by the transport display and the rulers. */
+export function formatTimecode(s: number): string {
+  const ms = Math.round(s * 1000)
+  const h = Math.floor(ms / 3600000)
+  const m = Math.floor(ms / 60000) % 60
+  const sec = Math.floor(ms / 1000) % 60
+  return `${pad(h, 2)}:${pad(m, 2)}:${pad(sec, 2)}.${pad(ms % 1000, 3)}`
+}
+
+/**
+ * Ruler tick label; shared by the timeline ruler and the curve editor's time
+ * axis. Whole-second steps drop the ms part.
+ */
+export function formatRulerLabel(s: number, step: number): string {
+  const tc = formatTimecode(s)
+  return step >= 1 ? tc.slice(0, 8) : tc
 }
