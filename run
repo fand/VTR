@@ -4,12 +4,12 @@
 set -e
 cd "$(dirname "$0")"
 
-# Dev spawns vtr-tap and vtr-player from vtr-tap/target; build the
+# Dev spawns vtr-tap and vtr-player from target; build the
 # workspace (both binaries) if either is missing.
-have() { [ -x "vtr-tap/target/release/$1" ] || [ -x "vtr-tap/target/debug/$1" ]; }
+have() { [ -x "target/release/$1" ] || [ -x "target/debug/$1" ]; }
 if ! have vtr-tap || ! have vtr-player; then
-  echo "building vtr-tap workspace..."
-  (cd vtr-tap && cargo build --release)
+  echo "building rust workspace..."
+  cargo build --release
 fi
 
 if [ ! -d vtr-editor/node_modules ]; then

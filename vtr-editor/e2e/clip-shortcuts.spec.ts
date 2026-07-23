@@ -38,7 +38,7 @@ test('clip keyboard shortcuts: Cmd+C / Cmd+V copy-paste at playhead', async () =
     cwd: workdir,
     env: {
       ...process.env,
-      VTR_TAP_BIN: join(__dirname, '../../vtr-tap/target/debug/vtr-tap'),
+      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
       OSC_EDITOR_HIDDEN: '1',
       OSC_EDITOR_DATA_DIR: workdir
     }

@@ -14,9 +14,9 @@ asarUnpack:
   - resources/**
 # Ship the Rust binaries next to the asar; findBinary looks here when packaged.
 extraResources:
-  - from: ../vtr-tap/target/release/vtr-tap
+  - from: ../target/release/vtr-tap
     to: bin/vtr-tap
-  - from: ../vtr-tap/target/release/vtr-player
+  - from: ../target/release/vtr-player
     to: bin/vtr-player
 fileAssociations:
   - ext: oscproj

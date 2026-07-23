@@ -40,7 +40,7 @@ test('clip context menu: mute, copy, paste, duplicate, split at playhead', async
     cwd: workdir,
     env: {
       ...process.env,
-      VTR_TAP_BIN: join(__dirname, '../../vtr-tap/target/debug/vtr-tap'),
+      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
       OSC_EDITOR_HIDDEN: '1',
       OSC_EDITOR_DATA_DIR: workdir
     }

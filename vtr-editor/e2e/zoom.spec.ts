@@ -38,7 +38,7 @@ test('timeline pinch zoom (ctrl+wheel) scales around the cursor', async () => {
     cwd: workdir,
     env: {
       ...process.env,
-      VTR_TAP_BIN: join(__dirname, '../../vtr-tap/target/debug/vtr-tap'),
+      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
       OSC_EDITOR_HIDDEN: '1',
       OSC_EDITOR_DATA_DIR: workdir
     }
@@ -136,7 +136,7 @@ test('curve editor x/y zoom sliders scale the axes; y zoom scrolls vertically', 
     cwd: workdir,
     env: {
       ...process.env,
-      VTR_TAP_BIN: join(__dirname, '../../vtr-tap/target/debug/vtr-tap'),
+      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
       OSC_EDITOR_HIDDEN: '1',
       OSC_EDITOR_DATA_DIR: workdir
     }
@@ -198,7 +198,7 @@ test('min zoom fits a long timeline in the window', async () => {
     cwd: workdir,
     env: {
       ...process.env,
-      VTR_TAP_BIN: join(__dirname, '../../vtr-tap/target/debug/vtr-tap'),
+      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
       OSC_EDITOR_HIDDEN: '1',
       OSC_EDITOR_DATA_DIR: workdir
     }

@@ -42,12 +42,12 @@ export function findBinary(
     if (fs.existsSync(bundled)) return bundled
   }
   const candidates = [
-    join(env.appPath, `../vtr-tap/target/release/${name}`),
-    join(env.appPath, `../vtr-tap/target/debug/${name}`)
+    join(env.appPath, `../target/release/${name}`),
+    join(env.appPath, `../target/debug/${name}`)
   ].filter((p) => fs.existsSync(p))
   if (candidates.length === 0) {
     throw new Error(
-      `${name} binary not found (build the vtr-tap workspace or set the env override)`
+      `${name} binary not found (build the rust workspace or set the env override)`
     )
   }
   candidates.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)

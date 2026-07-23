@@ -39,8 +39,8 @@ async function launchApp(): Promise<{ app: ElectronApplication; page: Page; work
     cwd: workdir,
     env: {
       ...process.env,
-      VTR_TAP_BIN: join(__dirname, '../../vtr-tap/target/debug/vtr-tap'),
-      VTR_PLAYER_BIN: join(__dirname, '../../vtr-tap/target/debug/vtr-player'),
+      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
+      VTR_PLAYER_BIN: join(__dirname, '../../target/debug/vtr-player'),
       OSC_EDITOR_HIDDEN: '1',
       OSC_EDITOR_DATA_DIR: workdir
     }

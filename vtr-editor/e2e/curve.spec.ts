@@ -51,7 +51,7 @@ test('curve panel: properties per address/arg, visibility toggle', async () => {
     cwd: workdir,
     env: {
       ...process.env,
-      VTR_TAP_BIN: join(__dirname, '../../vtr-tap/target/debug/vtr-tap'),
+      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
       OSC_EDITOR_HIDDEN: '1',
       OSC_EDITOR_DATA_DIR: workdir
     }
@@ -173,7 +173,7 @@ test('curve panel: filter input narrows the property list and drawn curves', asy
     cwd: workdir,
     env: {
       ...process.env,
-      VTR_TAP_BIN: join(__dirname, '../../vtr-tap/target/debug/vtr-tap'),
+      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
       OSC_EDITOR_HIDDEN: '1',
       OSC_EDITOR_DATA_DIR: workdir
     }
@@ -233,7 +233,7 @@ test('curve panel: property list sorted by address', async () => {
     cwd: workdir,
     env: {
       ...process.env,
-      VTR_TAP_BIN: join(__dirname, '../../vtr-tap/target/debug/vtr-tap'),
+      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
       OSC_EDITOR_HIDDEN: '1',
       OSC_EDITOR_DATA_DIR: workdir
     }
@@ -281,7 +281,7 @@ test('curve panel: selecting a property dims other curves and hides their points
     cwd: workdir,
     env: {
       ...process.env,
-      VTR_TAP_BIN: join(__dirname, '../../vtr-tap/target/debug/vtr-tap'),
+      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
       OSC_EDITOR_HIDDEN: '1',
       OSC_EDITOR_DATA_DIR: workdir
     }
@@ -339,7 +339,7 @@ test('curve panel: clicking a curve line selects its property', async () => {
     cwd: workdir,
     env: {
       ...process.env,
-      VTR_TAP_BIN: join(__dirname, '../../vtr-tap/target/debug/vtr-tap'),
+      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
       OSC_EDITOR_HIDDEN: '1',
       OSC_EDITOR_DATA_DIR: workdir
     }
@@ -418,7 +418,7 @@ test('curve panel: multi-select shows every selected clip, timeline time axis', 
     cwd: workdir,
     env: {
       ...process.env,
-      VTR_TAP_BIN: join(__dirname, '../../vtr-tap/target/debug/vtr-tap'),
+      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
       OSC_EDITOR_HIDDEN: '1',
       OSC_EDITOR_DATA_DIR: workdir
     }
@@ -485,7 +485,7 @@ test('curve panel: drag and delete points, edits persisted to sidecar', async ()
     cwd: workdir,
     env: {
       ...process.env,
-      VTR_TAP_BIN: join(__dirname, '../../vtr-tap/target/debug/vtr-tap'),
+      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
       OSC_EDITOR_HIDDEN: '1',
       OSC_EDITOR_DATA_DIR: workdir
     }
@@ -570,7 +570,7 @@ test('curve panel: transform box moves and scales the selected points', async ()
     cwd: workdir,
     env: {
       ...process.env,
-      VTR_TAP_BIN: join(__dirname, '../../vtr-tap/target/debug/vtr-tap'),
+      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
       OSC_EDITOR_HIDDEN: '1',
       OSC_EDITOR_DATA_DIR: workdir
     }
@@ -679,7 +679,7 @@ test('curve panel: double-click / cmd+click on a curve inserts a point', async (
     cwd: workdir,
     env: {
       ...process.env,
-      VTR_TAP_BIN: join(__dirname, '../../vtr-tap/target/debug/vtr-tap'),
+      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
       OSC_EDITOR_HIDDEN: '1',
       OSC_EDITOR_DATA_DIR: workdir
     }
@@ -775,7 +775,7 @@ test('curve header: snap locks drags to the grid, Box toggles the transform box'
     cwd: workdir,
     env: {
       ...process.env,
-      VTR_TAP_BIN: join(__dirname, '../../vtr-tap/target/debug/vtr-tap'),
+      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
       OSC_EDITOR_HIDDEN: '1',
       OSC_EDITOR_DATA_DIR: workdir
     }
@@ -863,7 +863,7 @@ test('curve header: pencil clicks add points to the selected curve', async () =>
     cwd: workdir,
     env: {
       ...process.env,
-      VTR_TAP_BIN: join(__dirname, '../../vtr-tap/target/debug/vtr-tap'),
+      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
       OSC_EDITOR_HIDDEN: '1',
       OSC_EDITOR_DATA_DIR: workdir
     }
@@ -969,7 +969,7 @@ test('curve panel: marquee selects multiple points, group drag and delete', asyn
     cwd: workdir,
     env: {
       ...process.env,
-      VTR_TAP_BIN: join(__dirname, '../../vtr-tap/target/debug/vtr-tap'),
+      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
       OSC_EDITOR_HIDDEN: '1',
       OSC_EDITOR_DATA_DIR: workdir
     }
@@ -1051,7 +1051,7 @@ test('curve seekbar: labels, click/scrub seeks, playhead tracks the timeline', a
     cwd: workdir,
     env: {
       ...process.env,
-      VTR_TAP_BIN: join(__dirname, '../../vtr-tap/target/debug/vtr-tap'),
+      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
       OSC_EDITOR_HIDDEN: '1',
       OSC_EDITOR_DATA_DIR: workdir
     }
