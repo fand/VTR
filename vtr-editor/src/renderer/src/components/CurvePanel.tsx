@@ -10,6 +10,7 @@ import {
   hitPoint,
   tAt,
   vAt,
+  valueAt,
   visibleRange,
   xAt,
   yAt,
@@ -737,6 +738,26 @@ export function CurvePanel({
     h: number
   } | null>(null)
 
+  // A plain press on a curve line doesn't toggle the selection right away:
+  // the toggle waits SELECT_DELAY_MS so a double-click (point insert) never
+  // touches the selection, not even transiently. A second press nearby
+  // within the window drops it; any other press applies it first. (Chromium
+  // leaves pointerdown.detail at 0, so double presses are detected by hand.)
+  const pendingSel = useRef<{ timer: number; x: number; y: number; apply: () => void } | null>(
+    null
+  )
+  const SELECT_DELAY_MS = 300
+  const DBL_PX = 8
+
+  /** Clears the pending curve-select toggle; applies it unless dropped. */
+  const settlePendingSel = (drop: boolean): void => {
+    const pend = pendingSel.current
+    if (!pend) return
+    window.clearTimeout(pend.timer)
+    pendingSel.current = null
+    if (!drop) pend.apply()
+  }
+
   /** Pointer position in svg coordinates (follows both scroll axes). */
   const svgPos = (e: { clientX: number; clientY: number }): { x: number; y: number } => {
     const rect = editorRef.current!.getBoundingClientRect()
@@ -750,14 +771,17 @@ export function CurvePanel({
   // point supplies the event template (clip, port, other args); t is clamped
   // to that clip's span. addCount gives the clip overlay's current add count
   // (base + points added earlier in a stroke), which fixes the event index.
+  // With onCurve the value comes from the curve at t (the cursor's y is
+  // ignored), so an insert never nudges the curve.
   const makeAdd = (
     p: Property,
     pos: { x: number; y: number },
-    addCount: (file: string) => number
+    addCount: (file: string) => number,
+    onCurve = false
   ): PointAdd | null => {
     if (p.points.length === 0) return null
     const t = snapTime(tAt(scale, pos.x))
-    const v = snapValue(vAt(scale, p, pos.y), p.min, p.max)
+    const v = onCurve ? valueAt(p.points, t) : snapValue(vAt(scale, p, pos.y), p.min, p.max)
     let tpl = p.points[0]
     for (const pt of p.points) {
       if (Math.abs(pt.t - t) < Math.abs(tpl.t - t)) tpl = pt
@@ -778,9 +802,10 @@ export function CurvePanel({
     }
   }
 
-  /** Single insert (double-click / cmd+click): one point, one undo entry. */
+  /** Single insert (double-click / cmd+click): one point on the curve at the
+   *  clicked time, one undo entry. */
   const addPointAt = (p: Property, pos: { x: number; y: number }): void => {
-    const add = makeAdd(p, pos, (file) => edits[file]?.add?.length ?? 0)
+    const add = makeAdd(p, pos, (file) => edits[file]?.add?.length ?? 0, true)
     if (add) onPointAdd([add], true)
   }
 
@@ -830,7 +855,8 @@ export function CurvePanel({
   const interactiveProps = (): Property[] =>
     shown.filter((p) => !hidden.has(p.key) && !dimmed(p.key))
 
-  const pencilTarget = (): Property | undefined =>
+  /** The selected curve, if visible: pencil and cmd+click target it. */
+  const selectedCurve = (): Property | undefined =>
     shown.find((p) => selectedProps.has(p.key) && !hidden.has(p.key))
 
   const onEditorDown = (e: React.PointerEvent<HTMLDivElement>): void => {
@@ -840,6 +866,14 @@ export function CurvePanel({
       return
     }
     const pos = svgPos(e)
+    // A quick second press near a pending curve-select is a double-click:
+    // drop the toggle (the dblclick inserts a point instead). Any other
+    // press applies the pending toggle before it is handled.
+    const isDouble =
+      pendingSel.current != null &&
+      Math.abs(pos.x - pendingSel.current.x) < DBL_PX &&
+      Math.abs(pos.y - pendingSel.current.y) < DBL_PX
+    settlePendingSel(isDouble)
     const props = interactiveProps()
     // A point under the cursor: select / drag it (the group if selected).
     const ph = hitPoint(props, scale, pos, POINT_HIT_PX)
@@ -849,24 +883,40 @@ export function CurvePanel({
     }
     // A curve line: cmd+click inserts, pencil draws, plain click selects.
     const ch = hitCurve(props, scale, pos, CURVE_HIT_PX)
+    // Cmd+click inserts at the clicked time: on the curve under the cursor,
+    // else anywhere in the editor on the selected curve (y is ignored).
+    if (e.metaKey || e.ctrlKey) {
+      const target = (ch != null ? props[ch] : undefined) ?? selectedCurve()
+      if (target) addPointAt(target, pos)
+      return
+    }
     if (ch != null) {
       const p = props[ch]
-      if (e.metaKey || e.ctrlKey) {
-        addPointAt(p, pos)
-        return
-      }
       if (pencil) {
         // Pencil draws on the selected curve if any, else the one clicked.
-        beginDraw(pencilTarget() ?? p, pos)
+        beginDraw(selectedCurve() ?? p, pos)
         e.currentTarget.setPointerCapture(e.pointerId)
         return
       }
-      selectProp(p.key, e.shiftKey)
+      if (isDouble) return
+      // Defer the toggle: a second press within the window cancels it.
+      const key = p.key
+      const additive = e.shiftKey
+      const apply = (): void => selectProp(key, additive)
+      pendingSel.current = {
+        timer: window.setTimeout(() => {
+          pendingSel.current = null
+          apply()
+        }, SELECT_DELAY_MS),
+        x: pos.x,
+        y: pos.y,
+        apply
+      }
       return
     }
     // Pencil: click & drag draws points onto the selected curve. With
     // nothing selected it falls through to the normal marquee behavior.
-    const pt = pencil ? pencilTarget() : undefined
+    const pt = pencil ? selectedCurve() : undefined
     if (pt) {
       beginDraw(pt, pos)
       e.currentTarget.setPointerCapture(e.pointerId)
@@ -898,6 +948,8 @@ export function CurvePanel({
   /** Double-click on a curve line inserts a point (points themselves win). */
   const onEditorDoubleClick = (e: React.MouseEvent<HTMLDivElement>): void => {
     if (clips.length === 0) return
+    // Cmd+dblclick: both presses already inserted via cmd+click.
+    if (e.metaKey || e.ctrlKey) return
     const pos = svgPos(e)
     const props = interactiveProps()
     if (hitPoint(props, scale, pos, POINT_HIT_PX)) return
