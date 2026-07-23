@@ -699,12 +699,18 @@ test('curve panel: double-click / cmd+click on a curve inserts a point', async (
     }
 
     // Double-click the flat segment between the first two points (step-after:
-    // it sits at the first point's value). A point appears there, selected.
+    // it sits at the first point's value), a few px below the line. A point
+    // appears ON the curve at the clicked time — the cursor's y offset is
+    // ignored — and the two presses leave the property selection untouched.
     const c0 = await center(0)
     const c1 = await center(1)
-    await page.mouse.dblclick((c0.x + c1.x) / 2, c0.y)
+    await page.mouse.dblclick((c0.x + c1.x) / 2, c0.y + 4)
     await expectPointCount(page, 4)
     await expect(page.locator('circle.selected')).toHaveCount(1)
+    // Still unselected after the deferred-toggle window: the double-click
+    // dropped the pending select instead of toggling twice.
+    await page.waitForTimeout(400)
+    await expectPropSelected(page, '/fader', false)
     await page.keyboard.press('ControlOrMeta+s')
 
     const sidecar = join(workdir, `${CLIP}.edits.json`)
@@ -721,8 +727,22 @@ test('curve panel: double-click / cmd+click on a curve inserts a point', async (
     expect(added.a).toBe('/fader')
     expect(added.t).toBeGreaterThan(0.35)
     expect(added.t).toBeLessThan(0.65)
-    expect(added.args[0]).toBeGreaterThan(0.05)
-    expect(added.args[0]).toBeLessThan(0.15)
+    expect(added.args[0]).toBeCloseTo(0.1, 5)
+
+    // With the curve selected, a double-click still only inserts: the
+    // selection survives both presses. Select on one segment, dblclick on
+    // another so the presses don't chain into one triple-click.
+    const s0 = await center(0)
+    const s1 = await center(1)
+    await page.mouse.click((s0.x + s1.x) / 2, s0.y)
+    await expectPropSelected(page, '/fader', true)
+    const s2 = await center(2)
+    const s3 = await center(3)
+    await page.mouse.dblclick((s2.x + s3.x) / 2, s2.y)
+    await expectPointCount(page, 5)
+    await expectPropSelected(page, '/fader', true)
+    await page.keyboard.press('ControlOrMeta+z')
+    await expectPointCount(page, 4)
 
     // Cmd+click the next segment: one more point, no marquee side effects.
     const c2 = await center(2)
@@ -732,7 +752,22 @@ test('curve panel: double-click / cmd+click on a curve inserts a point', async (
     await page.keyboard.up('ControlOrMeta')
     await expectPointCount(page, 5)
 
+    // Cmd+click far off the line still inserts on the selected curve, at the
+    // curve's value at the clicked time (the cursor's y is ignored).
+    const f0 = await center(0)
+    const f1 = await center(1)
+    await page.keyboard.down('ControlOrMeta')
+    await page.mouse.click((f0.x + f1.x) / 2, f0.y - 60)
+    await page.keyboard.up('ControlOrMeta')
+    await expectPointCount(page, 6)
+    const offLine = (await curvePoints(page)).find(
+      (p) => p.t > 0.25 && p.t < 0.45 && Math.abs(p.v - 0.1) < 1e-6
+    )
+    expect(offLine).toBeTruthy()
+
     // Each insert is one undo step.
+    await page.keyboard.press('ControlOrMeta+z')
+    await expectPointCount(page, 5)
     await page.keyboard.press('ControlOrMeta+z')
     await expectPointCount(page, 4)
 

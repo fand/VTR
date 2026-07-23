@@ -6,6 +6,7 @@ import {
   hitPoint,
   tAt,
   vAt,
+  valueAt,
   visibleRange,
   xAt,
   yAt,
@@ -71,6 +72,19 @@ test('hitCurve hits horizontal and vertical step segments', () => {
   expect(
     hitCurve([p01([{ t: 5, v: 0.5 }])], s, { x: xJump, y: yAt(s, props[0], 0.5) }, 5)
   ).toBeNull()
+})
+
+test('valueAt evaluates the step-after curve', () => {
+  const pts = [
+    { t: 1, v: 0.1 },
+    { t: 2, v: 0.5 },
+    { t: 4, v: 0.9 }
+  ]
+  expect(valueAt(pts, 0)).toBe(0.1) // before the first point
+  expect(valueAt(pts, 1)).toBe(0.1) // at a point
+  expect(valueAt(pts, 1.5)).toBe(0.1) // on the flat run
+  expect(valueAt(pts, 3)).toBe(0.5)
+  expect(valueAt(pts, 9)).toBe(0.9) // after the last point
 })
 
 test('fitZoomX makes the target span the drawable width', () => {
