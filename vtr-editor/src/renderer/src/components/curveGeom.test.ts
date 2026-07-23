@@ -1,5 +1,16 @@
 import { expect, test } from 'vitest'
-import { PAD, hitCurve, hitPoint, tAt, vAt, visibleRange, xAt, yAt, type Scale } from './curveGeom'
+import {
+  PAD,
+  fitZoomX,
+  hitCurve,
+  hitPoint,
+  tAt,
+  vAt,
+  visibleRange,
+  xAt,
+  yAt,
+  type Scale
+} from './curveGeom'
 
 // 100px of drawable width/height (innerW/H = 120 with PAD 10 each side).
 const s: Scale = { tMin: 0, tRange: 10, innerW: 120, innerH: 120 }
@@ -60,6 +71,37 @@ test('hitCurve hits horizontal and vertical step segments', () => {
   expect(
     hitCurve([p01([{ t: 5, v: 0.5 }])], s, { x: xJump, y: yAt(s, props[0], 0.5) }, 5)
   ).toBeNull()
+})
+
+test('fitZoomX makes the target span the drawable width', () => {
+  const fit = fitZoomX(120, 0, 10, 2, 7, 50)
+  expect(fit).not.toBeNull()
+  const fs: Scale = { tMin: 0, tRange: 10, innerW: 120 * fit!.zoomX, innerH: 0 }
+  expect(xAt(fs, 7) - xAt(fs, 2)).toBeCloseTo(120 - 2 * PAD, 9)
+  // Centered target ≡ left edge at selT0.
+  expect(fit!.scrollLeft).toBeCloseTo(xAt(fs, 2) - PAD, 9)
+})
+
+test('fitZoomX clamps to 1 for the full time range', () => {
+  expect(fitZoomX(120, 0, 10, 0, 10, 50)).toEqual({ zoomX: 1, scrollLeft: 0 })
+})
+
+test('fitZoomX zooms to max and centers on a single point', () => {
+  const fit = fitZoomX(120, 0, 10, 5, 5, 50)
+  expect(fit!.zoomX).toBe(50)
+  const fs: Scale = { tMin: 0, tRange: 10, innerW: 6000, innerH: 0 }
+  expect(fit!.scrollLeft).toBeCloseTo(xAt(fs, 5) - 60, 9)
+})
+
+test('fitZoomX clamps scrollLeft at the domain edges', () => {
+  expect(fitZoomX(120, 0, 10, 0, 0, 50)!.scrollLeft).toBe(0)
+  expect(fitZoomX(120, 0, 10, 10, 10, 50)!.scrollLeft).toBe(6000 - 120)
+})
+
+test('fitZoomX returns null for unmeasured panel or empty target', () => {
+  expect(fitZoomX(0, 0, 10, 2, 7, 50)).toBeNull()
+  expect(fitZoomX(20, 0, 10, 2, 7, 50)).toBeNull()
+  expect(fitZoomX(120, 0, 10, 7, 2, 50)).toBeNull()
 })
 
 test('visibleRange widens by one point each side', () => {

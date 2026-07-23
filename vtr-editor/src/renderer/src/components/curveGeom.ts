@@ -32,6 +32,29 @@ export const vAt = (s: Scale, p: { min: number; max: number }, py: number): numb
     ? p.min
     : p.min + (1 - (py - PAD) / Math.max(s.innerH - 2 * PAD, 1)) * (p.max - p.min)
 
+/** X zoom + scrollLeft that make [selT0, selT1] span the viewport width.
+ *  Zoom clamps to [1, maxZoom]; a zero-width target zooms to maxZoom and
+ *  centers on it. Returns null when the panel is unmeasured or the target
+ *  is empty. */
+export function fitZoomX(
+  w: number,
+  tMin: number,
+  tRange: number,
+  selT0: number,
+  selT1: number,
+  maxZoom: number
+): { zoomX: number; scrollLeft: number } | null {
+  if (w <= 2 * PAD || selT1 < selT0) return null
+  const selRange = selT1 - selT0
+  // Solve (selRange / tRange) * (w * zoomX - 2 * PAD) = w - 2 * PAD.
+  const raw = selRange <= 0 ? maxZoom : ((w - 2 * PAD) * (tRange / selRange) + 2 * PAD) / w
+  const zoomX = Math.min(Math.max(raw, 1), maxZoom)
+  const s: Scale = { tMin, tRange, innerW: w * zoomX, innerH: 0 }
+  const mid = xAt(s, (selT0 + selT1) / 2)
+  const scrollLeft = Math.min(Math.max(mid - w / 2, 0), w * zoomX - w)
+  return { zoomX, scrollLeft }
+}
+
 /** Nearest point within `radius` px. Ties go to the later (topmost-drawn)
  *  property/point, matching the old SVG paint order. */
 export function hitPoint(

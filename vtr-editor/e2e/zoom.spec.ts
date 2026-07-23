@@ -2,6 +2,7 @@ import { _electron as electron, expect, test } from '@playwright/test'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { curvePoints } from './curveHooks'
 
 // Suite-specific ports so a running dev instance (default 10010-10012) never collides.
 const LISTEN_PORT = 14710
@@ -168,6 +169,74 @@ test('curve editor x/y zoom sliders scale the axes; y zoom scrolls vertically', 
     await page.getByLabel('y zoom').fill('0')
     await page.getByLabel('x zoom').fill('0')
     await expect.poll(overflow).toBeLessThanOrEqual(1)
+  } finally {
+    await app.close()
+  }
+})
+
+test('curve editor fit zoom fits all points, then the selected point', async () => {
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
+  // Points span 1s of a 10s clip → fit zoom ≈ 9.8×.
+  writeFileSync(
+    join(workdir, CLIP),
+    jsonl([
+      { type: 'session_start', t: 0, wall: '2026-07-16T00:00:00Z' },
+      { t: 4.5, port: LISTEN_PORT, a: '/a', args: [0.1] },
+      { t: 5.5, port: LISTEN_PORT, a: '/a', args: [0.9] },
+      { type: 'session_end', t: 10 }
+    ])
+  )
+  writeFileSync(
+    join(workdir, 'project.json'),
+    JSON.stringify({
+      version: 1,
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT },
+      duration: 10,
+      tracks: [{ clips: [{ file: CLIP, offset: 0, trimIn: 0, trimOut: 10 }] }]
+    })
+  )
+
+  const app = await electron.launch({
+    args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
+    cwd: workdir,
+    env: {
+      ...process.env,
+      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
+      OSC_EDITOR_HIDDEN: '1',
+      OSC_EDITOR_DATA_DIR: workdir
+    }
+  })
+  try {
+    const page = await app.firstWindow()
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
+    await page.locator('.clip').click()
+
+    const svg = page.locator('.curve-scroll svg.curve-under')
+    await expect(svg).toBeVisible()
+    const svgWidth = async (): Promise<number> => Number(await svg.getAttribute('width'))
+    const w0 = await svgWidth()
+
+    // No selection: fit all points. 1s of 10s → ~9.8×, scrolled to the middle.
+    await page.getByLabel('fit zoom').click()
+    await expect.poll(svgWidth).toBeGreaterThan(w0 * 8)
+    const scrollLeft = (): Promise<number> =>
+      page.locator('.curve-scroll').evaluate((el) => el.scrollLeft)
+    expect(await scrollLeft()).toBeGreaterThan(0)
+
+    // The points span the viewport width (minus PAD on each side).
+    const viewW = await page.locator('.curve-scroll').evaluate((el) => el.clientWidth)
+    const xs = (await curvePoints(page)).map((p) => p.x)
+    expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan(viewW - 25)
+
+    // Select one point: fit clamps to max zoom (50×) and centers on it.
+    const pt = (await curvePoints(page))[0]
+    await page.mouse.click(pt.x, pt.y)
+    await expect.poll(() => curvePoints(page).then((p) => p[0]?.selected)).toBe(true)
+    await page.getByLabel('fit zoom').click()
+    await expect.poll(svgWidth).toBeGreaterThan(w0 * 45)
+    const editor = (await page.locator('.curve-editor').boundingBox())!
+    const sel = (await curvePoints(page)).find((p) => p.selected)!
+    expect(Math.abs(sel.x - (editor.x + editor.width / 2))).toBeLessThan(5)
   } finally {
     await app.close()
   }
