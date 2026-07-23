@@ -186,7 +186,9 @@ fn push_play_emits_events_in_order() {
     assert_eq!(c.request(json!({"cmd": "load", "path": path}))["ok"], true);
 
     h.relay("192.0.2.1:9000", "/vtr/play", vec![]);
-    for want in [1.0, 2.0, 3.0] {
+    // Initial seek extends /a's first value before t=0.05; the pump then
+    // re-sends it when it crosses the event (full fidelity, no dedup).
+    for want in [1.0, 1.0, 2.0, 3.0] {
         let (addr, args) = h.recv_app();
         assert_eq!(addr, "/a");
         assert_eq!(float_of(&args), want);
@@ -347,10 +349,14 @@ fn resolve_returns_per_connection_deltas_with_dedup() {
     let mut c2 = h.connect();
     assert_eq!(c1.request(json!({"cmd": "load", "path": path}))["ok"], true);
 
-    // First resolve per connection: full catch-up (seek).
+    // First resolve per connection: full catch-up (seek). /b's first event
+    // is still ahead (5.2) -> its value extends backward.
     let r = c1.request(json!({"cmd": "resolve", "t": 5.1}));
     assert_eq!(r["mode"], "seek");
-    assert_eq!(r["events"], json!([[10010, "/a", [1.0]]]));
+    assert_eq!(
+        r["events"],
+        json!([[10010, "/a", [1.0]], [10010, "/b", [2.0]]])
+    );
 
     // Continuous forward: pump.
     let r = c1.request(json!({"cmd": "resolve", "t": 5.3}));
@@ -449,10 +455,14 @@ fn inline_load_replies_with_session_facts() {
     let st = c.request(json!({"cmd": "status"}));
     assert_eq!(st["status"]["loaded"], "(editor)");
 
-    // The inline session resolves like a file-loaded one.
+    // The inline session resolves like a file-loaded one; /b's first event
+    // (t=2.0) extends backward.
     let r = c.request(json!({"cmd": "resolve", "t": 1.5}));
     assert_eq!(r["ok"], true, "resp = {r}");
-    assert_eq!(r["events"], json!([[10010, "/a", [1.0]]]));
+    assert_eq!(
+        r["events"],
+        json!([[10010, "/a", [1.0]], [10010, "/b", [2.0]]])
+    );
 }
 
 #[test]

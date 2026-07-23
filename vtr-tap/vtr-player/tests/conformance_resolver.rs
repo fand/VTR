@@ -92,9 +92,27 @@ fn test_backward_reresolves_only_touched_addresses() {
     ]);
     let mut r = resolver(&s);
     r.step(3.0);
-    // Back to 1.0: /a returns to its 0.5s value; /late has nothing <= 1.0 -> silent;
-    // /idle untouched in (1.0, 3.0] -> not re-sent.
-    assert_eq!(r.step(1.0), vec![emit(10010, "/a", &[1.0])]);
+    // Back to 1.0: /a returns to its 0.5s value; /late (first event 2.5)
+    // extends its first value backward; /idle untouched in (1.0, 3.0] -> not re-sent.
+    assert_eq!(
+        r.step(1.0),
+        vec![emit(10010, "/a", &[1.0]), emit(10010, "/late", &[7.0])]
+    );
+}
+
+#[test]
+fn test_seek_before_first_event_extends_first_value() {
+    // TODO example: data points only in t=10..20; seek to t=1 resolves the t=10 value.
+    let s = load(&[ev(10.0, "/curve", &[0.25]), ev(20.0, "/curve", &[0.75])]);
+    let mut r = resolver(&s);
+    assert_eq!(r.step(1.0), vec![emit(10010, "/curve", &[0.25])]);
+}
+
+#[test]
+fn test_trigger_stays_silent_before_first_event_on_seek() {
+    let s = load(&[ev(10.0, "/kick", &[1.0])]);
+    let mut r = Resolver::new(s.clone(), Some(&is_kick), 0.5);
+    assert_eq!(r.step(1.0), vec![]);
 }
 
 #[test]

@@ -147,8 +147,11 @@ test('preview replays events to TD port with original spacing', async () => {
     collecting = true
     await page.getByRole('button', { name: 'Play' }).click()
     await sleep(2800) // playback (2s timeline) + margin
-    expect(received.length).toBe(10)
-    const span = received[received.length - 1].at - received[0].at
+    // 10 recorded events + 1: the start-of-play seek extends the first
+    // value before its data point (same value as event 1).
+    expect(received.length).toBe(11)
+    const pumped = received.slice(1)
+    const span = pumped[pumped.length - 1].at - pumped[0].at
     expect(span).toBeGreaterThan(700)
     expect(span).toBeLessThan(1400)
     expect(received[0].addr).toContain('/fader')

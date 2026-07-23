@@ -11,8 +11,9 @@
 //!   address, triggers suppressed. Steps with a known previous state only
 //!   re-resolve the addresses touched in between.
 //!
-//! An address with no event <= pos emits nothing on seek: its pre-session
-//! state is unknowable from the file.
+//! On seek, an address whose events all lie after pos clamps to its first
+//! event: values extend flat before the first data point, like DAW
+//! automation left of its first point. Triggers stay suppressed.
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
@@ -117,9 +118,9 @@ impl Resolver {
                 continue;
             }
             let j = self.session.addr_t[k].partition_point(|&x| x <= pos);
-            if j > 0 {
-                chosen.push(self.session.addr_events[k][j - 1]);
-            }
+            // j == 0: pos precedes every event -> clamp to the first one
+            // (values extend flat before the first data point).
+            chosen.push(self.session.addr_events[k][j.saturating_sub(1)]);
         }
         chosen.sort_unstable(); // deterministic, time-ordered
         chosen.into_iter().map(|i| self.emit(i)).collect()
@@ -284,6 +285,22 @@ mod tests {
         assert_eq!(r2.step(2.0).1.len(), 0);
         // A changed value still emits.
         assert_eq!(r2.step(3.5).1.len(), 1);
+    }
+
+    #[test]
+    fn seek_before_first_event_emits_once_then_dedups() {
+        let s = load(&[ev(10.0, "/a", vec![5.0])]);
+        let mut r = dedup(&s);
+        // Seek before the first data point: extended first value emitted.
+        let (mode, emits) = r.step(1.0);
+        assert_eq!(mode, Mode::Seek);
+        assert_eq!(emits.len(), 1);
+        assert_eq!(emits[0].2[0].as_f64().unwrap(), 5.0);
+        // Jump past the event, then scrub back before it: catch-up
+        // re-resolves /a to the same value -> deduped, quiet.
+        assert_eq!(r.step(11.0).1, vec![]);
+        assert_eq!(r.step(2.0).1, vec![]);
+        assert_eq!(r.step(1.0).1, vec![]);
     }
 
     #[test]
