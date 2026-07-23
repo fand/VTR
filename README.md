@@ -74,7 +74,7 @@ play/stop from either side — or a controller's `/vtr/*` — propagates to
 the others. Each write carries an `origin` and bumps a generation counter
 `gen`; a follower applies a change only when `gen` moved and the origin is
 not its own (echo suppression), and concurrent writers are arbitrated by a
-short hold window (last-touched wins). See `docs/tasks/tl-sync/`.
+short hold window (last-touched wins).
 
 With `--td-notify <addr>` the tap additionally reports every rec state
 change — regardless of initiator — as plain unwrapped OSC to that address:
