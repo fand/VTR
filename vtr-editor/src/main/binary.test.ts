@@ -17,8 +17,8 @@ const fakeFs = (
 })
 
 const bundled = '/App.app/Contents/Resources/bin/vtr-tap'
-const release = join('/repo/vtr-editor', '../vtr-tap/target/release/vtr-tap')
-const debug = join('/repo/vtr-editor', '../vtr-tap/target/debug/vtr-tap')
+const release = join('/repo/vtr-editor', '../target/release/vtr-tap')
+const debug = join('/repo/vtr-editor', '../target/debug/vtr-tap')
 
 test('packaged: bundled binary wins over dev builds', () => {
   const fs = fakeFs({ [bundled]: 1, [release]: 999 })
@@ -50,7 +50,7 @@ test('env override wins and must exist', () => {
 
 test('name selects the binary in every location', () => {
   const playerBundled = '/App.app/Contents/Resources/bin/vtr-player'
-  const playerRelease = join('/repo/vtr-editor', '../vtr-tap/target/release/vtr-player')
+  const playerRelease = join('/repo/vtr-editor', '../target/release/vtr-player')
   expect(
     findBinary(
       'vtr-player',

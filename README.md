@@ -7,7 +7,7 @@ VJs' Timeline Recorder. Record, edit, and replay OSC for VJ performance archival
 ## Components
 
 - **vtr-tap** (Rust): UDP proxy that forwards OSC unchanged to TD and logs parsed copies as JSONL. Control messages arrive on the listen port under the `/vtr` prefix: `/vtr/clock` stamps TD-timeline time (`tl`), `/vtr/rec*` starts/stops clips, and every `/vtr/*` datagram is relayed to vtr-player. Default ports: listen 10010, forward 127.0.0.1:10011, relay 127.0.0.1:10013.
-- **vtr-player** (Rust, `vtr-tap/vtr-player/`): resolver server. Replays a `session.jsonl` to the VJ app (push transport driven by relayed `/vtr/play|stop|seek`), answers per-frame sync queries over a unix socket (for TD), primes punch-in state, and echoes rec state to controllers (`source IP : echo port`). Protocol: "OSC control" below.
+- **vtr-player** (Rust, `vtr-player/`): resolver server. Replays a `session.jsonl` to the VJ app (push transport driven by relayed `/vtr/play|stop|seek`), answers per-frame sync queries over a unix socket (for TD), primes punch-in state, and echoes rec state to controllers (`source IP : echo port`). Protocol: "OSC control" below.
 - **vtr-editor** (Electron): DAW-style editor. Records clips via vtr-tap, arranges them on tracks, exports a merged `session.jsonl`. Spawns and monitors both vtr-tap and vtr-player, and delegates preview playback to the player (inline session load with routes + transport writes) — the player's resolver emits all preview OSC, so preview and replay behave identically, and sync clients follow the same transport.
 - **vtr.tox** (TouchDesigner, `td/`): mode-switched sync client. `record` follows VTR — the tap's rec notifications (`--td-notify`, default 127.0.0.1:10014) seek TD's timeline and start playback, while the tox beacons `/vtr/clock` back. `player` blocks each frame on a `resolve` query to vtr-player and applies the delta before the cook; position source is the TD timeline (deterministic offline rendering), the player transport (`follow` — tracks the editor preview live, no export needed), or bidirectional `sync` (seeking in TD or the editor propagates both ways). Build & docs: `td/README.md`.
 
@@ -21,12 +21,11 @@ VJs' Timeline Recorder. Record, edit, and replay OSC for VJ performance archival
 ## Development
 
 ```sh
-# tap + player (one cargo workspace)
-cd vtr-tap
+# tap + player (one cargo workspace at the repo root)
 cargo test                    # unit + e2e + conformance, both crates
 cargo test --release -- --ignored   # 120Hz soak
 
-# editor (spawns tap from ../vtr-tap/target)
+# editor (spawns tap + player from ../target)
 cd vtr-editor
 npm install
 npm run dev                   # optionally: -- path/to/project.oscproj

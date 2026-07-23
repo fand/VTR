@@ -17,10 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: vtr-tap
       - run: cargo test
-        working-directory: vtr-tap
 
   editor-checks:
     name: vtr-editor (lint / typecheck / unit)
@@ -53,12 +50,9 @@ jobs:
           cache: npm
           cache-dependency-path: vtr-editor/package-lock.json
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: vtr-tap
       # e2e specs point VTR_TAP_BIN / VTR_PLAYER_BIN at the debug binaries;
-      # the workspace default-members build both.
+      # a workspace build produces both.
       - run: cargo build
-        working-directory: vtr-tap
       - run: npm ci
         working-directory: vtr-editor
       - run: npm run test:e2e

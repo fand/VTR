@@ -39,10 +39,10 @@ async function launchApp(): Promise<{ app: ElectronApplication; page: Page; work
     cwd: workdir,
     env: {
       ...process.env,
-      VTR_TAP_BIN: join(__dirname, '../../vtr-tap/target/debug/vtr-tap'),
+      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
       // Preview is delegated to vtr-player; findBinary can't see the cargo
       // tree from out/main, so point straight at the debug build.
-      VTR_PLAYER_BIN: join(__dirname, '../../vtr-tap/target/debug/vtr-player'),
+      VTR_PLAYER_BIN: join(__dirname, '../../target/debug/vtr-player'),
       OSC_EDITOR_HIDDEN: '1',
       OSC_EDITOR_DATA_DIR: workdir
     }
