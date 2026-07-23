@@ -33,22 +33,11 @@ import {
   recordingWarning,
   clipLen,
   contentEnd,
+  formatTimecode,
   markersFromProject,
   serializeProject,
   tracksFromProject
 } from './timeline/model'
-
-function pad(n: number, w: number): string {
-  return String(n).padStart(w, '0')
-}
-
-function formatTimecode(s: number): string {
-  const h = Math.floor(s / 3600)
-  const m = Math.floor(s / 60) % 60
-  const sec = Math.floor(s) % 60
-  const ms = Math.floor(s * 1000) % 1000
-  return `${pad(h, 2)}:${pad(m, 2)}:${pad(sec, 2)}.${pad(ms, 3)}`
-}
 
 function Timecode({
   recStartedAt,
