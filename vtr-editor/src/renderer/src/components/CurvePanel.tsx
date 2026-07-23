@@ -332,6 +332,10 @@ export function CurvePanel({
     if (!el || !a) return
     pinchAnchor.current = null
     el.scrollLeft = PAD + a.norm * (w * zoomX - 2 * PAD) - a.viewX
+    // Sync the state before paint: the ruler and playhead sit outside the
+    // scroll container and translate by this value; waiting for the scroll
+    // event would paint one frame with the new scale but the old offset.
+    setScrollLeft(el.scrollLeft)
   }, [zoomX, w])
 
   // Load events for every shown clip. Keyed by the joined paths so a new
