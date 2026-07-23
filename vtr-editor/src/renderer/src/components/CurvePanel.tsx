@@ -1,9 +1,20 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Magnet, Pencil, SquareDashed } from 'lucide-react'
+import { Magnet, Maximize2, Pencil, SquareDashed } from 'lucide-react'
 import { applyEditsIndexed } from '../../../shared/edits'
 import type { ClipEdits, OscEvent } from '../../../shared/types'
 import { ClipInst, clipLen, formatRulerLabel } from '../timeline/model'
-import { PAD, hitCurve, hitPoint, tAt, vAt, visibleRange, xAt, yAt, type Scale } from './curveGeom'
+import {
+  PAD,
+  fitZoomX,
+  hitCurve,
+  hitPoint,
+  tAt,
+  vAt,
+  visibleRange,
+  xAt,
+  yAt,
+  type Scale
+} from './curveGeom'
 import { eventsCache } from './eventsCache'
 import type { PlayingState } from './Timeline'
 
@@ -305,6 +316,8 @@ export function CurvePanel({
   // Normalized time position under the cursor at pinch start; scroll is
   // restored after the zoomed width renders so that point stays put.
   const pinchAnchor = useRef<{ norm: number; viewX: number } | null>(null)
+  // scrollLeft to apply after a fit-zoom re-render, same timing as the pinch.
+  const fitScroll = useRef<number | null>(null)
 
   useEffect(() => {
     const el = editorRef.current
@@ -328,10 +341,16 @@ export function CurvePanel({
 
   useLayoutEffect(() => {
     const el = scrollRef.current
+    if (!el) return
     const a = pinchAnchor.current
-    if (!el || !a) return
-    pinchAnchor.current = null
-    el.scrollLeft = PAD + a.norm * (w * zoomX - 2 * PAD) - a.viewX
+    const f = fitScroll.current
+    if (a) {
+      pinchAnchor.current = null
+      el.scrollLeft = PAD + a.norm * (w * zoomX - 2 * PAD) - a.viewX
+    } else if (f != null) {
+      fitScroll.current = null
+      el.scrollLeft = f
+    } else return
     // Sync the state before paint: the ruler and playhead sit outside the
     // scroll container and translate by this value; waiting for the scroll
     // event would paint one frame with the new scale but the old offset.
@@ -420,6 +439,41 @@ export function CurvePanel({
   const y = (p: Property, v: number): number => yAt(scale, p, v)
 
   const selKeys = useMemo(() => new Set(selectedPoints.map(selKey)), [selectedPoints])
+
+  // Fit the X zoom to the selected points, else the selected curves (via
+  // dimmed()), else everything shown. Vertical zoom stays put.
+  const fitZoom = (): void => {
+    const span = (usePointSel: boolean): [number, number] => {
+      let t0 = Infinity
+      let t1 = -Infinity
+      for (const p of shown) {
+        if (hidden.has(p.key) || dimmed(p.key)) continue
+        for (const pt of p.points) {
+          if (usePointSel && !selKeys.has(selKey(ptSel(pt)))) continue
+          t0 = Math.min(t0, pt.t)
+          t1 = Math.max(t1, pt.t)
+        }
+      }
+      return [t0, t1]
+    }
+    let [t0, t1] = span(selKeys.size > 0)
+    // Selected points all on hidden/dimmed curves: fit the visible ones.
+    if (t1 < t0 && selKeys.size > 0) [t0, t1] = span(false)
+    if (t1 < t0) return // nothing to fit
+    const fit = fitZoomX(w, tMin, tRange, t0, t1, MAX_ZOOM)
+    if (!fit) return
+    if (fit.zoomX === zoomX) {
+      // No re-render coming, so the layout effect won't fire; scroll directly.
+      const el = scrollRef.current
+      if (el) {
+        el.scrollLeft = fit.scrollLeft
+        setScrollLeft(el.scrollLeft)
+      }
+    } else {
+      fitScroll.current = fit.scrollLeft
+      setZoomX(fit.zoomX)
+    }
+  }
 
   // Snap on: dragged times/values lock onto the same grid the editor draws.
   const snapTime = (t: number): number => {
@@ -1094,6 +1148,9 @@ export function CurvePanel({
           <Pencil size={14} />
         </button>
         <div className="spacer" />
+        <button className="btn small snap" data-tip="Fit zoom" aria-label="fit zoom" onClick={fitZoom}>
+          <Maximize2 size={14} />
+        </button>
         <span className="curve-zoom-label">X</span>
         <input
           className="zoom-slider curve-zoom"
