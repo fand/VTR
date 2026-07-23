@@ -96,8 +96,11 @@ test('curve panel: properties per address/arg, visibility toggle', async () => {
     await expect(
       page.locator('.curve-ylabels .curve-grid-label').filter({ hasText: /^1\.0$/ })
     ).toHaveCount(1)
-    // Time axis labels sit at the top, in the ruler's format ("1s", not "1.0s").
-    const oneSec = page.locator('.curve-grid-label').filter({ hasText: /^1s$/ }).first()
+    // Time axis labels sit at the top, in the ruler's timecode format.
+    const oneSec = page
+      .locator('.curve-grid-label')
+      .filter({ hasText: /^00:00:01(\.000)?$/ })
+      .first()
     await expect(oneSec).toBeVisible()
     expect((await oneSec.boundingBox())!.y - editorBox.y).toBeLessThan(20)
 
@@ -1065,7 +1068,7 @@ test('curve seekbar: labels, click/scrub seeks, playhead tracks the timeline', a
     // Time labels live in the seekbar row, not the grid svg.
     const ruler = page.locator('.curve-ruler')
     await expect(
-      ruler.locator('.curve-ruler-mark').filter({ hasText: /^1s$/ }).first()
+      ruler.locator('.curve-ruler-mark').filter({ hasText: /^00:00:01(\.000)?$/ }).first()
     ).toBeVisible()
     await expect(page.locator('.curve-scroll svg text')).toHaveCount(0)
 
