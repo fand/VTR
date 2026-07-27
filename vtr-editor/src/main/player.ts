@@ -1,7 +1,13 @@
 import { ChildProcess, spawn } from 'child_process'
 import net from 'net'
 import { join } from 'path'
-import { RELAY_PORT, type OscEvent, type PlayerStatus, type TransportState } from '../shared/types'
+import {
+  RELAY_PORT,
+  type ClipCurve,
+  type OscEvent,
+  type PlayerStatus,
+  type TransportState
+} from '../shared/types'
 
 const REQUEST_TIMEOUT_MS = 3000
 /** Long-poll requests (watch) must outlive vtr-player's ~1s server timeout. */
@@ -210,6 +216,7 @@ export class PlayerManager {
   /** Last inline load, re-pushed after a respawn (a restarted player is empty). */
   private lastLoad: {
     events: OscEvent[]
+    curves: ClipCurve[]
     duration: number
     routes: Record<string, number>
   } | null = null
@@ -250,7 +257,7 @@ export class PlayerManager {
     // waits out the player's startup.
     const l = this.lastLoad
     if (l) {
-      this.loadInline(l.events, l.duration, l.routes).catch((e) =>
+      this.loadInline(l.events, l.curves, l.duration, l.routes).catch((e) =>
         console.log(`residency re-push failed: ${(e as Error).message}`)
       )
     }
@@ -279,12 +286,14 @@ export class PlayerManager {
    */
   async loadInline(
     events: OscEvent[],
+    curves: ClipCurve[],
     duration: number,
     routes: Record<string, number>
   ): Promise<void> {
-    this.lastLoad = { events, duration, routes }
+    this.lastLoad = { events, curves, duration, routes }
     await this.request('load', {
-      events,
+      // Curve lines ride the same array; the player parses them by `type`.
+      events: [...events, ...curves.map((c) => ({ type: 'curve', ...c }))],
       duration,
       routes,
       name: '(editor)',

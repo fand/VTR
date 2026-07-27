@@ -108,7 +108,7 @@ test('preview sync methods send the control cmds', async () => {
     reply({ ok: true })
   })
   const events = [{ t: 0.5, port: 10010, a: '/x', types: 'f', args: [0.1] }]
-  await player.loadInline(events, 12.5, { '10010': 10011 })
+  await player.loadInline(events, [], 12.5, { '10010': 10011 })
   await player.seek(2.5)
   await player.play()
   await player.stopTransport()
@@ -152,7 +152,7 @@ test('spawn re-pushes the last inline load (a respawned player is empty)', async
     reply({ ok: true })
   })
   const events = [{ t: 0.5, port: 10010, a: '/x', types: 'f', args: [0.1] }]
-  await player.loadInline(events, 5, { '10010': 10011 })
+  await player.loadInline(events, [], 5, { '10010': 10011 })
   player.spawnPlayer() // respawn path; the fake server stands in for the new player
   await vi.waitFor(() => expect(seen.filter((r) => r.cmd === 'load')).toHaveLength(2))
   expect(seen[1]).toMatchObject({ cmd: 'load', events, duration: 5, keep: true })
