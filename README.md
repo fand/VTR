@@ -141,6 +141,24 @@ Clip and `session.jsonl` event lines share one schema:
 - `types` is absent in clips recorded before the field existed and in
   editor-added events; fall back to guessing (`i` if integral, else `f`).
 
+Sessions may also carry bezier **curve lines** (editor-made; recordings are
+always discrete events):
+
+```json
+{"type":"curve","port":10000,"a":"/fader","arg":0,"types":"ff","args":[0.42,2.0],
+ "knots":[{"t":0.0,"v":0.1,"o":[0.15,0.0]},{"t":1.0,"v":0.8,"i":[-0.2,0.05]}]}
+```
+
+A curve controls `args[arg]` of one address over the knots' time span.
+Consecutive knots span one cubic bezier: `p1 = knot + o`, `p2 = next + i`
+(handle offsets `[dt, dv]`; missing handle = linear). Knot `t` is strictly
+increasing and handle `dt` stays within its segment (readers clamp). The
+player emits the message template `args` with `args[arg]` replaced by the
+interpolated value, one sample per resolve step; curves on the same
+`(port, a)` with different `arg` merge into one message. Outside its span a
+curve extends flat, like discrete data on seek. Players from before this
+field skip curve lines (unknown `type`).
+
 Session files wrap events in `{"type":"session_start",...}` /
 `{"type":"session_end","t":...}` marker lines. `session_start` carries
 `tl` (timeline seconds at clip start) when the clock is known. Clips recorded
