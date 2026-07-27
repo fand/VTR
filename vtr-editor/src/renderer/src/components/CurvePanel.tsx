@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Magnet, Maximize2, Pencil, SquareDashed } from 'lucide-react'
+import { Magnet, Maximize2, Pencil, Spline, SquareDashed } from 'lucide-react'
+import { clipCurve, segmentCtrl } from '../../../shared/curve'
 import { applyEditsIndexed } from '../../../shared/edits'
-import type { ClipEdits, OscEvent } from '../../../shared/types'
+import type { ClipCurve, ClipEdits, CurveKnot, OscEvent } from '../../../shared/types'
 import { ClipInst, clipLen, formatRulerLabel } from '../timeline/model'
+import { MIN_FIT_POINTS, buildCurveReplace } from './curveReplace'
 import {
   PAD,
   fitZoomX,
@@ -29,12 +31,20 @@ declare global {
       selected: boolean
       dimmed: boolean
       pointCount: number
+      curveCount: number
     }[]
     __curvePoints?: {
       label: string
       x: number
       y: number
       selected: boolean
+      t: number
+      v: number
+    }[]
+    __curveKnots?: {
+      label: string
+      x: number
+      y: number
       t: number
       v: number
     }[]
@@ -101,12 +111,20 @@ interface CurvePoint {
   ev: OscEvent
 }
 
+/** One overlay curve drawn on a property: timeline-space knots, already
+ *  trim-clipped to its clip. */
+interface PropCurve {
+  clip: ClipInst
+  knots: CurveKnot[]
+}
+
 interface Property {
   /** `${addr} ${argIndex}` — stable id, never shown. */
   key: string
   label: string
   color: string
   points: CurvePoint[]
+  curves: PropCurve[]
   min: number
   max: number
 }
@@ -116,6 +134,7 @@ function buildProperties(
   edits: Record<string, ClipEdits>
 ): Property[] {
   const byKey = new Map<string, CurvePoint[]>()
+  const curvesByKey = new Map<string, PropCurve[]>()
   const argCount = new Map<string, number>()
   for (const { clip, events } of clipEvents) {
     for (const { ev, idx } of applyEditsIndexed(events, edits[clip.file])) {
@@ -136,6 +155,21 @@ function buildProperties(
         })
       })
     }
+    const clipEdits = edits[clip.file]
+    clipEdits?.curves?.forEach((c, ci) => {
+      if (clipEdits.curveDel?.[ci]) return
+      const clipped = clipCurve(c.knots, clip.trimIn, clip.trimOut)
+      if (!clipped) return
+      argCount.set(c.a, Math.max(argCount.get(c.a) ?? 1, c.args.length))
+      const key = `${c.a} ${c.arg}`
+      if (!byKey.has(key)) byKey.set(key, [])
+      let list = curvesByKey.get(key)
+      if (!list) curvesByKey.set(key, (list = []))
+      list.push({
+        clip,
+        knots: clipped.map((k) => ({ ...k, t: clip.offset + (k.t - clip.trimIn) }))
+      })
+    })
   }
   // Sort by address, then arg index, so the list order is stable and scannable.
   const sorted = [...byKey.entries()].sort(([a], [b]) => {
@@ -145,6 +179,7 @@ function buildProperties(
   })
   return sorted.map(([key, points], i) => {
     points.sort((a, b) => a.t - b.t)
+    const curves = curvesByKey.get(key) ?? []
     const [addr, argIdx] = key.split(' ')
     const label = (argCount.get(addr) ?? 1) > 1 ? `${addr}[${argIdx}]` : addr
     // Value axis defaults to 0..1; data outside widens it.
@@ -154,7 +189,17 @@ function buildProperties(
       min = Math.min(min, p.v)
       max = Math.max(max, p.v)
     }
-    return { key, label, color: propColor(i), points, min, max }
+    // Control points bound a bezier (convex hull), so knot + handle values
+    // are a safe extent for the curve itself.
+    for (const pc of curves) {
+      for (const k of pc.knots) {
+        for (const v of [k.v, k.v + (k.i?.[1] ?? 0), k.v + (k.o?.[1] ?? 0)]) {
+          min = Math.min(min, v)
+          max = Math.max(max, v)
+        }
+      }
+    }
+    return { key, label, color: propColor(i), points, curves, min, max }
   })
 }
 
@@ -268,7 +313,8 @@ export function CurvePanel({
   selectedPoints,
   onSelectPoints,
   onPointEdit,
-  onPointAdd
+  onPointAdd,
+  onCurveReplace
 }: {
   /** Every clip whose events are shown; empty shows the placeholder. */
   clips: ClipInst[]
@@ -285,6 +331,11 @@ export function CurvePanel({
   /** Appends events to the clips' edit overlays. A pencil stroke streams
    *  single adds (transient) and re-sends the whole batch with isCommit. */
   onPointAdd: (adds: PointAdd[], isCommit: boolean) => void
+  /** Replaces points atomically: one undo entry for the deletes + curve adds. */
+  onCurveReplace: (
+    dels: { file: string; eventIndex: number }[],
+    adds: { file: string; curve: ClipCurve }[]
+  ) => void
 }): React.JSX.Element {
   // Events per clip path; the cache never goes stale (files are immutable).
   const [loaded, setLoaded] = useState<Map<string, OscEvent[]>>(new Map())
@@ -440,6 +491,39 @@ export function CurvePanel({
   const y = (p: Property, v: number): number => yAt(scale, p, v)
 
   const selKeys = useMemo(() => new Set(selectedPoints.map(selKey)), [selectedPoints])
+
+  // Replace with Curve targets: the selected points, else the selected
+  // properties' full point sets. Each (property, clip) group needs
+  // MIN_FIT_POINTS to convert; smaller groups are left alone.
+  const replaceTargets = (): CurvePoint[] => {
+    const usePointSel = selKeys.size > 0
+    const chosen: CurvePoint[] = []
+    for (const p of shown) {
+      if (hidden.has(p.key) || dimmed(p.key)) continue
+      if (!usePointSel && !selectedProps.has(p.key)) continue
+      const byClip = new Map<number, CurvePoint[]>()
+      for (const pt of p.points) {
+        if (usePointSel && !selKeys.has(selKey(ptSel(pt)))) continue
+        let list = byClip.get(pt.clip.id)
+        if (!list) byClip.set(pt.clip.id, (list = []))
+        list.push(pt)
+      }
+      for (const pts of byClip.values()) {
+        if (pts.length >= MIN_FIT_POINTS) chosen.push(...pts)
+      }
+    }
+    return chosen
+  }
+  const canReplace = clips.length > 0 && replaceTargets().length > 0
+
+  const replaceWithCurve = (): void => {
+    const targets = replaceTargets()
+    if (targets.length === 0) return
+    const rep = buildCurveReplace(
+      targets.map((pt) => ({ file: pt.clip.file, eventIndex: pt.eventIndex, ev: pt.ev }))
+    )
+    if (rep) onCurveReplace(rep.dels, rep.adds)
+  }
 
   // Fit the X zoom to the selected points, else the selected curves (via
   // dimmed()), else everything shown. Vertical zoom stays put.
@@ -1098,7 +1182,8 @@ export function CurvePanel({
       label: p.label,
       selected: selectedProps.has(p.key),
       dimmed: dimmed(p.key),
-      pointCount: p.points.length
+      pointCount: p.points.length,
+      curveCount: p.curves.length
     }))
     window.__curvePoints = rect
       ? drawn
@@ -1112,6 +1197,21 @@ export function CurvePanel({
               t: pt.t,
               v: pt.v
             }))
+          )
+      : []
+    window.__curveKnots = rect
+      ? drawn
+          .filter((p) => !dimmed(p.key))
+          .flatMap((p) =>
+            p.curves.flatMap((pc) =>
+              pc.knots.map((k) => ({
+                label: p.label,
+                x: rect.left + x(k.t) - sl,
+                y: rect.top + y(p, k.v) - st,
+                t: k.t,
+                v: k.v
+              }))
+            )
           )
       : []
     const canvas = canvasRef.current
@@ -1161,6 +1261,34 @@ export function CurvePanel({
         ctx.fill()
       }
     }
+    // Bezier overlays: the y map is affine, so mapping the control points
+    // maps the curve. Knots draw as squares to read apart from points.
+    for (const p of drawn) {
+      if (p.curves.length === 0) continue
+      const dim = dimmed(p.key)
+      ctx.globalAlpha = dim ? 0.1 : 1
+      ctx.strokeStyle = p.color
+      ctx.lineWidth = selectedProps.has(p.key) ? 3 : 1.5
+      for (const pc of p.curves) {
+        const kn = pc.knots
+        if (kn[0].t > t1 || kn[kn.length - 1].t < t0) continue
+        ctx.beginPath()
+        ctx.moveTo(x(kn[0].t), y(p, kn[0].v))
+        for (let i = 1; i < kn.length; i++) {
+          const [, p1, p2, p3] = segmentCtrl(kn[i - 1], kn[i])
+          ctx.bezierCurveTo(x(p1.x), y(p, p1.y), x(p2.x), y(p, p2.y), x(p3.x), y(p, p3.y))
+        }
+        ctx.stroke()
+        if (!dim) {
+          ctx.fillStyle = p.color
+          ctx.beginPath()
+          for (const k of kn) {
+            ctx.rect(x(k.t) - 3, y(p, k.v) - 3, 6, 6)
+          }
+          ctx.fill()
+        }
+      }
+    }
     ctx.globalAlpha = 1
   }
   const paintRef = useRef(paint)
@@ -1198,6 +1326,15 @@ export function CurvePanel({
           onClick={() => setPencil((p) => !p)}
         >
           <Pencil size={14} />
+        </button>
+        <button
+          className="btn small snap"
+          data-tip="Replace with Curve"
+          aria-label="replace with curve"
+          disabled={!canReplace}
+          onClick={replaceWithCurve}
+        >
+          <Spline size={14} />
         </button>
         <div className="spacer" />
         <button className="btn small snap" data-tip="Fit zoom" aria-label="fit zoom" onClick={fitZoom}>

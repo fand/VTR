@@ -5,6 +5,7 @@ import {
   DEFAULT_PORTS,
   normalizePorts,
   isValidEchoHost,
+  type ClipCurve,
   type LoadedProject,
   type PlayerStatus,
   type PortConfig,
@@ -1247,6 +1248,29 @@ function App(): React.JSX.Element {
     [commit, transient]
   )
 
+  // Replace with Curve: one undo entry deletes the covered events and
+  // appends the fitted curves to the clips' overlays.
+  const onCurveReplace = useCallback(
+    (
+      dels: { file: string; eventIndex: number }[],
+      adds: { file: string; curve: ClipCurve }[]
+    ) => {
+      if (adds.length === 0) return
+      commit(`${count(dels.length, 'point')} replaced with curve`, (d) => {
+        for (const { file, eventIndex } of dels) {
+          const clipEdits = (d.edits[file] ??= {})
+          ;(clipEdits.del ??= {})[eventIndex] = true
+        }
+        for (const { file, curve } of adds) {
+          const clipEdits = (d.edits[file] ??= {})
+          ;(clipEdits.curves ??= []).push(curve)
+        }
+      })
+      setSelectedPoints([])
+    },
+    [commit]
+  )
+
   const deleteSelectedPoints = useCallback(() => {
     if (selectedPoints.length === 0) return
     commit(`${count(selectedPoints.length, 'point')} deleted`, (d) => {
@@ -1714,6 +1738,7 @@ function App(): React.JSX.Element {
         onSelectPoints={setSelectedPoints}
         onPointEdit={onPointEdit}
         onPointAdd={onPointAdd}
+        onCurveReplace={onCurveReplace}
       />
       <StatusBar hoverTime={hoverTime} selection={selection} log={log} />
       <TooltipLayer />

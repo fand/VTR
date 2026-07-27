@@ -18,7 +18,10 @@ test('export keeps types when present, omits the key when absent', () => {
   }
   const out = join(dir, 'session.jsonl')
   exportSession((f) => join(dir, f), project, out)
-  const lines = readFileSync(out, 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+  const lines = readFileSync(out, 'utf8')
+    .trim()
+    .split('\n')
+    .map((l) => JSON.parse(l))
   const [x, y] = lines.filter((l) => !l.type)
   expect(x.types).toBe('fi')
   expect(x.args).toEqual([0.5, 2])
@@ -51,7 +54,10 @@ test('export writes curve lines between the events and the trailer', () => {
   }
   const out = join(dir, 'session.jsonl')
   exportSession((f) => join(dir, f), project, out)
-  const lines = readFileSync(out, 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+  const lines = readFileSync(out, 'utf8')
+    .trim()
+    .split('\n')
+    .map((l) => JSON.parse(l))
   const curve = lines.find((l) => l.type === 'curve')
   expect(curve).toBeDefined()
   expect(curve.a).toBe('/x')
