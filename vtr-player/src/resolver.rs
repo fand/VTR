@@ -14,6 +14,17 @@
 //! On seek, an address whose events all lie after pos clamps to its first
 //! event: values extend flat before the first data point, like DAW
 //! automation left of its first point. Triggers stay suppressed.
+//!
+//! Bezier curves (session `type:"curve"` lines) resolve alongside events:
+//! - Pump: after the recorded events, each curve group whose span overlaps
+//!   the step emits its interpolated sample at min(pos, span end); a sample
+//!   identical to the group's previous one is skipped (flat regions don't
+//!   spam the tick rate).
+//! - Seek: per address, the definition with the latest time <= pos wins —
+//!   an event at its t, a curve at min(pos, span end) once pos >= span
+//!   start; ties go to the curve (it is the edit layer). An address whose
+//!   definitions all lie after pos clamps to the earliest one. Outside its
+//!   span a curve extends flat, and triggers stay suppressed.
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
@@ -36,6 +47,9 @@ pub struct Resolver {
     jump_threshold: f64,
     is_trigger: Vec<bool>,
     prev: Option<f64>,
+    /// Per curve group: the last synthesized args, so flat curve regions
+    /// don't re-emit an unchanged message every tick.
+    group_last: Vec<Option<Vec<Value>>>,
 }
 
 impl Resolver {
@@ -49,17 +63,20 @@ impl Resolver {
             .iter()
             .map(|(addr, _port)| trigger_matcher.is_some_and(|m| m(addr)))
             .collect();
+        let group_last = vec![None; session.curve_groups.len()];
         Self {
             session,
             jump_threshold,
             is_trigger,
             prev: None,
+            group_last,
         }
     }
 
     /// Forget the previous position; the next step() seeks from scratch.
     pub fn reset(&mut self) {
         self.prev = None;
+        self.group_last.fill(None);
     }
 
     pub fn step(&mut self, pos: f64) -> Vec<Emit> {
@@ -68,7 +85,7 @@ impl Resolver {
 
     pub fn step_with_mode(&mut self, pos: f64) -> (Mode, Vec<Emit>) {
         let prev = self.prev.replace(pos);
-        if self.session.is_empty() {
+        if self.session.is_empty() && self.session.curve_groups.is_empty() {
             return (Mode::Seek, Vec::new());
         }
         let Some(prev) = prev else {
@@ -94,47 +111,142 @@ impl Resolver {
         (*port, addr.clone(), self.session.event_args(i))
     }
 
-    fn pump(&self, prev: f64, pos: f64) -> Vec<Emit> {
-        let lo = self.session.t.partition_point(|&x| x <= prev);
-        let hi = self.session.t.partition_point(|&x| x <= pos);
-        (lo..hi).map(|i| self.emit(i)).collect()
+    fn pump(&mut self, prev: f64, pos: f64) -> Vec<Emit> {
+        let session = self.session.clone();
+        let lo = session.t.partition_point(|&x| x <= prev);
+        let hi = session.t.partition_point(|&x| x <= pos);
+        let mut out: Vec<Emit> = (lo..hi).map(|i| self.emit(i)).collect();
+        // Curve samples follow the recorded events: one per active group,
+        // clamped to the span end so the final value always lands.
+        for (g, group) in session.curve_groups.iter().enumerate() {
+            if pos < group.start || prev >= group.end {
+                continue;
+            }
+            let args = session.curve_group_args(g, pos.min(group.end));
+            if self.group_last[g].as_ref() == Some(&args) {
+                continue;
+            }
+            let (addr, port) = &session.addrs[group.addr_id as usize];
+            out.push((*port, addr.clone(), args.clone()));
+            self.group_last[g] = Some(args);
+        }
+        out
     }
 
-    /// Addresses with at least one event in (t0, t1].
+    /// Addresses with at least one event — or an active curve span — in (t0, t1].
     fn touched(&self, t0: f64, t1: f64) -> Vec<usize> {
         let lo = self.session.t.partition_point(|&x| x <= t0);
         let hi = self.session.t.partition_point(|&x| x <= t1);
-        let set: BTreeSet<usize> = self.session.addr_id[lo..hi]
+        let mut set: BTreeSet<usize> = self.session.addr_id[lo..hi]
             .iter()
             .map(|&a| a as usize)
             .collect();
+        for group in &self.session.curve_groups {
+            // A curve's value moves continuously, so any span overlap counts.
+            if group.start <= t1 && group.end > t0 {
+                set.insert(group.addr_id as usize);
+            }
+        }
         set.into_iter().collect()
     }
 
     /// Full catch-up at `pos` without touching the playhead state: one
     /// message per address with its value at pos (triggers suppressed, like
-    /// any seek). For mirror resyncs — the position tracking is untouched.
+    /// any seek). For mirror resyncs — position tracking and the curve
+    /// dedup state are untouched.
     pub fn snapshot_at(&self, pos: f64) -> Vec<Emit> {
-        if self.session.is_empty() {
+        if self.session.is_empty() && self.session.curve_groups.is_empty() {
             return Vec::new();
         }
         let all: Vec<usize> = (0..self.session.addrs.len()).collect();
-        self.catchup(pos, &all)
+        self.resolve_at(pos, &all).0
     }
 
-    fn catchup(&self, pos: f64, addr_ids: &[usize]) -> Vec<Emit> {
-        let mut chosen: Vec<usize> = Vec::new();
+    fn catchup(&mut self, pos: f64, addr_ids: &[usize]) -> Vec<Emit> {
+        let (emits, sampled) = self.resolve_at(pos, addr_ids);
+        // A seek lands the curve value, so pump dedup counts it as sent.
+        for (g, args) in sampled {
+            self.group_last[g] = Some(args);
+        }
+        emits
+    }
+
+    /// Resolve every address in `addr_ids` at `pos`. Returns the emissions
+    /// plus the curve samples among them as (group, args); the caller
+    /// decides whether they update the pump dedup state.
+    fn resolve_at(&self, pos: f64, addr_ids: &[usize]) -> (Vec<Emit>, Vec<(usize, Vec<Value>)>) {
+        let session = &self.session;
+        // (definition time, tiebreak, event index or curve group).
+        enum Src {
+            Event(usize),
+            Group(usize),
+        }
+        let mut chosen: Vec<(f64, usize, Src)> = Vec::new();
         for &k in addr_ids {
             if self.is_trigger[k] {
                 continue;
             }
-            let j = self.session.addr_t[k].partition_point(|&x| x <= pos);
-            // j == 0: pos precedes every event -> clamp to the first one
-            // (values extend flat before the first data point).
-            chosen.push(self.session.addr_events[k][j.saturating_sub(1)]);
+            let times = &session.addr_t[k];
+            let j = times.partition_point(|&x| x <= pos);
+            // Defined event: the last one at or before pos.
+            let event = (j > 0).then(|| (times[j - 1], session.addr_events[k][j - 1]));
+            // Defined curve: the group once pos has reached its span.
+            let group = session.addr_group[k].filter(|&g| session.curve_groups[g].start <= pos);
+            let pick = match (event, group) {
+                // Latest definition wins; ties go to the curve (edit layer).
+                (Some((et, i)), Some(g)) => {
+                    let gt = pos.min(session.curve_groups[g].end);
+                    if et > gt {
+                        Src::Event(i)
+                    } else {
+                        Src::Group(g)
+                    }
+                }
+                (Some((_, i)), None) => Src::Event(i),
+                (None, Some(g)) => Src::Group(g),
+                // Nothing defined at pos: clamp to the earliest definition
+                // (values extend flat before the first data point).
+                (None, None) => {
+                    let ev0 = times.first().map(|&t| (t, session.addr_events[k][0]));
+                    let grp = session.addr_group[k].map(|g| (session.curve_groups[g].start, g));
+                    match (ev0, grp) {
+                        (Some((et, i)), Some((gt, g))) => {
+                            if et < gt {
+                                Src::Event(i)
+                            } else {
+                                Src::Group(g)
+                            }
+                        }
+                        (Some((_, i)), None) => Src::Event(i),
+                        (None, Some((_, g))) => Src::Group(g),
+                        (None, None) => continue,
+                    }
+                }
+            };
+            match pick {
+                Src::Event(i) => chosen.push((session.t[i], i, Src::Event(i))),
+                Src::Group(g) => {
+                    let def = pos.min(session.curve_groups[g].end).max(session.curve_groups[g].start);
+                    chosen.push((def, usize::MAX, Src::Group(g)));
+                }
+            }
         }
-        chosen.sort_unstable(); // deterministic, time-ordered
-        chosen.into_iter().map(|i| self.emit(i)).collect()
+        // Deterministic, time-ordered; curve samples after same-time events.
+        chosen.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        let mut sampled: Vec<(usize, Vec<Value>)> = Vec::new();
+        let emits = chosen
+            .into_iter()
+            .map(|(_, _, src)| match src {
+                Src::Event(i) => self.emit(i),
+                Src::Group(g) => {
+                    let args = session.curve_group_args(g, pos);
+                    sampled.push((g, args.clone()));
+                    let (addr, port) = &session.addrs[session.curve_groups[g].addr_id as usize];
+                    (*port, addr.clone(), args)
+                }
+            })
+            .collect();
+        (emits, sampled)
     }
 }
 

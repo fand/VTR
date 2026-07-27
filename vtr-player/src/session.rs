@@ -13,11 +13,34 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde_json::Value;
 
+use crate::curve::{self, Knot};
+
 /// OSC type tags whose args can live in the shared float pool. Everything
 /// else (strings, blobs, bools, ...) keeps its parsed args in `raw_args`
 /// verbatim.
 const NUMERIC_TAGS: &str = "fdih";
 const INT_TAGS: &str = "ih";
+
+/// One `type:"curve"` line, address interned into `Session::addrs`.
+#[derive(Debug)]
+pub struct Curve {
+    pub addr_id: u32,
+    pub arg: usize,
+    pub types: String,
+    pub template: Vec<Value>,
+    pub knots: Vec<Knot>,
+}
+
+/// All curves on one address, merged into a single message per sample.
+/// Members are arg-sorted; the first one's template supplies the untouched
+/// args. The span is the union of the members' knot spans.
+#[derive(Debug)]
+pub struct CurveGroup {
+    pub addr_id: u32,
+    pub members: Vec<usize>,
+    pub start: f64,
+    pub end: f64,
+}
 
 #[derive(Debug, Default)]
 pub struct Session {
@@ -37,6 +60,11 @@ pub struct Session {
     // Per-address event indices (time-ordered) and their times.
     pub addr_events: Vec<Vec<usize>>,
     pub addr_t: Vec<Vec<f64>>,
+    // Bezier curves and their per-address groups.
+    pub curves: Vec<Curve>,
+    pub curve_groups: Vec<CurveGroup>,
+    /// addr id -> index into `curve_groups`, or none.
+    pub addr_group: Vec<Option<usize>>,
     // Header / trailer.
     /// listen port -> forward port
     pub routes: HashMap<u16, u16>,
@@ -78,6 +106,28 @@ impl Session {
                 }
             })
             .collect()
+    }
+
+    /// Merged message for curve group g at time t: the first member's
+    /// template with each member's controlled arg replaced by its
+    /// interpolated value (int-tagged args rounded). Values extend flat
+    /// outside each member's span.
+    pub fn curve_group_args(&self, g: usize, t: f64) -> Vec<Value> {
+        let group = &self.curve_groups[g];
+        let mut args = self.curves[group.members[0]].template.clone();
+        for &m in &group.members {
+            let c = &self.curves[m];
+            let v = curve::value_at(&c.knots, t);
+            let val = match c.types.chars().nth(c.arg) {
+                Some(tag) if INT_TAGS.contains(tag) => Value::from(v.round() as i64),
+                _ => Value::from(v),
+            };
+            while args.len() <= c.arg {
+                args.push(Value::Null);
+            }
+            args[c.arg] = val;
+        }
+        args
     }
 }
 
@@ -139,6 +189,7 @@ fn build(values: Vec<Option<Value>>) -> Session {
     let mut routes: HashMap<u16, u16> = HashMap::new();
     let mut duration: Option<f64> = None;
     let mut skipped: u64 = 0;
+    let mut curves: Vec<Curve> = Vec::new();
 
     for obj in values {
         let Some(obj) = obj else {
@@ -157,6 +208,26 @@ fn build(values: Vec<Option<Value>>) -> Session {
             Some(t) if t == "session_end" => {
                 if let Some(t) = obj.get("t").and_then(Value::as_f64) {
                     duration = Some(t);
+                }
+                continue;
+            }
+            Some(t) if t == "curve" => {
+                match curve::parse(obj) {
+                    Some(cd) => {
+                        let key = (cd.addr, cd.port);
+                        let aid = *addr_map.entry(key.clone()).or_insert_with(|| {
+                            addrs.push(key);
+                            (addrs.len() - 1) as u32
+                        });
+                        curves.push(Curve {
+                            addr_id: aid,
+                            arg: cd.arg,
+                            types: cd.types,
+                            template: cd.template,
+                            knots: cd.knots,
+                        });
+                    }
+                    None => skipped += 1,
                 }
                 continue;
             }
@@ -234,7 +305,40 @@ fn build(values: Vec<Option<Value>>) -> Session {
         addr_t[aid as usize].push(t);
     }
 
-    let duration = duration.unwrap_or_else(|| ts.last().copied().unwrap_or(0.0));
+    // Group curves per address (one merged message per sample).
+    let mut addr_group: Vec<Option<usize>> = vec![None; addrs.len()];
+    let mut curve_groups: Vec<CurveGroup> = Vec::new();
+    for (ci, c) in curves.iter().enumerate() {
+        let slot = &mut addr_group[c.addr_id as usize];
+        let gi = match *slot {
+            Some(g) => g,
+            None => {
+                curve_groups.push(CurveGroup {
+                    addr_id: c.addr_id,
+                    members: Vec::new(),
+                    start: f64::INFINITY,
+                    end: f64::NEG_INFINITY,
+                });
+                let g = curve_groups.len() - 1;
+                *slot = Some(g);
+                g
+            }
+        };
+        let g = &mut curve_groups[gi];
+        g.members.push(ci);
+        g.start = g.start.min(c.knots[0].t);
+        g.end = g.end.max(c.knots[c.knots.len() - 1].t);
+    }
+    for g in &mut curve_groups {
+        g.members.sort_by_key(|&m| curves[m].arg);
+    }
+
+    let duration = duration.unwrap_or_else(|| {
+        let last_event = ts.last().copied().unwrap_or(0.0);
+        curve_groups
+            .iter()
+            .fold(last_event, |acc, g| acc.max(g.end))
+    });
 
     Session {
         t: ts,
@@ -248,6 +352,9 @@ fn build(values: Vec<Option<Value>>) -> Session {
         types_tbl,
         addr_events,
         addr_t,
+        curves,
+        curve_groups,
+        addr_group,
         routes,
         duration,
         skipped,

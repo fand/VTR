@@ -131,3 +131,83 @@ fn test_unsorted_input_is_reordered() {
     assert_eq!(s.event_args(1), vec![json!(2.0)]);
     assert!(s.addr_t[0].windows(2).all(|w| w[1] >= w[0]));
 }
+
+// ---------------------------------------------------------------------------
+// Bezier curves (`type:"curve"` lines).
+
+fn curve_line(a: &str, arg: usize, knots: Value) -> Value {
+    json!({
+        "type": "curve", "port": 10010, "a": a, "arg": arg,
+        "types": "ff", "args": [0.0, 2.0], "knots": knots,
+    })
+}
+
+#[test]
+fn test_curve_lines_parse_and_intern_addresses() {
+    let s = load(&[
+        header(),
+        fader(0.5),
+        curve_line("/x", 0, json!([{"t": 1.0, "v": 0.0, "o": [0.2, 0.1]}, {"t": 3.0, "v": 1.0}])),
+    ]);
+    assert_eq!(s.curves.len(), 1);
+    assert_eq!(s.curves[0].arg, 0);
+    assert_eq!(s.curves[0].knots.len(), 2);
+    assert_eq!(s.curves[0].knots[0].o, Some([0.2, 0.1]));
+    assert!(s.addrs.contains(&("/x".to_string(), 10010)));
+    assert_eq!(s.curve_groups.len(), 1);
+    assert_eq!(s.curve_groups[0].start, 1.0);
+    assert_eq!(s.curve_groups[0].end, 3.0);
+    assert_eq!(s.skipped, 0);
+}
+
+#[test]
+fn test_malformed_curves_are_skipped() {
+    let s = load(&[
+        // One knot.
+        curve_line("/a", 0, json!([{"t": 0.0, "v": 0.0}])),
+        // Non-increasing knot times.
+        curve_line("/b", 0, json!([{"t": 1.0, "v": 0.0}, {"t": 1.0, "v": 1.0}])),
+        // Controlled arg outside the template.
+        curve_line("/c", 5, json!([{"t": 0.0, "v": 0.0}, {"t": 1.0, "v": 1.0}])),
+    ]);
+    assert_eq!(s.curves.len(), 0);
+    assert_eq!(s.skipped, 3);
+}
+
+#[test]
+fn test_curves_group_per_address() {
+    let s = load(&[
+        curve_line("/xy", 1, json!([{"t": 0.0, "v": 0.0}, {"t": 1.0, "v": 1.0}])),
+        curve_line("/xy", 0, json!([{"t": 2.0, "v": 0.0}, {"t": 5.0, "v": 1.0}])),
+        curve_line("/other", 0, json!([{"t": 0.0, "v": 0.0}, {"t": 1.0, "v": 1.0}])),
+    ]);
+    assert_eq!(s.curve_groups.len(), 2);
+    let g = &s.curve_groups[0]; // /xy
+    assert_eq!(g.members.len(), 2);
+    // Members are arg-sorted; the span is the union.
+    assert_eq!(s.curves[g.members[0]].arg, 0);
+    assert_eq!(s.curves[g.members[1]].arg, 1);
+    assert_eq!(g.start, 0.0);
+    assert_eq!(g.end, 5.0);
+}
+
+#[test]
+fn test_duration_covers_curve_end_without_trailer() {
+    let s = load(&[
+        fader(1.0),
+        curve_line("/x", 0, json!([{"t": 0.0, "v": 0.0}, {"t": 5.0, "v": 1.0}])),
+    ]);
+    assert_eq!(s.duration, 5.0);
+}
+
+#[test]
+fn test_curve_group_args_respects_int_tags() {
+    let s = load(&[json!({
+        "type": "curve", "port": 10010, "a": "/i", "arg": 0,
+        "types": "if", "args": [0, 7.5],
+        "knots": [{"t": 0.0, "v": 0.0}, {"t": 1.0, "v": 10.0}],
+    })]);
+    let args = s.curve_group_args(0, 0.55);
+    assert!(args[0].is_i64(), "int-tagged arg rounds: {args:?}");
+    assert_eq!(args[1], json!(7.5)); // untouched template arg rides along
+}

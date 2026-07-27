@@ -26,16 +26,16 @@ export function segmentCtrl(k0: CurveKnot, k1: CurveKnot): [XY, XY, XY, XY] {
   return [p0, p1, p2, p3]
 }
 
+/** De Casteljau evaluation, matching the player exactly: repeated lerps
+ *  keep flat spans exactly flat (Bernstein weights drift by ~1 ulp). */
 function bezXY(p: [XY, XY, XY, XY], u: number): XY {
-  const w = 1 - u
-  const a = w * w * w
-  const b = 3 * w * w * u
-  const c = 3 * w * u * u
-  const d = u * u * u
-  return {
-    x: a * p[0].x + b * p[1].x + c * p[2].x + d * p[3].x,
-    y: a * p[0].y + b * p[1].y + c * p[2].y + d * p[3].y
-  }
+  const l = (a: number, b: number): number => a + (b - a) * u
+  const q0 = { x: l(p[0].x, p[1].x), y: l(p[0].y, p[1].y) }
+  const q1 = { x: l(p[1].x, p[2].x), y: l(p[1].y, p[2].y) }
+  const q2 = { x: l(p[2].x, p[3].x), y: l(p[2].y, p[3].y) }
+  const r0 = { x: l(q0.x, q1.x), y: l(q0.y, q1.y) }
+  const r1 = { x: l(q1.x, q2.x), y: l(q1.y, q2.y) }
+  return { x: l(r0.x, r1.x), y: l(r0.y, r1.y) }
 }
 
 /** Parameter u where the segment's x(u) = t, by bisection (x is monotone
