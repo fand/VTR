@@ -21,6 +21,16 @@ export interface CurvePropHook {
   selected: boolean
   dimmed: boolean
   pointCount: number
+  curveCount: number
+}
+
+export interface CurveKnotHook {
+  label: string
+  /** Client (page) coordinates — pass straight to page.mouse. */
+  x: number
+  y: number
+  t: number
+  v: number
 }
 
 export const curvePoints = (page: Page): Promise<CurvePointHook[]> =>
@@ -28,6 +38,25 @@ export const curvePoints = (page: Page): Promise<CurvePointHook[]> =>
 
 export const curveProps = (page: Page): Promise<CurvePropHook[]> =>
   page.evaluate(() => (window as Window & { __curveProps?: CurvePropHook[] }).__curveProps ?? [])
+
+export const curveKnots = (page: Page): Promise<CurveKnotHook[]> =>
+  page.evaluate(() => (window as Window & { __curveKnots?: CurveKnotHook[] }).__curveKnots ?? [])
+
+/** Poll-asserts one property's drawn point and bezier-curve counts. */
+export const expectPropCounts = (
+  page: Page,
+  label: string,
+  points: number,
+  curves: number
+): Promise<void> =>
+  expect
+    .poll(() =>
+      curveProps(page).then((c) => {
+        const p = c.find((p) => p.label === label)
+        return p && { points: p.pointCount, curves: p.curveCount }
+      })
+    )
+    .toEqual({ points, curves })
 
 /** Poll-asserts the drawn (non-dimmed) point count. */
 export const expectPointCount = (page: Page, n: number): Promise<void> =>
