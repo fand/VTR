@@ -26,6 +26,14 @@ struct Harness {
 }
 
 fn start_player(dir: &Path, tap_control: Option<PathBuf>) -> Harness {
+    start_player_with(dir, tap_control, None)
+}
+
+fn start_player_with(
+    dir: &Path,
+    tap_control: Option<PathBuf>,
+    echo_host: Option<std::net::IpAddr>,
+) -> Harness {
     let app = UdpSocket::bind("127.0.0.1:0").unwrap();
     app.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
     let controller = UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -35,6 +43,7 @@ fn start_player(dir: &Path, tap_control: Option<PathBuf>) -> Harness {
     let player = start(PlayerConfig {
         relay: "127.0.0.1:0".parse().unwrap(),
         echo_port: controller.local_addr().unwrap().port(),
+        echo_host,
         tap_control,
         emit_host: "127.0.0.1".parse().unwrap(),
     })
@@ -403,6 +412,41 @@ fn mirror_is_silent_while_recording() {
     let (addr, args) = h.recv_controller();
     assert_eq!(addr, "/fader");
     assert_eq!(float_of(&args), 0.25);
+}
+
+#[test]
+fn a_pinned_echo_host_is_fed_without_ever_being_heard_from() {
+    let tmp = tempfile::tempdir().unwrap();
+    // Nothing ever reaches the relay in this test: the pinned host is the
+    // only reason anything goes out.
+    let h = start_player_with(tmp.path(), None, Some("127.0.0.1".parse().unwrap()));
+    let path = write_session(tmp.path(), h.app_port, &[ev(1.0, "/fader", &[0.75])]);
+    let mut c = h.connect();
+    assert_eq!(c.request(json!({"cmd": "load", "path": path}))["ok"], true);
+    assert_eq!(c.request(json!({"cmd": "seek", "t": 2.0}))["ok"], true);
+
+    let (addr, args) = h.recv_controller();
+    assert_eq!(addr, "/fader");
+    assert_eq!(float_of(&args), 0.75);
+}
+
+#[test]
+fn a_pinned_host_is_not_fed_twice_when_it_also_registers() {
+    let tmp = tempfile::tempdir().unwrap();
+    let h = start_player_with(tmp.path(), None, Some("127.0.0.1".parse().unwrap()));
+    let path = write_session(tmp.path(), h.app_port, &[ev(1.0, "/fader", &[0.75])]);
+    let mut c = h.connect();
+    assert_eq!(c.request(json!({"cmd": "load", "path": path}))["ok"], true);
+    // Same IP arrives on the relay too: it must not double up.
+    h.relay("127.0.0.1:9001", "/vtr/origin", vec![]);
+    assert_eq!(c.request(json!({"cmd": "seek", "t": 2.0}))["ok"], true);
+
+    assert_eq!(h.recv_controller().0, "/fader");
+    h.controller
+        .set_read_timeout(Some(Duration::from_millis(200)))
+        .unwrap();
+    let mut buf = [0u8; 1024];
+    assert!(h.controller.recv(&mut buf).is_err(), "sent twice");
 }
 
 #[test]

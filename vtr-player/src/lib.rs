@@ -19,6 +19,9 @@ pub struct PlayerConfig {
     pub relay: SocketAddr,
     /// Controller feedback goes to `origin IP : echo_port`.
     pub echo_port: u16,
+    /// Always-on feedback target, on top of the origins the relay learns.
+    /// Set it when a controller must be fed without waiting to be heard from.
+    pub echo_host: Option<IpAddr>,
     /// Tap control socket to follow rec state from (None disables echo).
     pub tap_control: Option<PathBuf>,
     /// Host push emissions are sent to (the VJ app).
@@ -36,7 +39,7 @@ pub fn start(cfg: PlayerConfig) -> Result<Player> {
     let shared = Arc::new(state::SharedState::default());
     let relay_sock = UdpSocket::bind(cfg.relay).with_context(|| format!("bind relay {}", cfg.relay))?;
     let relay_addr = relay_sock.local_addr()?;
-    let echo = echo::Echo::new(cfg.echo_port)?;
+    let echo = echo::Echo::new(cfg.echo_port, cfg.echo_host)?;
     if let Some(path) = cfg.tap_control {
         echo.spawn_tap_client(path)?;
     }

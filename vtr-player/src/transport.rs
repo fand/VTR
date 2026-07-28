@@ -393,7 +393,7 @@ mod tests {
             Arc::new(SharedState::default()),
             "127.0.0.1".parse().unwrap(),
             // No origin ever registers, so the mirror is a no-op here.
-            Echo::new(0).unwrap(),
+            Echo::new(0, None).unwrap(),
         )
         .unwrap()
     }

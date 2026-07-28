@@ -1,6 +1,8 @@
-//! Controller feedback at `source IP : echo port`, to every origin the
-//! relay has seen recently (a `/vtr/*` datagram, or a `/vtr/origin` the tap
-//! sends for plain app traffic):
+//! Controller feedback at `target IP : echo port`. Targets are every origin
+//! the relay has seen recently (a `/vtr/*` datagram, or a `/vtr/origin` the
+//! tap sends for plain app traffic), plus the pinned `--echo-host` if one is
+//! configured — a pinned host is always live, so a controller that has gone
+//! quiet keeps being fed. Two things go out:
 //!
 //! - `/vtr/rec <0|1>` on rec-state change, and once immediately on first
 //!   contact from a new origin (initial sync for late-started controllers).
@@ -28,6 +30,9 @@ const RECONNECT_BACKOFF: Duration = Duration::from_secs(1);
 
 struct Inner {
     origins: Mutex<HashMap<IpAddr, Instant>>,
+    /// Configured target, always live. Origins have to keep talking to stay
+    /// in the registry; a pinned host does not.
+    pinned: Option<IpAddr>,
     /// None until the tap reported a baseline.
     rec: Mutex<Option<bool>>,
     sock: UdpSocket,
@@ -40,11 +45,12 @@ pub struct Echo {
 }
 
 impl Echo {
-    pub fn new(echo_port: u16) -> Result<Echo> {
+    pub fn new(echo_port: u16, pinned: Option<IpAddr>) -> Result<Echo> {
         let sock = UdpSocket::bind("0.0.0.0:0").context("bind echo socket")?;
         Ok(Echo {
             inner: Arc::new(Inner {
                 origins: Mutex::new(HashMap::new()),
+                pinned,
                 rec: Mutex::new(None),
                 sock,
                 echo_port,
@@ -108,15 +114,23 @@ impl Echo {
         }
     }
 
+    /// Every current target: the pinned host plus unexpired origins, with
+    /// the pinned host deduped out of the registry so it is never fed twice.
     fn live(&self) -> Vec<IpAddr> {
         let now = Instant::now();
         self.inner
-            .origins
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|&(_, &last)| now.duration_since(last) <= EXPIRY)
-            .map(|(&ip, _)| ip)
+            .pinned
+            .into_iter()
+            .chain(
+                self.inner
+                    .origins
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|&(_, &last)| now.duration_since(last) <= EXPIRY)
+                    .map(|(&ip, _)| ip)
+                    .filter(|ip| Some(*ip) != self.inner.pinned),
+            )
             .collect()
     }
 
