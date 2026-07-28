@@ -13,6 +13,7 @@
 //! session-independent: seeks move it even with no session loaded (only
 //! resolve/emit needs one).
 
+use std::collections::HashMap;
 use std::net::{IpAddr, UdpSocket};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
@@ -22,10 +23,15 @@ use anyhow::{Context, Result};
 use rosc::{OscMessage, OscPacket, OscType};
 use serde_json::Value;
 
+use crate::echo::Echo;
 use crate::resolver::{DedupResolver, Emit, Resolver};
 use crate::state::{LoadedSession, SharedState};
 
 const TICK: Duration = Duration::from_millis(5);
+/// Controller mirror cadence. The emit loop runs at 200 Hz for the app, but a
+/// controller only has to *look* right, and it is usually a tablet on wifi —
+/// 50 Hz is plenty and cuts the packet rate by 4.
+const MIRROR_TICK: Duration = Duration::from_millis(20);
 /// Concurrent-write hold window: a foreign origin is rejected while the
 /// last accepted write is younger than this.
 const HOLD: Duration = Duration::from_millis(400);
@@ -101,7 +107,12 @@ struct Inner {
     seek: Mutex<Option<f64>>,
     sock: UdpSocket,
     host: IpAddr,
+    echo: Echo,
 }
+
+/// Emits staged for the controller mirror between flushes, latest value per
+/// (port, address).
+type Pending = HashMap<(u16, String), Vec<Value>>;
 
 #[derive(Clone)]
 pub struct Transport {
@@ -109,7 +120,7 @@ pub struct Transport {
 }
 
 impl Transport {
-    pub fn start(shared: Arc<SharedState>, host: IpAddr) -> Result<Transport> {
+    pub fn start(shared: Arc<SharedState>, host: IpAddr, echo: Echo) -> Result<Transport> {
         let sock = UdpSocket::bind("0.0.0.0:0").context("bind transport socket")?;
         let inner = Arc::new(Inner {
             shared,
@@ -125,6 +136,7 @@ impl Transport {
             seek: Mutex::new(None),
             sock,
             host,
+            echo,
         });
         {
             let inner = inner.clone();
@@ -250,8 +262,16 @@ fn emit_loop(inner: Arc<Inner>) {
     let mut cur_epoch = 0u64;
     let mut resolver: Option<DedupResolver> = None;
     let mut loaded: Option<Arc<LoadedSession>> = None;
+    let mut pending: Pending = Pending::new();
+    let mut last_mirror = Instant::now();
     loop {
         thread::sleep(TICK);
+        // Ahead of every early-out below: the last values of a stop or a
+        // seek must not sit in `pending` until the next emit.
+        if !pending.is_empty() && last_mirror.elapsed() >= MIRROR_TICK {
+            inner.echo.mirror(&drain_mirror(&mut pending));
+            last_mirror = Instant::now();
+        }
         let (epoch, l) = inner.shared.snapshot();
         if epoch != cur_epoch {
             cur_epoch = epoch;
@@ -281,7 +301,7 @@ fn emit_loop(inner: Arc<Inner>) {
         // asks us to push the resolved frame once (covers the paused case).
         if let Some(t) = inner.seek.lock().unwrap().take() {
             let (_, emits) = r.step(t);
-            send(&inner, l, &emits);
+            send(&inner, l, &emits, &mut pending);
         }
         let pos = {
             let st = inner.state.lock().unwrap();
@@ -291,11 +311,11 @@ fn emit_loop(inner: Arc<Inner>) {
             st.playhead()
         };
         let (_, emits) = r.step(pos);
-        send(&inner, l, &emits);
+        send(&inner, l, &emits, &mut pending);
     }
 }
 
-fn send(inner: &Inner, loaded: &LoadedSession, emits: &[Emit]) {
+fn send(inner: &Inner, loaded: &LoadedSession, emits: &[Emit], pending: &mut Pending) {
     for (port, addr, args) in emits {
         // Only routed ports are emitted — never back to a listen port.
         let Some(&dst) = loaded.routes.get(port) else {
@@ -308,7 +328,21 @@ fn send(inner: &Inner, loaded: &LoadedSession, emits: &[Emit]) {
             continue;
         };
         let _ = inner.sock.send_to(&buf, (inner.host, dst));
+        // The controller gets the same value, but coalesced: staging by
+        // (port, address) means a flush carries the newest value only, so
+        // slowing the mirror down can never leave a fader on a stale one.
+        pending.insert((*port, addr.clone()), args.clone());
     }
+}
+
+fn drain_mirror(pending: &mut Pending) -> Vec<OscMessage> {
+    pending
+        .drain()
+        .map(|((_, addr), args)| OscMessage {
+            addr,
+            args: to_osc_args(&args),
+        })
+        .collect()
 }
 
 /// JSON args back to OSC. The columnar model does not keep f32-vs-f64
@@ -358,8 +392,30 @@ mod tests {
         Transport::start(
             Arc::new(SharedState::default()),
             "127.0.0.1".parse().unwrap(),
+            // No origin ever registers, so the mirror is a no-op here.
+            Echo::new(0).unwrap(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn mirror_staging_keeps_only_the_newest_value_per_address() {
+        let mut pending = Pending::new();
+        pending.insert((10010, "/a".into()), vec![Value::from(1.0)]);
+        pending.insert((10010, "/a".into()), vec![Value::from(2.0)]);
+        // Same address on another session port stays its own entry.
+        pending.insert((10020, "/a".into()), vec![Value::from(3.0)]);
+        let mut msgs = drain_mirror(&mut pending);
+        msgs.sort_by_key(|m| format!("{:?}", m.args));
+        assert!(pending.is_empty());
+        assert_eq!(
+            msgs.iter().map(|m| m.addr.as_str()).collect::<Vec<_>>(),
+            ["/a", "/a"]
+        );
+        assert_eq!(
+            msgs.iter().map(|m| m.args.clone()).collect::<Vec<_>>(),
+            [vec![OscType::Float(2.0)], vec![OscType::Float(3.0)]]
+        );
     }
 
     #[test]

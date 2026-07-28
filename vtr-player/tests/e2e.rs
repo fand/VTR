@@ -269,39 +269,44 @@ fn punch_in_primes_resolved_state() {
     assert_eq!(float_of(&args), 2.0);
 }
 
+/// Fake tap control socket serving the `wait` API: answers the baseline with
+/// `recording=false`, then replies to each long poll with whatever the test
+/// pushes into the returned sender.
+fn fake_tap(path: &Path) -> mpsc::Sender<Value> {
+    let (trigger_tx, trigger_rx) = mpsc::channel::<Value>();
+    let listener = UnixListener::bind(path).unwrap();
+    thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut writer = stream;
+        let mut line = String::new();
+        // Baseline wait (no since): recording=false snapshot.
+        reader.read_line(&mut line).unwrap();
+        writeln!(
+            writer,
+            "{}",
+            json!({"ok": true, "seq": 0, "events": [], "reset": true,
+                   "status": {"recording": false}})
+        )
+        .unwrap();
+        // Long-poll waits: answer with whatever the test injects.
+        loop {
+            line.clear();
+            if reader.read_line(&mut line).unwrap() == 0 {
+                return;
+            }
+            let Ok(reply) = trigger_rx.recv() else { return };
+            writeln!(writer, "{reply}").unwrap();
+        }
+    });
+    trigger_tx
+}
+
 #[test]
 fn echo_follows_tap_event_log_and_greets_new_origins() {
     let tmp = tempfile::tempdir().unwrap();
-    // Fake tap control socket serving the wait API.
     let tap_sock = tmp.path().join("vtr-tap.sock");
-    let (trigger_tx, trigger_rx) = mpsc::channel::<Value>();
-    {
-        let listener = UnixListener::bind(&tap_sock).unwrap();
-        thread::spawn(move || {
-            let (stream, _) = listener.accept().unwrap();
-            let mut reader = BufReader::new(stream.try_clone().unwrap());
-            let mut writer = stream;
-            let mut line = String::new();
-            // Baseline wait (no since): recording=false snapshot.
-            reader.read_line(&mut line).unwrap();
-            writeln!(
-                writer,
-                "{}",
-                json!({"ok": true, "seq": 0, "events": [], "reset": true,
-                       "status": {"recording": false}})
-            )
-            .unwrap();
-            // Long-poll waits: answer with whatever the test injects.
-            loop {
-                line.clear();
-                if reader.read_line(&mut line).unwrap() == 0 {
-                    return;
-                }
-                let Ok(reply) = trigger_rx.recv() else { return };
-                writeln!(writer, "{reply}").unwrap();
-            }
-        });
-    }
+    let trigger_tx = fake_tap(&tap_sock);
 
     let h = start_player(tmp.path(), Some(tap_sock));
     // Give the tap client a moment to take the baseline.
@@ -330,6 +335,113 @@ fn echo_follows_tap_event_log_and_greets_new_origins() {
     let (addr, args) = h.recv_controller();
     assert_eq!(addr, "/vtr/rec");
     assert_eq!(float_of(&args), 0.0);
+}
+
+#[test]
+fn playback_mirrors_to_an_origin_that_never_sent_a_vtr_command() {
+    let tmp = tempfile::tempdir().unwrap();
+    let h = start_player(tmp.path(), None);
+    let path = write_session(tmp.path(), h.app_port, &[ev(1.0, "/fader", &[0.75])]);
+    let mut c = h.connect();
+    assert_eq!(c.request(json!({"cmd": "load", "path": path}))["ok"], true);
+
+    // The tap's stand-in for plain app traffic: this origin has no /vtr
+    // button, and registering it is all the mirror needs.
+    h.relay("127.0.0.1:9001", "/vtr/origin", vec![]);
+    assert_eq!(c.request(json!({"cmd": "seek", "t": 2.0}))["ok"], true);
+
+    let (addr, args) = h.recv_controller();
+    assert_eq!(addr, "/fader");
+    assert_eq!(float_of(&args), 0.75);
+}
+
+#[test]
+fn mirror_is_silent_while_recording() {
+    let tmp = tempfile::tempdir().unwrap();
+    let tap_sock = tmp.path().join("vtr-tap.sock");
+    let trigger_tx = fake_tap(&tap_sock);
+    let h = start_player(tmp.path(), Some(tap_sock));
+    // Two values, so the seek after rec stops isn't swallowed by dedup.
+    let path = write_session(
+        tmp.path(),
+        h.app_port,
+        &[ev(1.0, "/fader", &[0.75]), ev(2.5, "/fader", &[0.25])],
+    );
+    let mut c = h.connect();
+    assert_eq!(c.request(json!({"cmd": "load", "path": path}))["ok"], true);
+    thread::sleep(Duration::from_millis(100));
+
+    // Registering greets the origin with the baseline rec state.
+    h.relay("127.0.0.1:9001", "/vtr/origin", vec![]);
+    assert_eq!(h.recv_controller().0, "/vtr/rec");
+
+    // Recording: mirroring the replay back would feed it into the clip.
+    trigger_tx
+        .send(json!({"ok": true, "seq": 1,
+                     "events": [{"ev": "rec_started", "clip": "x.jsonl"}]}))
+        .unwrap();
+    assert_eq!(h.recv_controller().0, "/vtr/rec");
+    assert_eq!(c.request(json!({"cmd": "seek", "t": 2.0}))["ok"], true);
+    // The app still gets it; the controller does not.
+    assert_eq!(h.recv_app().0, "/fader");
+    h.controller
+        .set_read_timeout(Some(Duration::from_millis(200)))
+        .unwrap();
+    let mut buf = [0u8; 1024];
+    assert!(h.controller.recv(&mut buf).is_err(), "mirrored while rec");
+
+    // Stopped again: the mirror comes back.
+    trigger_tx
+        .send(json!({"ok": true, "seq": 2,
+                     "events": [{"ev": "rec_stopped", "clip": "x.jsonl"}]}))
+        .unwrap();
+    h.controller
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    assert_eq!(h.recv_controller().0, "/vtr/rec");
+    assert_eq!(c.request(json!({"cmd": "seek", "t": 3.0}))["ok"], true);
+    let (addr, args) = h.recv_controller();
+    assert_eq!(addr, "/fader");
+    assert_eq!(float_of(&args), 0.25);
+}
+
+#[test]
+fn mirror_coalesces_a_dense_stream() {
+    let tmp = tempfile::tempdir().unwrap();
+    let h = start_player(tmp.path(), None);
+    // ~120 Hz on one address, the rate a controller actually records at.
+    let events: Vec<Value> = (0..120)
+        .map(|i| ev(0.05 + i as f64 / 120.0, "/fader", &[i as f64 / 120.0]))
+        .collect();
+    let path = write_session(tmp.path(), h.app_port, &events);
+    let mut c = h.connect();
+    assert_eq!(c.request(json!({"cmd": "load", "path": path}))["ok"], true);
+    h.relay("127.0.0.1:9001", "/vtr/origin", vec![]);
+    assert_eq!(c.request(json!({"cmd": "play"}))["ok"], true);
+
+    // Count both streams over the same window.
+    let window = Duration::from_millis(500);
+    let deadline = Instant::now() + window;
+    let count = |sock: &UdpSocket| {
+        let mut n = 0;
+        let mut buf = [0u8; 1024];
+        while Instant::now() < deadline {
+            sock.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
+            if sock.recv(&mut buf).is_ok() {
+                n += 1;
+            }
+        }
+        n
+    };
+    let app_n = count(&h.app);
+    let ctrl_n = count(&h.controller);
+    assert!(app_n > 20, "app should see the full stream, got {app_n}");
+    // 500ms at 50 Hz is 25 flushes; allow slack, but it must be far under
+    // the app's per-event rate.
+    assert!(
+        ctrl_n <= 35 && ctrl_n < app_n,
+        "mirror not coalesced: {ctrl_n} vs app {app_n}"
+    );
 }
 
 #[test]

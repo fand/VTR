@@ -36,11 +36,11 @@ pub fn start(cfg: PlayerConfig) -> Result<Player> {
     let shared = Arc::new(state::SharedState::default());
     let relay_sock = UdpSocket::bind(cfg.relay).with_context(|| format!("bind relay {}", cfg.relay))?;
     let relay_addr = relay_sock.local_addr()?;
-    let transport = transport::Transport::start(shared.clone(), cfg.emit_host)?;
     let echo = echo::Echo::new(cfg.echo_port)?;
     if let Some(path) = cfg.tap_control {
         echo.spawn_tap_client(path)?;
     }
+    let transport = transport::Transport::start(shared.clone(), cfg.emit_host, echo.clone())?;
     relay::spawn(relay_sock, shared.clone(), transport.clone(), echo)?;
     Ok(Player {
         relay_addr,

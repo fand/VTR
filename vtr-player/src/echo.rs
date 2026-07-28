@@ -1,8 +1,13 @@
-//! Controller feedback: `/vtr/rec <0|1>` to every recent `/vtr/*` origin
-//! at `source IP : echo port`, on rec-state change and once immediately on
-//! first contact from a new origin (initial sync for late-started
-//! controllers). Rec state comes from a client thread long-polling the tap
-//! control socket's `wait`.
+//! Controller feedback at `source IP : echo port`, to every origin the
+//! relay has seen recently (a `/vtr/*` datagram, or a `/vtr/origin` the tap
+//! sends for plain app traffic):
+//!
+//! - `/vtr/rec <0|1>` on rec-state change, and once immediately on first
+//!   contact from a new origin (initial sync for late-started controllers).
+//!   Rec state comes from a client thread long-polling the tap control
+//!   socket's `wait`.
+//! - the resolved playback values, mirrored by the transport so a
+//!   controller's faders follow the timeline (`mirror`).
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write as _};
@@ -76,19 +81,43 @@ impl Echo {
         if !changed {
             return;
         }
+        for ip in self.live() {
+            self.send(ip, rec);
+        }
+    }
+
+    /// Mirror resolved playback values back to every live origin, so a
+    /// controller's faders follow the timeline. Silent while recording: the
+    /// values would come straight back in through the tap and land in the
+    /// clip.
+    pub fn mirror(&self, msgs: &[OscMessage]) {
+        if *self.inner.rec.lock().unwrap() == Some(true) {
+            return;
+        }
+        let live = self.live();
+        if live.is_empty() {
+            return;
+        }
+        for m in msgs {
+            let Ok(buf) = rosc::encoder::encode(&OscPacket::Message(m.clone())) else {
+                continue;
+            };
+            for &ip in &live {
+                let _ = self.inner.sock.send_to(&buf, (ip, self.inner.echo_port));
+            }
+        }
+    }
+
+    fn live(&self) -> Vec<IpAddr> {
         let now = Instant::now();
-        let live: Vec<IpAddr> = self
-            .inner
+        self.inner
             .origins
             .lock()
             .unwrap()
             .iter()
             .filter(|&(_, &last)| now.duration_since(last) <= EXPIRY)
             .map(|(&ip, _)| ip)
-            .collect();
-        for ip in live {
-            self.send(ip, rec);
-        }
+            .collect()
     }
 
     fn send(&self, ip: IpAddr, rec: bool) {
