@@ -376,7 +376,13 @@ app.whenReady().then(() => {
     const bin = findBinary('vtr-player', { ...binEnv, envBin: process.env.VTR_PLAYER_BIN })
     // The tap socket path is fixed under dataDir even when the tap failed
     // to start — the player just retries the connection.
-    player = new PlayerManager(bin, dataDir, ports.echo, join(dataDir, 'vtr-tap.sock'))
+    player = new PlayerManager(
+      bin,
+      dataDir,
+      ports.echo,
+      ports.echoHost,
+      join(dataDir, 'vtr-tap.sock')
+    )
     player.spawnPlayer()
     // Mirror the player's push transport back into the editor: a seek or
     // play/stop from TD or a controller moves the renderer's playhead.
@@ -399,7 +405,7 @@ app.whenReady().then(() => {
   ipcMain.handle('clip:summary', (_e, path: string) => clipSummary(ensureWithin(clipRoots(), path)))
   ipcMain.handle('tap:setPorts', (_e, ports: PortConfig) => {
     requireTap().setPorts(ports)
-    player?.setEchoPort(ports.echo)
+    player?.setEcho(ports.echo, ports.echoHost)
   })
   ipcMain.handle('player:status', () => requirePlayer().status())
   ipcMain.handle('app:workdir', () => workdir)

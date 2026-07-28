@@ -4,6 +4,7 @@ import {
   DEFAULT_DURATION,
   DEFAULT_PORTS,
   normalizePorts,
+  isValidEchoHost,
   type LoadedProject,
   type PlayerStatus,
   type PortConfig,
@@ -163,6 +164,51 @@ function NumField({
           if (e.key === 'Enter') e.currentTarget.blur()
         }}
         {...dragProps}
+      />
+    </label>
+  )
+}
+
+/** Same shell as NumField, for free text. No drag handle. */
+function TextField({
+  label,
+  ariaLabel,
+  value,
+  placeholder,
+  disabled,
+  valid,
+  onCommit
+}: {
+  label: string
+  ariaLabel: string
+  value: string
+  placeholder?: string
+  disabled?: boolean
+  /** Rejects the draft on commit, restoring the last good value. */
+  valid: (draft: string) => boolean
+  onCommit: (v: string) => void
+}): React.JSX.Element {
+  const [draft, setDraft] = useState(value)
+  useEffect(() => setDraft(value), [value])
+  const commit = (): void => {
+    const next = draft.trim()
+    if (valid(next) && next !== value) onCommit(next)
+    else setDraft(value)
+  }
+  return (
+    <label className="port-field text-field">
+      <span className="port-field-label">{label}</span>
+      <input
+        value={draft}
+        disabled={disabled ?? false}
+        placeholder={placeholder}
+        aria-label={ariaLabel}
+        spellCheck={false}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur()
+        }}
       />
     </label>
   )
@@ -1547,7 +1593,15 @@ function App(): React.JSX.Element {
               parse={parsePort}
               onCommit={(echo) => changePorts({ ...ports, echo })}
             />
-            <span />
+            <TextField
+              label="to"
+              ariaLabel="echo host"
+              value={ports.echoHost}
+              placeholder="auto"
+              disabled={!!recording || !!playing}
+              valid={isValidEchoHost}
+              onCommit={(echoHost) => changePorts({ ...ports, echoHost })}
+            />
             <span />
             <span
               className="stat divider"

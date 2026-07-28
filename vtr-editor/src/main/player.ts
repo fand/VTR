@@ -167,6 +167,8 @@ export class PlayerManager {
     /** App-owned dir for the control socket. */
     readonly dataDir: string,
     private echoPort: number,
+    /** Pinned feedback target; empty = whoever vtr-player hears from. */
+    private echoHost: string,
     /** Tap control socket the player follows for rec-state echo. */
     private tapSockPath: string,
     private requestTimeoutMs = REQUEST_TIMEOUT_MS
@@ -176,10 +178,11 @@ export class PlayerManager {
     this.poll = new Channel(this.sockPath)
   }
 
-  /** Change the echo port and restart vtr-player with the new config. */
-  setEchoPort(port: number): void {
-    if (port === this.echoPort) return
+  /** Change the echo target and restart vtr-player with the new config. */
+  setEcho(port: number, host: string): void {
+    if (port === this.echoPort && host === this.echoHost) return
     this.echoPort = port
+    this.echoHost = host
     this.respawnDelay = RESPAWN_DELAY_MS
     this.dropConnection(new Error('vtr-player restarting'))
     if (this.proc) {
@@ -198,6 +201,7 @@ export class PlayerManager {
       this.sockPath,
       '--echo-port',
       String(this.echoPort),
+      ...(this.echoHost ? ['--echo-host', this.echoHost] : []),
       '--tap-control',
       this.tapSockPath
     ]
