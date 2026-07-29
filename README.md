@@ -76,11 +76,13 @@ Everything the player sends back goes to `target IP : echo port` (default
 - **auto** — a host becomes a target as soon as it sends anything: `/vtr/*`
   registers it directly, and for plain app traffic the tap announces the
   source IP as `/vtr/origin` (once per IP per minute), so a controller with
-  no `/vtr` button still gets feedback. These expire after 3 minutes of
-  silence, so a controller nobody touches stops being fed.
+  no `/vtr` button still gets feedback. Targets live until vtr-player
+  restarts (the editor restarts it on relaunch and on echo settings
+  changes); a host quiet for 3 minutes is re-greeted with the current state
+  on its next contact, in case it restarted meanwhile.
 - **pinned** — the `to` field (`--echo-host`) names one host that is always
-  a target, whether or not it has been heard from. Leave it empty for auto
-  only. IP literals only; hostnames are not resolved.
+  a target, even across player restarts before it says anything. Leave it
+  empty for auto only. IP literals only; hostnames are not resolved.
 
 Two things go out:
 

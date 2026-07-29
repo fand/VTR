@@ -1,8 +1,8 @@
 //! Controller feedback at `target IP : echo port`. Targets are every origin
-//! the relay has seen recently (a `/vtr/*` datagram, or a `/vtr/origin` the
-//! tap sends for plain app traffic), plus the pinned `--echo-host` if one is
-//! configured — a pinned host is always live, so a controller that has gone
-//! quiet keeps being fed. Two things go out:
+//! the relay has ever seen (a `/vtr/*` datagram, or a `/vtr/origin` the tap
+//! sends for plain app traffic), plus the pinned `--echo-host` if one is
+//! configured. Targets never expire — the registry lives and dies with the
+//! process, and a stale entry only costs discarded UDP. Two things go out:
 //!
 //! - `/vtr/rec <0|1>` on rec-state change, and once immediately on first
 //!   contact from a new origin (initial sync for late-started controllers).
@@ -24,8 +24,12 @@ use anyhow::{Context, Result};
 use rosc::{OscMessage, OscPacket, OscType};
 use serde_json::{json, Value};
 
-/// Origin entries expire after 3 minutes of `/vtr/*` silence.
-const EXPIRY: Duration = Duration::from_secs(180);
+/// An origin quiet for this long gets the state re-greeted on its next
+/// contact, like a fresh one — it may have restarted meanwhile and lost the
+/// rec/echo display. Targets never expire: liveness is the tap's business
+/// (it re-announces active source IPs), and a dead target only costs
+/// discarded UDP.
+const REGREET: Duration = Duration::from_secs(180);
 const RECONNECT_BACKOFF: Duration = Duration::from_secs(1);
 
 struct Inner {
@@ -58,15 +62,16 @@ impl Echo {
         })
     }
 
-    /// Called by the relay for every `/vtr/*` datagram. A new (or expired)
-    /// origin gets the current rec state echoed once immediately.
+    /// Called by the relay for every `/vtr/*` datagram. A new origin — or
+    /// one quiet long enough that it may have restarted — gets the current
+    /// state echoed once immediately.
     pub fn register(&self, ip: IpAddr) {
         let now = Instant::now();
         let fresh_contact = {
             let mut origins = self.inner.origins.lock().unwrap();
             let fresh = origins
                 .insert(ip, now)
-                .is_none_or(|last| now.duration_since(last) > EXPIRY);
+                .is_none_or(|last| now.duration_since(last) > REGREET);
             fresh
         };
         if fresh_contact {
@@ -76,7 +81,7 @@ impl Echo {
         }
     }
 
-    /// Update rec state; on change, echo to every live origin.
+    /// Update rec state; on change, echo to every target.
     pub fn set_rec(&self, rec: bool) {
         let changed = {
             let mut cur = self.inner.rec.lock().unwrap();
@@ -92,7 +97,7 @@ impl Echo {
         }
     }
 
-    /// Mirror resolved playback values back to every live origin, so a
+    /// Mirror resolved playback values back to every target, so a
     /// controller's faders follow the timeline. Silent while recording: the
     /// values would come straight back in through the tap and land in the
     /// clip.
@@ -114,10 +119,10 @@ impl Echo {
         }
     }
 
-    /// Every current target: the pinned host plus unexpired origins, with
-    /// the pinned host deduped out of the registry so it is never fed twice.
+    /// Every current target: the pinned host plus all registered origins,
+    /// with the pinned host deduped out of the registry so it is never fed
+    /// twice.
     fn live(&self) -> Vec<IpAddr> {
-        let now = Instant::now();
         self.inner
             .pinned
             .into_iter()
@@ -126,9 +131,8 @@ impl Echo {
                     .origins
                     .lock()
                     .unwrap()
-                    .iter()
-                    .filter(|&(_, &last)| now.duration_since(last) <= EXPIRY)
-                    .map(|(&ip, _)| ip)
+                    .keys()
+                    .copied()
                     .filter(|ip| Some(*ip) != self.inner.pinned),
             )
             .collect()
