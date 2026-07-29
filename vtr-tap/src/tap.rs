@@ -580,10 +580,13 @@ impl Tap {
                                 // Idempotent: not recording is a no-op.
                                 Err(e) => rec_log.log(&format!("/vtr/rec/stop ignored: {e}")),
                             },
-                            // Player-handled addresses (/vtr/play, /vtr/stop,
-                            // /vtr/seek) and unknowns: relay already happened.
+                            // Player-handled addresses and unknowns: relay
+                            // already happened.
                             a if a.starts_with("/vtr/") => {
-                                if !matches!(a, "/vtr/play" | "/vtr/stop" | "/vtr/seek") {
+                                if !matches!(
+                                    a,
+                                    "/vtr/play" | "/vtr/stop" | "/vtr/seek" | "/vtr/echo"
+                                ) {
                                     unknown_log.log(&format!("warn: unknown {a} dropped"));
                                 }
                             }
