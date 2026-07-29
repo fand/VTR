@@ -114,6 +114,18 @@ impl Harness {
             other => panic!("expected message, got {other:?}"),
         }
     }
+
+    /// Next controller message with this address; other control feedback
+    /// (greetings) in between is skipped. The read timeout still bounds the
+    /// wait, so a missing message fails the test.
+    fn recv_controller_msg(&self, want: &str) -> Vec<rosc::OscType> {
+        loop {
+            let (addr, args) = self.recv_controller();
+            if addr == want {
+                return args;
+            }
+        }
+    }
 }
 
 struct Conn {
@@ -321,11 +333,15 @@ fn echo_follows_tap_event_log_and_greets_new_origins() {
     // Give the tap client a moment to take the baseline.
     thread::sleep(Duration::from_millis(100));
 
-    // First contact from a new origin: immediate /vtr/rec 0 echo.
+    // First contact from a new origin: an immediate greeting with the
+    // whole control state, /vtr/rec 0 then /vtr/echo 1.
     h.relay("127.0.0.1:9001", "/vtr/clock", vec![f(1.0)]);
     let (addr, args) = h.recv_controller();
     assert_eq!(addr, "/vtr/rec");
     assert_eq!(float_of(&args), 0.0);
+    let (addr, args) = h.recv_controller();
+    assert_eq!(addr, "/vtr/echo");
+    assert_eq!(float_of(&args), 1.0);
 
     // rec_started in the tap event log -> /vtr/rec 1 to the origin.
     trigger_tx
@@ -359,9 +375,7 @@ fn playback_mirrors_to_an_origin_that_never_sent_a_vtr_command() {
     h.relay("127.0.0.1:9001", "/vtr/origin", vec![]);
     assert_eq!(c.request(json!({"cmd": "seek", "t": 2.0}))["ok"], true);
 
-    let (addr, args) = h.recv_controller();
-    assert_eq!(addr, "/fader");
-    assert_eq!(float_of(&args), 0.75);
+    assert_eq!(float_of(&h.recv_controller_msg("/fader")), 0.75);
 }
 
 #[test]
@@ -380,16 +394,16 @@ fn mirror_is_silent_while_recording() {
     assert_eq!(c.request(json!({"cmd": "load", "path": path}))["ok"], true);
     thread::sleep(Duration::from_millis(100));
 
-    // Registering greets the origin with the baseline rec state.
+    // Registering greets the origin with the baseline control state.
     h.relay("127.0.0.1:9001", "/vtr/origin", vec![]);
-    assert_eq!(h.recv_controller().0, "/vtr/rec");
+    assert_eq!(float_of(&h.recv_controller_msg("/vtr/rec")), 0.0);
 
     // Recording: mirroring the replay back would feed it into the clip.
     trigger_tx
         .send(json!({"ok": true, "seq": 1,
                      "events": [{"ev": "rec_started", "clip": "x.jsonl"}]}))
         .unwrap();
-    assert_eq!(h.recv_controller().0, "/vtr/rec");
+    assert_eq!(float_of(&h.recv_controller_msg("/vtr/rec")), 1.0);
     assert_eq!(c.request(json!({"cmd": "seek", "t": 2.0}))["ok"], true);
     // The app still gets it; the controller does not.
     assert_eq!(h.recv_app().0, "/fader");
@@ -407,11 +421,45 @@ fn mirror_is_silent_while_recording() {
     h.controller
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
-    assert_eq!(h.recv_controller().0, "/vtr/rec");
+    assert_eq!(float_of(&h.recv_controller_msg("/vtr/rec")), 0.0);
     assert_eq!(c.request(json!({"cmd": "seek", "t": 3.0}))["ok"], true);
-    let (addr, args) = h.recv_controller();
-    assert_eq!(addr, "/fader");
-    assert_eq!(float_of(&args), 0.25);
+    assert_eq!(float_of(&h.recv_controller_msg("/fader")), 0.25);
+}
+
+#[test]
+fn vtr_echo_toggles_the_mirror_and_confirms_to_targets() {
+    let tmp = tempfile::tempdir().unwrap();
+    let h = start_player(tmp.path(), None);
+    let path = write_session(
+        tmp.path(),
+        h.app_port,
+        &[ev(1.0, "/fader", &[0.75]), ev(2.5, "/fader", &[0.25])],
+    );
+    let mut c = h.connect();
+    assert_eq!(c.request(json!({"cmd": "load", "path": path}))["ok"], true);
+
+    // Off. The first contact greets with the pre-toggle state (1), then the
+    // toggle is confirmed (0) — the button ends up right either way.
+    h.relay("127.0.0.1:9001", "/vtr/echo", vec![f(0.0)]);
+    assert_eq!(float_of(&h.recv_controller_msg("/vtr/echo")), 1.0);
+    assert_eq!(float_of(&h.recv_controller_msg("/vtr/echo")), 0.0);
+    assert_eq!(c.request(json!({"cmd": "seek", "t": 2.0}))["ok"], true);
+    // The app is not affected by the toggle.
+    assert_eq!(h.recv_app().0, "/fader");
+    h.controller
+        .set_read_timeout(Some(Duration::from_millis(200)))
+        .unwrap();
+    let mut buf = [0u8; 1024];
+    assert!(h.controller.recv(&mut buf).is_err(), "mirrored while off");
+
+    // On again: confirmed, and mirroring resumes.
+    h.controller
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    h.relay("127.0.0.1:9001", "/vtr/echo", vec![f(1.0)]);
+    assert_eq!(float_of(&h.recv_controller_msg("/vtr/echo")), 1.0);
+    assert_eq!(c.request(json!({"cmd": "seek", "t": 3.0}))["ok"], true);
+    assert_eq!(float_of(&h.recv_controller_msg("/fader")), 0.25);
 }
 
 #[test]
@@ -441,7 +489,7 @@ fn a_pinned_host_is_not_fed_twice_when_it_also_registers() {
     h.relay("127.0.0.1:9001", "/vtr/origin", vec![]);
     assert_eq!(c.request(json!({"cmd": "seek", "t": 2.0}))["ok"], true);
 
-    assert_eq!(h.recv_controller().0, "/fader");
+    h.recv_controller_msg("/fader");
     h.controller
         .set_read_timeout(Some(Duration::from_millis(200)))
         .unwrap();

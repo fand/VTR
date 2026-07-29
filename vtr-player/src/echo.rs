@@ -8,8 +8,11 @@
 //!   contact from a new origin (initial sync for late-started controllers).
 //!   Rec state comes from a client thread long-polling the tap control
 //!   socket's `wait`.
+//! - `/vtr/echo <0|1>` on mirror-toggle change, greeted the same way.
 //! - the resolved playback values, mirrored by the transport so a
-//!   controller's faders follow the timeline (`mirror`).
+//!   controller's faders follow the timeline (`mirror`). `/vtr/echo 0`
+//!   pauses this — and only this: control feedback keeps flowing, which is
+//!   what lets the toggle button itself stay in sync.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write as _};
@@ -39,6 +42,9 @@ struct Inner {
     pinned: Option<IpAddr>,
     /// None until the tap reported a baseline.
     rec: Mutex<Option<bool>>,
+    /// Playback-value mirroring, toggled by `/vtr/echo`. On by default;
+    /// player-local, so a restart turns it back on.
+    mirror_on: Mutex<bool>,
     sock: UdpSocket,
     echo_port: u16,
 }
@@ -56,6 +62,7 @@ impl Echo {
                 origins: Mutex::new(HashMap::new()),
                 pinned,
                 rec: Mutex::new(None),
+                mirror_on: Mutex::new(true),
                 sock,
                 echo_port,
             }),
@@ -76,8 +83,9 @@ impl Echo {
         };
         if fresh_contact {
             if let Some(rec) = *self.inner.rec.lock().unwrap() {
-                self.send(ip, rec);
+                self.send(ip, "/vtr/rec", rec);
             }
+            self.send(ip, "/vtr/echo", *self.inner.mirror_on.lock().unwrap());
         }
     }
 
@@ -93,7 +101,25 @@ impl Echo {
             return;
         }
         for ip in self.live() {
-            self.send(ip, rec);
+            self.send(ip, "/vtr/rec", rec);
+        }
+    }
+
+    /// `/vtr/echo`: toggle the playback-value mirror. On change, confirm the
+    /// new state to every target — the sender included, which is what flips
+    /// the toggle button on a controller that came in stale.
+    pub fn set_mirror_on(&self, on: bool) {
+        let changed = {
+            let mut cur = self.inner.mirror_on.lock().unwrap();
+            let changed = *cur != on;
+            *cur = on;
+            changed
+        };
+        if !changed {
+            return;
+        }
+        for ip in self.live() {
+            self.send(ip, "/vtr/echo", on);
         }
     }
 
@@ -102,6 +128,9 @@ impl Echo {
     /// values would come straight back in through the tap and land in the
     /// clip.
     pub fn mirror(&self, msgs: &[OscMessage]) {
+        if !*self.inner.mirror_on.lock().unwrap() {
+            return;
+        }
         if *self.inner.rec.lock().unwrap() == Some(true) {
             return;
         }
@@ -138,10 +167,11 @@ impl Echo {
             .collect()
     }
 
-    fn send(&self, ip: IpAddr, rec: bool) {
+    /// One control-feedback message: a bool state as 0.0/1.0.
+    fn send(&self, ip: IpAddr, addr: &str, on: bool) {
         let Ok(buf) = rosc::encoder::encode(&OscPacket::Message(OscMessage {
-            addr: "/vtr/rec".into(),
-            args: vec![OscType::Float(if rec { 1.0 } else { 0.0 })],
+            addr: addr.into(),
+            args: vec![OscType::Float(if on { 1.0 } else { 0.0 })],
         })) else {
             return;
         };

@@ -75,6 +75,13 @@ pub fn spawn(
                     // Controller transport commands share the origin "osc",
                     // so both TD and the editor follow them.
                     "/vtr/play" => transport.play("osc"),
+                    // Mirror toggle: pause/resume playback-value feedback.
+                    // Global, like every other /vtr command.
+                    "/vtr/echo" => {
+                        if let Some(v) = arg_as_f64(m.args.first()).filter(|v| v.is_finite()) {
+                            echo.set_mirror_on(v != 0.0);
+                        }
+                    }
                     "/vtr/stop" => transport.stop("osc"),
                     "/vtr/seek" => {
                         if let Some(t) = arg_as_f64(m.args.first()).filter(|v| v.is_finite()) {
