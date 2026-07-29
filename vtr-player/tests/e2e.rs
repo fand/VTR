@@ -452,14 +452,63 @@ fn vtr_echo_toggles_the_mirror_and_confirms_to_targets() {
     let mut buf = [0u8; 1024];
     assert!(h.controller.recv(&mut buf).is_err(), "mirrored while off");
 
-    // On again: confirmed, and mirroring resumes.
+    // On again: confirmed, and the resync mirrors the playhead value the
+    // controller missed while it was off.
     h.controller
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
     h.relay("127.0.0.1:9001", "/vtr/echo", vec![f(1.0)]);
     assert_eq!(float_of(&h.recv_controller_msg("/vtr/echo")), 1.0);
+    assert_eq!(float_of(&h.recv_controller_msg("/fader")), 0.75);
+    // And live mirroring resumes.
     assert_eq!(c.request(json!({"cmd": "seek", "t": 3.0}))["ok"], true);
     assert_eq!(float_of(&h.recv_controller_msg("/fader")), 0.25);
+}
+
+#[test]
+fn vtr_echo_on_resyncs_every_address_without_touching_the_app() {
+    let tmp = tempfile::tempdir().unwrap();
+    let h = start_player(tmp.path(), None);
+    let path = write_session(
+        tmp.path(),
+        h.app_port,
+        &[
+            ev(1.0, "/a", &[0.25]),
+            ev(2.0, "/b", &[0.5]),
+            ev(3.0, "/a", &[0.75]),
+        ],
+    );
+    let mut c = h.connect();
+    assert_eq!(c.request(json!({"cmd": "load", "path": path}))["ok"], true);
+    h.relay("127.0.0.1:9001", "/vtr/origin", vec![]);
+    assert_eq!(c.request(json!({"cmd": "seek", "t": 4.0}))["ok"], true);
+
+    // Flush order is unordered per flush: collect both addresses.
+    let recv_pair = || {
+        let (mut a, mut b) = (None, None);
+        while a.is_none() || b.is_none() {
+            let (addr, args) = h.recv_controller();
+            match addr.as_str() {
+                "/a" => a = Some(float_of(&args)),
+                "/b" => b = Some(float_of(&args)),
+                _ => {}
+            }
+        }
+        (a.unwrap(), b.unwrap())
+    };
+    assert_eq!(recv_pair(), (0.75, 0.5));
+    // Drain the seek's app emissions so the quiet check below is real.
+    h.recv_app();
+    h.recv_app();
+
+    // The mirror is on and up to date, so this toggles nothing — but the
+    // full state still goes out once (a manual sync request).
+    h.relay("127.0.0.1:9001", "/vtr/echo", vec![f(1.0)]);
+    assert_eq!(recv_pair(), (0.75, 0.5));
+    // The app stream is untouched: nothing is re-sent there.
+    h.app.set_read_timeout(Some(Duration::from_millis(200))).unwrap();
+    let mut buf = [0u8; 1024];
+    assert!(h.app.recv(&mut buf).is_err(), "resync leaked to the app");
 }
 
 #[test]

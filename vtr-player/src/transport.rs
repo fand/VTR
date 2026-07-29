@@ -15,6 +15,7 @@
 
 use std::collections::HashMap;
 use std::net::{IpAddr, UdpSocket};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -105,6 +106,9 @@ struct Inner {
     changed: Condvar,
     /// Latest-wins seek mailbox (the t to emit once).
     seek: Mutex<Option<f64>>,
+    /// `/vtr/echo 1` asked for a full mirror resync (all addresses at the
+    /// playhead, mirror only).
+    resync: AtomicBool,
     sock: UdpSocket,
     host: IpAddr,
     echo: Echo,
@@ -134,6 +138,7 @@ impl Transport {
             }),
             changed: Condvar::new(),
             seek: Mutex::new(None),
+            resync: AtomicBool::new(false),
             sock,
             host,
             echo,
@@ -206,6 +211,14 @@ impl Transport {
         *self.inner.seek.lock().unwrap() = Some(t);
         drop(st);
         self.inner.changed.notify_all();
+    }
+
+    /// `/vtr/echo 1`: ask the emit loop to mirror the full current state —
+    /// every address resolved at the playhead, like a seek's catch-up — so
+    /// a controller that sat out (mirror off, joined late) snaps to the
+    /// timeline. Mirror only; the app stream and its dedup are untouched.
+    pub fn request_echo_resync(&self) {
+        self.inner.resync.store(true, Ordering::Relaxed);
     }
 
     pub fn playhead(&self) -> f64 {
@@ -297,6 +310,17 @@ fn emit_loop(inner: Arc<Inner>) {
         let (Some(l), Some(r)) = (&loaded, &mut resolver) else {
             continue;
         };
+        // Full mirror resync (`/vtr/echo 1`): every routed address at the
+        // playhead, staged for the mirror only. Live emits this tick land
+        // after and overwrite — newest wins as usual.
+        if inner.resync.swap(false, Ordering::Relaxed) {
+            let t = inner.state.lock().unwrap().playhead();
+            for (port, addr, args) in r.snapshot_at(t) {
+                if l.routes.contains_key(&port) {
+                    pending.insert((port, addr), args);
+                }
+            }
+        }
         // base_t/anchor are already set by request_seek; the mailbox just
         // asks us to push the resolved frame once (covers the paused case).
         if let Some(t) = inner.seek.lock().unwrap().take() {

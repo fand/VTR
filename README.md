@@ -62,7 +62,7 @@ its non-`/vtr` siblings are dropped, so don't mix them in one bundle.
 | `/vtr/rec/stop` | — | tap | Stop the clip. |
 | `/vtr/play` / `/vtr/stop` | — | player | Push-transport run/pause (origin `osc`). |
 | `/vtr/seek` | `t` | player | Jump the push transport to `t` (origin `osc`). |
-| `/vtr/echo` | `0\|1` | player | Pause/resume the playback-value mirror (global). Control feedback — `/vtr/rec` and the `/vtr/echo` confirmation itself — keeps flowing, so toggle buttons stay in sync. Back on after a player restart. |
+| `/vtr/echo` | `0\|1` | player | Pause/resume the playback-value mirror (global). `1` also mirrors every address's value at the playhead once — a full sync, like a seek's catch-up — even when the mirror was already on. Control feedback — `/vtr/rec` and the `/vtr/echo` confirmation itself — keeps flowing, so toggle buttons stay in sync. Back on after a player restart. |
 | `/vtr/origin` | — | player | Internal to the tap→player relay: tells the player a host is talking to us, so it can feed that host back. Never sent by a controller. |
 
 All rec commands are idempotent: start-while-recording and stop-while-idle
@@ -94,7 +94,9 @@ Two kinds of message go out:
   and XY pads follow the timeline during preview and replay. Coalesced per
   address and flushed at 50Hz. Silent while recording (the mirror would
   come back in through the tap and land in the clip) and while toggled off
-  with `/vtr/echo 0`.
+  with `/vtr/echo 0`. `/vtr/echo 1` mirrors the full state once (every
+  address at the playhead), so a controller that sat out catches up — or
+  can request a sync any time by re-sending `1`.
 
 TouchOSC note: leave each control's own `Feedback` flag off (the default).
 It makes TouchOSC re-send values it receives, which turns the mirror into

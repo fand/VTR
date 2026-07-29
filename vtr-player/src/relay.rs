@@ -79,7 +79,15 @@ pub fn spawn(
                     // Global, like every other /vtr command.
                     "/vtr/echo" => {
                         if let Some(v) = arg_as_f64(m.args.first()).filter(|v| v.is_finite()) {
-                            echo.set_mirror_on(v != 0.0);
+                            let on = v != 0.0;
+                            echo.set_mirror_on(on);
+                            // Every truthy /vtr/echo also mirrors the full
+                            // current state once (like a seek's catch-up),
+                            // so the controller snaps to the timeline even
+                            // if the mirror was already on.
+                            if on {
+                                transport.request_echo_resync();
+                            }
                         }
                     }
                     "/vtr/stop" => transport.stop("osc"),
