@@ -71,6 +71,20 @@ export function evalCurve(knots: CurveKnot[], t: number): number {
   return bezXY(p, paramAt(p, t)).y
 }
 
+/** The player's event-vs-curve rule (resolver.rs, pinned by
+ *  conformance_resolver.rs): once t reaches a span, the curve's definition
+ *  time is min(t, span end) and ties go to the curve — so a point at or
+ *  inside a span (ends inclusive) is outranked at every t and never plays,
+ *  even after the span ends. Drop those; the survivors merge with curves by
+ *  plain "latest definition wins". */
+export function unshadowedPoints<P extends { t: number }>(
+  points: readonly P[],
+  spans: readonly { start: number; end: number }[]
+): P[] {
+  if (spans.length === 0) return [...points]
+  return points.filter((p) => !spans.some((s) => s.start <= p.t && p.t <= s.end))
+}
+
 /** De Casteljau split of one segment at parameter u: two cubics sharing the
  *  split point. */
 function splitCtrl(p: [XY, XY, XY, XY], u: number): [[XY, XY, XY, XY], [XY, XY, XY, XY]] {

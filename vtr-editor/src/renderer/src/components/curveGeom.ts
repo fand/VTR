@@ -22,7 +22,9 @@ export interface GeomProp {
   min: number
   max: number
   points: { t: number; v: number }[]
-  /** Points + curve spans merged, sorted by t. Absent = points only. */
+  /** Points + curve spans merged, sorted by t, with points at/inside a span
+   *  dropped — they never play (shared/curve unshadowedPoints), so the
+   *  merged path and value must skip them too. Absent = points only. */
   els?: GeomEl[]
 }
 
@@ -51,10 +53,12 @@ export const valueAt = (points: { t: number; v: number }[], t: number): number =
   return v
 }
 
-/** Merged curve value at time t: the last-started element wins — a point
- *  holds its value, a curve interpolates inside its span and holds its end
- *  value after. Before every element the first one's flat-left value
- *  applies. Null when the property is empty. */
+/** Merged playback value at time t. On unshadowed els (points inside spans
+ *  already dropped) "the last-started element wins" is exactly the player's
+ *  latest-definition-wins rule: a point holds its value, a curve
+ *  interpolates inside its span and holds its end value after. Before every
+ *  element the first one's flat-left value applies. Null when the property
+ *  is empty. */
 export function mergedValueAt(p: GeomProp, t: number): number | null {
   const els: readonly GeomEl[] = p.els ?? p.points
   if (els.length === 0) return null
@@ -144,9 +148,16 @@ export function walkMerged(p: GeomProp, s: Scale, t0: number, t1: number, sink: 
   const els: readonly GeomEl[] = p.els ?? p.points
   const n = els.length
   if (n === 0) return
-  // Nothing extends right of the last element or left of the first.
+  // Nothing extends right of the last element or left of the first. A span
+  // can outlast elements that start after it (hand-edited overlaps), so
+  // take the max end across every span, not just the last element's.
   const lastEl = els[n - 1]
-  const lastEnd = 'knots' in lastEl ? lastEl.knots[lastEl.knots.length - 1].t : lastEl.t
+  let lastEnd = 'knots' in lastEl ? lastEl.knots[lastEl.knots.length - 1].t : lastEl.t
+  if (p.els) {
+    for (const el of els) {
+      if ('knots' in el) lastEnd = Math.max(lastEnd, el.knots[el.knots.length - 1].t)
+    }
+  }
   if (lastEnd < t0 || els[0].t > t1) return
   // lo: one before the first element starting at/after t0.
   let a = 0

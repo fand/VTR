@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clipCurve, evalCurve, fitCurve, segmentCtrl } from './curve'
+import { clipCurve, evalCurve, fitCurve, segmentCtrl, unshadowedPoints } from './curve'
 import type { CurveKnot } from './types'
 
 /** Max |evalCurve - v| over the samples. */
@@ -182,5 +182,27 @@ describe('clipCurve', () => {
     expect(clipCurve(src, 3, 4)).toBeNull()
     expect(clipCurve(src, -2, -1)).toBeNull()
     expect(clipCurve(src, 0.5, 0.5)).toBeNull()
+  })
+})
+
+describe('unshadowedPoints', () => {
+  it('drops points at or inside a span, ends inclusive', () => {
+    const pts = [1, 2, 3, 4, 5].map((t) => ({ t }))
+    const out = unshadowedPoints(pts, [{ start: 2, end: 4 }])
+    expect(out.map((p) => p.t)).toEqual([1, 5])
+  })
+
+  it('keeps everything when there are no spans', () => {
+    const pts = [{ t: 1 }, { t: 2 }]
+    expect(unshadowedPoints(pts, [])).toEqual(pts)
+  })
+
+  it('checks every span, not just the first', () => {
+    const pts = [0.5, 1.5, 2.5].map((t) => ({ t }))
+    const out = unshadowedPoints(pts, [
+      { start: 0, end: 1 },
+      { start: 2, end: 3 }
+    ])
+    expect(out.map((p) => p.t)).toEqual([1.5])
   })
 })

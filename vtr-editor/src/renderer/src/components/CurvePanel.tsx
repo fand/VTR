@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Magnet, Maximize2, Pencil, Spline, SquareDashed } from 'lucide-react'
-import { clipCurve } from '../../../shared/curve'
+import { clipCurve, unshadowedPoints } from '../../../shared/curve'
 import { applyEditsIndexed } from '../../../shared/edits'
 import type { ClipCurve, ClipEdits, CurveKnot, OscEvent } from '../../../shared/types'
 import { ClipInst, clipLen, formatRulerLabel } from '../timeline/model'
@@ -220,8 +220,15 @@ function buildProperties(
         }
       }
     }
+    // Points inside a span never play (the curve outranks them for good —
+    // unshadowedPoints), so the merged path skips them; the dots still draw
+    // from `points` so they stay visible and editable.
+    const spans = curves.map((pc) => ({
+      start: pc.knots[0].t,
+      end: pc.knots[pc.knots.length - 1].t
+    }))
     const els: GeomEl[] = [
-      ...points.map((pt) => ({ t: pt.t, v: pt.v })),
+      ...unshadowedPoints(points, spans).map((pt) => ({ t: pt.t, v: pt.v })),
       ...curves.map((pc, ci) => ({ t: pc.knots[0].t, knots: pc.knots, curve: ci }))
     ].sort((a, b) => a.t - b.t)
     return { key, label, color: propColor(i), points, curves, els, min, max }

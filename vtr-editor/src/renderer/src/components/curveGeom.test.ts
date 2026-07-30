@@ -1,4 +1,5 @@
 import { expect, test } from 'vitest'
+import { unshadowedPoints } from '../../../shared/curve'
 import {
   PAD,
   fitZoomX,
@@ -238,4 +239,59 @@ test('mergedValueAt interpolates inside curve spans and steps elsewhere', () => 
   expect(mergedValueAt(p, 7)).toBe(0.2) // the point takes over
   expect(mergedValueAt(p, 9)).toBe(0.7)
   expect(mergedValueAt({ min: 0, max: 1, points: [] }, 0)).toBeNull()
+})
+
+// Mirrors conformance_resolver.rs (test_event_vs_curve_latest_definition_wins,
+// test_same_time_tie_goes_to_curve): a curve outranks points at/inside its
+// span forever, so buildProperties drops them from els (unshadowedPoints)
+// and the plain last-started-wins merge below matches the player.
+test('mergedValueAt matches the resolver once shadowed points are dropped', () => {
+  const knots = [
+    { t: 0, v: 0 },
+    { t: 4, v: 1 }
+  ]
+  const points = [
+    { t: 2, v: 9 }, // inside the span: never plays
+    { t: 4, v: 9 }, // at the span end: tie goes to the curve, never plays
+    { t: 6, v: 9 } // after the span: wins from its t
+  ]
+  const els: GeomEl[] = [
+    { t: 0, knots, curve: 0 },
+    ...unshadowedPoints(points, [{ start: 0, end: 4 }])
+  ].sort((a, b) => a.t - b.t)
+  const p: GeomProp = { min: 0, max: 9, points, els }
+  expect(mergedValueAt(p, 2)).toBeCloseTo(0.5, 9) // curve, not the point
+  expect(mergedValueAt(p, 5)).toBe(1) // end value still wins
+  expect(mergedValueAt(p, 6)).toBe(9) // later point takes over
+})
+
+test('walkMerged culls by span end, not by the last element', () => {
+  // A span outlasting a later-starting element (hand-edited overlap): a
+  // window past the short span must still draw the long one.
+  const els: GeomEl[] = [
+    {
+      t: 0,
+      knots: [
+        { t: 0, v: 0 },
+        { t: 8, v: 1 }
+      ],
+      curve: 0
+    },
+    {
+      t: 2,
+      knots: [
+        { t: 2, v: 0 },
+        { t: 3, v: 0 }
+      ],
+      curve: 1
+    }
+  ]
+  const p: GeomProp = { min: 0, max: 1, points: [], els }
+  const cmds: string[] = []
+  walkMerged(p, s, 5, 6, {
+    moveTo: () => cmds.push('M'),
+    lineTo: () => cmds.push('L'),
+    bezierTo: () => cmds.push('C')
+  })
+  expect(cmds).not.toEqual([])
 })
