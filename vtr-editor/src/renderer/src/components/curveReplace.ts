@@ -2,7 +2,7 @@
  *  overlay records plus the matching event deletions. Pure (no DOM) so it
  *  unit-tests with vitest; CurvePanel supplies the covered events from the
  *  current selection. */
-import { fitCurve } from '../../../shared/curve'
+import { clipCurve, fitCurve } from '../../../shared/curve'
 import type { ClipCurve, OscEvent } from '../../../shared/types'
 
 /** Fit tolerance in normalized space (t by group span, v by value range). */
@@ -90,4 +90,33 @@ export function buildCurveReplace(inputs: ReplaceInput[]): CurveReplace | null {
     .filter((i) => fitted.has(`${i.file}:${i.eventIndex}`))
     .map(({ file, eventIndex }) => ({ file, eventIndex }))
   return { dels, adds }
+}
+
+/**
+ * Carve `added`'s span out of the overlay curves that share its
+ * (port, a, arg): overlapping curves are deleted and their out-of-span
+ * remainders re-appended, so one clip never holds two curves competing for
+ * the same time range. `existing` is the overlay's curves array with
+ * already-deleted entries as undefined (indices are curveDel keys).
+ */
+export function subtractCurveOverlap(
+  existing: (ClipCurve | undefined)[],
+  added: ClipCurve
+): { dels: number[]; remainders: ClipCurve[] } {
+  const t0 = added.knots[0].t
+  const t1 = added.knots[added.knots.length - 1].t
+  const dels: number[] = []
+  const remainders: ClipCurve[] = []
+  existing.forEach((c, i) => {
+    if (!c || c.port !== added.port || c.a !== added.a || c.arg !== added.arg) return
+    const start = c.knots[0].t
+    const end = c.knots[c.knots.length - 1].t
+    if (end <= t0 || start >= t1) return
+    dels.push(i)
+    const left = clipCurve(c.knots, -Infinity, t0)
+    if (left) remainders.push({ ...c, knots: left })
+    const right = clipCurve(c.knots, t1, Infinity)
+    if (right) remainders.push({ ...c, knots: right })
+  })
+  return { dels, remainders }
 }

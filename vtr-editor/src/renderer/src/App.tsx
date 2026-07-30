@@ -14,6 +14,7 @@ import {
   type UndoEntry
 } from '../../shared/types'
 import { CurvePanel, PointAdd, PointPatch, PointSel } from './components/CurvePanel'
+import { subtractCurveOverlap } from './components/curveReplace'
 import { clearEventsCache } from './components/eventsCache'
 import {
   ClipAction,
@@ -1256,7 +1257,9 @@ function App(): React.JSX.Element {
   )
 
   // Replace with Curve: one undo entry deletes the covered events and
-  // appends the fitted curves to the clips' overlays.
+  // appends the fitted curves to the clips' overlays. A new curve carves
+  // its span out of same-(port, a, arg) curves already in the overlay, so
+  // re-replacing a range never leaves two curves competing for it.
   const onCurveReplace = useCallback(
     (dels: { file: string; eventIndex: number }[], adds: { file: string; curve: ClipCurve }[]) => {
       if (adds.length === 0) return
@@ -1267,7 +1270,11 @@ function App(): React.JSX.Element {
         }
         for (const { file, curve } of adds) {
           const clipEdits = (d.edits[file] ??= {})
-          ;(clipEdits.curves ??= []).push(curve)
+          const curves = (clipEdits.curves ??= [])
+          const visible = curves.map((c, i) => (clipEdits.curveDel?.[i] ? undefined : c))
+          const cut = subtractCurveOverlap(visible, curve)
+          for (const i of cut.dels) (clipEdits.curveDel ??= {})[i] = true
+          curves.push(...cut.remainders, curve)
         }
       })
       setSelectedPoints([])

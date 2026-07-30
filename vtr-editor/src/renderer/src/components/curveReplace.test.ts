@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { evalCurve } from '../../../shared/curve'
-import type { OscEvent } from '../../../shared/types'
-import { buildCurveReplace, type ReplaceInput } from './curveReplace'
+import type { ClipCurve, OscEvent } from '../../../shared/types'
+import { buildCurveReplace, subtractCurveOverlap, type ReplaceInput } from './curveReplace'
 
 function input(
   file: string,
@@ -109,5 +109,55 @@ describe('buildCurveReplace', () => {
         input('a.jsonl', 1, { t: 1, args: [1] })
       ])
     ).toBeNull()
+  })
+})
+
+describe('subtractCurveOverlap', () => {
+  const mk = (t0: number, t1: number, over: Partial<ClipCurve> = {}): ClipCurve => ({
+    port: 10010,
+    a: '/x',
+    arg: 0,
+    args: [0],
+    types: 'f',
+    knots: [
+      { t: t0, v: 0 },
+      { t: t1, v: 1 }
+    ],
+    ...over
+  })
+
+  it('splits a covering curve into left and right remainders', () => {
+    const existing = mk(0, 10)
+    const { dels, remainders } = subtractCurveOverlap([existing], mk(4, 6))
+    expect(dels).toEqual([0])
+    expect(remainders).toHaveLength(2)
+    const [left, right] = remainders
+    expect(left.knots[0].t).toBe(0)
+    expect(left.knots[left.knots.length - 1].t).toBeCloseTo(4, 9)
+    expect(right.knots[0].t).toBeCloseTo(6, 9)
+    expect(right.knots[right.knots.length - 1].t).toBe(10)
+    // Remainders trace the original.
+    expect(evalCurve(left.knots, 2)).toBeCloseTo(evalCurve(existing.knots, 2), 9)
+    expect(evalCurve(right.knots, 8)).toBeCloseTo(evalCurve(existing.knots, 8), 9)
+  })
+
+  it('drops a fully covered curve with no remainders', () => {
+    const { dels, remainders } = subtractCurveOverlap([mk(4, 6)], mk(0, 10))
+    expect(dels).toEqual([0])
+    expect(remainders).toHaveLength(0)
+  })
+
+  it('ignores disjoint, deleted, and other-arg curves', () => {
+    const { dels, remainders } = subtractCurveOverlap(
+      [mk(0, 3), undefined, mk(0, 10, { arg: 1 }), mk(0, 10, { a: '/y' })],
+      mk(4, 6)
+    )
+    expect(dels).toEqual([])
+    expect(remainders).toHaveLength(0)
+  })
+
+  it('leaves adjacent (touching) curves alone', () => {
+    const { dels } = subtractCurveOverlap([mk(0, 4)], mk(4, 6))
+    expect(dels).toEqual([])
   })
 })

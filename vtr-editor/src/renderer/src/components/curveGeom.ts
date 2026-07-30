@@ -158,12 +158,17 @@ export function walkMerged(p: GeomProp, s: Scale, t0: number, t1: number, sink: 
   }
   const hi = Math.min(n - 1, a)
   let prevY: number | null = null
+  let penX = -Infinity
   const step = (px: number, py: number): void => {
-    if (prevY == null) sink.moveTo(px, py)
+    // Overlapping spans (hand-edited files) can step backwards; clamp so
+    // the step lines never draw leftwards.
+    const x = Math.max(px, penX)
+    if (prevY == null) sink.moveTo(x, py)
     else {
-      sink.lineTo(px, prevY)
-      sink.lineTo(px, py)
+      sink.lineTo(x, prevY)
+      sink.lineTo(x, py)
     }
+    penX = x
     prevY = py
   }
   for (let i = lo; i <= hi; i++) {
@@ -182,6 +187,7 @@ export function walkMerged(p: GeomProp, s: Scale, t0: number, t1: number, sink: 
           yAt(s, p, p3.y)
         )
       }
+      penX = Math.max(penX, xAt(s, kn[kn.length - 1].t))
       prevY = yAt(s, p, kn[kn.length - 1].v)
     } else {
       step(xAt(s, el.t), yAt(s, p, el.v))
