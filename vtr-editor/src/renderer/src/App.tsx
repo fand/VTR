@@ -610,18 +610,27 @@ function App(): React.JSX.Element {
     return () => clearTimeout(t)
   }, [bootDone, projectFile, tracks, markers, ports, duration, edits, history.seq])
 
-  const saveTo = useCallback(
-    async (path: string): Promise<void> => {
-      await window.api.project.save(
-        path,
-        serializeProject(tracks, markers, ports, duration, edits, history.seq)
-      )
-      setProjectFile(path)
-      setSavedState({ seq: history.seq, ports })
-      setLog(`Saved ${path.split(/[\\/]/).pop()}`)
-    },
-    [tracks, markers, ports, duration, edits, history.seq]
-  )
+  // Menu/keydown listeners resubscribe in a passive effect, so a save fired
+  // right after a commit (record stop → immediate Cmd+S) can run against a
+  // stale closure and silently drop the newest change from project.json.
+  // Saves read the latest state through this ref instead; the layout effect
+  // updates it synchronously with the DOM commit, so it is current as soon
+  // as the change is visible — not one passive-effect flush later.
+  const saveState = useRef({ tracks, markers, ports, duration, edits, seq: history.seq })
+  useLayoutEffect(() => {
+    saveState.current = { tracks, markers, ports, duration, edits, seq: history.seq }
+  })
+
+  const saveTo = useCallback(async (path: string): Promise<void> => {
+    const s = saveState.current
+    await window.api.project.save(
+      path,
+      serializeProject(s.tracks, s.markers, s.ports, s.duration, s.edits, s.seq)
+    )
+    setProjectFile(path)
+    setSavedState({ seq: s.seq, ports: s.ports })
+    setLog(`Saved ${path.split(/[\\/]/).pop()}`)
+  }, [])
 
   /** Resolves true only when the project actually saved (dialog not cancelled). */
   const saveProjectAs = useCallback(async (): Promise<boolean> => {
