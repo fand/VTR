@@ -3,6 +3,7 @@
  *  over everything drawn (points + knots). No React, no DOM. */
 import { clipCurve, unshadowedPoints } from '../../../shared/curve'
 import { applyEditsIndexed } from '../../../shared/edits'
+import type { EventPointSel, KnotSel, PointSel } from '../../../shared/edits'
 import type { ClipCurve, ClipEdits, CurveKnot, OscEvent } from '../../../shared/types'
 import type { ClipInst } from '../timeline/model'
 import type { GeomEl } from './curveGeom'
@@ -173,22 +174,16 @@ export function buildProperties(
   })
 }
 
-/** One selected discrete point (an event's numeric arg). */
-export interface EventPointSel {
-  /** Clip file the event belongs to (ClipEdits key space). */
-  file: string
-  eventIndex: number
-  argIndex: number
-}
-
-/** One selected bezier knot; curveIndex keys the overlay's curves array. */
-export interface KnotSel {
-  file: string
-  curveIndex: number
-  knotIndex: number
-}
-
-export type PointSel = EventPointSel | KnotSel
+// Selection identities and patch types live beside the overlay transforms
+// they feed (shared/edits.ts); re-exported here for the panel's modules.
+export type {
+  CurvePatch,
+  EventPatch,
+  EventPointSel,
+  KnotSel,
+  PointPatch,
+  PointSel
+} from '../../../shared/edits'
 
 export function selKey(s: PointSel): string {
   return 'curveIndex' in s
@@ -209,24 +204,6 @@ export interface PointAdd {
   sel: EventPointSel
   ev: OscEvent
 }
-
-/** One numeric-arg edit: absolute clip-local t and/or value for args[argIndex]. */
-export interface EventPatch {
-  file: string
-  eventIndex: number
-  t?: number
-  argIndex?: number
-  value?: number
-}
-
-/** Whole-array knot replacement for one overlay curve (clip-local t). */
-export interface CurvePatch {
-  file: string
-  curveIndex: number
-  knots: CurveKnot[]
-}
-
-export type PointPatch = EventPatch | CurvePatch
 
 /** One visited drawn element: a discrete point or a curve knot. */
 export interface ElVisit {
