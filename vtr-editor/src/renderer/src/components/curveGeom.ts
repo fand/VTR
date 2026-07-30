@@ -42,17 +42,6 @@ export const vAt = (s: Scale, p: { min: number; max: number }, py: number): numb
     ? p.min
     : p.min + (1 - (py - PAD) / Math.max(s.innerH - 2 * PAD, 1)) * (p.max - p.min)
 
-/** Step-after curve value at time t: the last point at or before t, or the
- *  first point's value before any point. Points must be sorted by t. */
-export const valueAt = (points: { t: number; v: number }[], t: number): number => {
-  let v = points[0].v
-  for (const pt of points) {
-    if (pt.t > t) break
-    v = pt.v
-  }
-  return v
-}
-
 /** Merged playback value at time t. On unshadowed els (points inside spans
  *  already dropped) "the last-started element wins" is exactly the player's
  *  latest-definition-wins rule: a point holds its value, a curve

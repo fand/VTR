@@ -48,7 +48,6 @@ export type ClipAction = 'mute' | 'copy' | 'paste' | 'duplicate' | 'split' | 're
 interface Drag {
   mode: DragMode
   clipId: number
-  fromTrack: number
   startX: number
   startY: number
   orig: ClipInst
@@ -481,11 +480,7 @@ export function Timeline({
     onTracksChange(next, commit)
   }
 
-  const onClipPointerDown = (
-    e: React.PointerEvent<HTMLDivElement>,
-    clip: ClipInst,
-    trackIdx: number
-  ): void => {
+  const onClipPointerDown = (e: React.PointerEvent<HTMLDivElement>, clip: ClipInst): void => {
     if (e.button !== 0) return
     e.stopPropagation()
     // Shift/cmd-click toggles selection membership; no drag starts.
@@ -507,7 +502,6 @@ export function Timeline({
     drag.current = {
       mode,
       clipId: clip.id,
-      fromTrack: trackIdx,
       startX: e.clientX,
       startY: e.clientY,
       orig: clip,
@@ -815,7 +809,7 @@ export function Timeline({
                           zIndex: 10
                         })
                       }}
-                      onPointerDown={(e) => onClipPointerDown(e, clip, trackIdx)}
+                      onPointerDown={(e) => onClipPointerDown(e, clip)}
                       onPointerMove={onClipPointerMove}
                       onPointerUp={onClipPointerUp}
                       onPointerCancel={onClipPointerCancel}

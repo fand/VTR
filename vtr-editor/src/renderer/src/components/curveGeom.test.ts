@@ -9,7 +9,6 @@ import {
   mergedValueAt,
   tAt,
   vAt,
-  valueAt,
   visibleRange,
   walkMerged,
   xAt,
@@ -166,19 +165,6 @@ test('hitKnot finds the nearest knot within radius', () => {
   const at8 = { x: xAt(s, 8), y: yAt(s, p, 1) }
   expect(hitKnot([p], s, { x: at8.x + 4, y: at8.y }, 6)).toEqual({ prop: 0, curve: 0, knot: 1 })
   expect(hitKnot([p], s, { x: at8.x + 9, y: at8.y }, 6)).toBeNull()
-})
-
-test('valueAt evaluates the step-after curve', () => {
-  const pts = [
-    { t: 1, v: 0.1 },
-    { t: 2, v: 0.5 },
-    { t: 4, v: 0.9 }
-  ]
-  expect(valueAt(pts, 0)).toBe(0.1) // before the first point
-  expect(valueAt(pts, 1)).toBe(0.1) // at a point
-  expect(valueAt(pts, 1.5)).toBe(0.1) // on the flat run
-  expect(valueAt(pts, 3)).toBe(0.5)
-  expect(valueAt(pts, 9)).toBe(0.9) // after the last point
 })
 
 test('fitZoomX makes the target span the drawable width', () => {
