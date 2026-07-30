@@ -230,6 +230,23 @@ fn test_same_arg_curves_share_a_group() {
 }
 
 #[test]
+fn test_shared_jsonl_fixture_loads_identically() {
+    // Golden fixture shared with the editor (src/shared/jsonl.test.ts,
+    // src/main/clips.test.ts): one line per kind, an unknown type, a torn
+    // line. Both loaders must agree on what counts.
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/session_lines.jsonl");
+    let s = session::load(&p).unwrap();
+    assert_eq!(s.len(), 3, "events only; typed lines are not events");
+    assert_eq!(s.skipped, 1, "the torn line; summary/unknown are tolerated");
+    assert_eq!(s.routes, [(10010, 10011)].into());
+    assert_eq!(s.duration, 40.0);
+    assert_eq!(s.curves.len(), 1);
+    assert_eq!(s.curve_groups[0].start, 0.0);
+    assert_eq!(s.curve_groups[0].end, 3.0);
+}
+
+#[test]
 fn test_curve_group_args_clamps_to_the_earliest_span_before_both() {
     let s = load(&[
         curve_line("/x", 0, json!([{"t": 10.0, "v": 5.0}, {"t": 11.0, "v": 6.0}])),

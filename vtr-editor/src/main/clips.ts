@@ -1,5 +1,6 @@
 import { readFileSync } from 'fs'
 import { basename } from 'path'
+import { parseLine } from '../shared/jsonl'
 import type { ClipSummary, OscEvent } from '../shared/types'
 
 export interface ClipData {
@@ -24,21 +25,25 @@ export function readClip(path: string): ClipData {
   let writeErrors = 0
   let writeError: string | null = null
   const events: OscEvent[] = []
-  for (const line of lines) {
-    let v
-    try {
-      v = JSON.parse(line)
-    } catch {
-      continue // torn tail from a crash mid-append, or stray corruption
+  for (const raw of lines) {
+    const p = parseLine(raw)
+    switch (p.kind) {
+      case 'session_start':
+        wall = p.line.wall ?? null
+        break
+      case 'session_end':
+        end = p.line.t
+        break
+      case 'summary':
+        dropped = p.line.dropped ?? 0
+        writeErrors = p.line.write_errors ?? 0
+        writeError = p.line.write_error ?? null
+        break
+      case 'event':
+        events.push(p.line)
+        break
+      // curve (never recorded into clips), unknown, invalid: skipped.
     }
-    if (v.type === 'session_start') wall = v.wall ?? null
-    else if (v.type === 'session_end') end = v.t
-    else if (v.type === 'summary') {
-      dropped = v.dropped ?? 0
-      writeErrors = v.write_errors ?? 0
-      writeError = v.write_error ?? null
-    } else if (v.type == null) events.push(v as OscEvent)
-    // Lines with an unrecognized `type` are skipped (schema forward compat).
   }
   const lastT = events.length > 0 ? events[events.length - 1].t : 0
   const duration = Math.max(end ?? 0, lastT)

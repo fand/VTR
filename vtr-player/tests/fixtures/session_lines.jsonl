@@ -1,0 +1,9 @@
+{"type":"session_start","t":0.0,"wall":"2026-01-01T00:00:00.000Z","host":"127.0.0.1","routes":["10010->10011"]}
+{"t":0.5,"port":10010,"a":"/fader","types":"f","args":[0.5]}
+{"t":1.0,"port":10010,"a":"/fader","types":"f","args":[0.75],"tl":101.0}
+{"t":1.5,"port":10010,"a":"/label","types":"sf","args":["cue",1.5]}
+{"type":"curve","port":10010,"a":"/x","arg":0,"types":"f","args":[0.0],"knots":[{"t":0.0,"v":0.0},{"t":3.0,"v":1.0}]}
+{"type":"summary","dropped":1,"write_errors":0}
+{"type":"vtr_fixture_note","comment":"Golden fixture shared by vtr-editor (src/shared/jsonl.test.ts, src/main/clips.test.ts) and vtr-player (conformance_session.rs). One line per kind plus this unknown type (loaders must skip it) and a torn line below (loaders must count it invalid). Edit only when the line schema deliberately changes."}
+{"t":2.0,"port":10010,
+{"type":"session_end","t":40.0}

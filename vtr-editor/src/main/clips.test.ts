@@ -62,3 +62,15 @@ test('unknown typed line is skipped, not counted as an event', () => {
   const data = readClip(path)
   expect(data.events.map((e) => e.t)).toEqual([0.5, 1.5])
 })
+
+test('golden fixture reads with the semantics the Rust loader pins', () => {
+  // Shared with vtr-player's conformance_session.rs.
+  const path = join(__dirname, '../../../vtr-player/tests/fixtures/session_lines.jsonl')
+  const data = readClip(path)
+  expect(data.events.map((e) => e.t)).toEqual([0.5, 1.0, 1.5])
+  expect(data.wall).toBe('2026-01-01T00:00:00.000Z')
+  expect(data.duration).toBe(40)
+  expect(data.tlOffset).toBe(100)
+  expect(data.dropped).toBe(1)
+  expect(data.writeErrors).toBe(0)
+})
