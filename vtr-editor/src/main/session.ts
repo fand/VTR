@@ -1,5 +1,5 @@
-import { renameSync, writeFileSync } from 'fs'
 import { DEFAULT_PORTS, type ExportResult, type ProjectFile } from '../shared/types'
+import { writeAtomic } from './atomic'
 import { mergeProject } from './merge'
 
 export const SESSION_FILE = 'session.jsonl'
@@ -44,8 +44,8 @@ export function exportSession(
   }
   lines.push(JSON.stringify({ type: 'session_end', t: duration }))
 
-  const tmp = outPath + '.tmp'
-  writeFileSync(tmp, lines.join('\n') + '\n')
-  renameSync(tmp, outPath)
+  // TD replays this file at the show: fsync + unique tmp (writeAtomic) so a
+  // crash mid-export can't publish a truncated session over a good one.
+  writeAtomic(outPath, lines.join('\n') + '\n')
   return { path: outPath, events: events.length, duration }
 }

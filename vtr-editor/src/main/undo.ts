@@ -1,14 +1,7 @@
-import {
-  appendFileSync,
-  copyFileSync,
-  existsSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync
-} from 'fs'
+import { appendFileSync, copyFileSync, existsSync, readFileSync, rmSync } from 'fs'
 import { join } from 'path'
 import { UNDO_CAP, type UndoEntry } from '../shared/types'
+import { writeAtomic } from './atomic'
 
 const UNDO_FILE = 'undo.jsonl'
 
@@ -44,8 +37,7 @@ export function loadUndoLog(dir: string): UndoEntry[] {
 
 function rewrite(dir: string, entries: UndoEntry[]): void {
   const path = logPath(dir)
-  writeFileSync(path + '.tmp', entries.map((e) => JSON.stringify(e)).join('\n') + '\n')
-  renameSync(path + '.tmp', path)
+  writeAtomic(path, entries.map((e) => JSON.stringify(e)).join('\n') + '\n')
   counts.set(path, entries.length)
 }
 
