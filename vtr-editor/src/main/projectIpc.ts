@@ -1,7 +1,8 @@
-import { BrowserWindow, dialog, ipcMain } from 'electron'
+import { BrowserWindow, ipcMain } from 'electron'
 import { mkdirSync } from 'fs'
 import { dirname, join } from 'path'
 import type { AppContext } from './appContext'
+import type { Dialogs } from './dialogs'
 import { commitProject, loadProject, normalizeProjectPath } from './project'
 import { clearRecents, loadRecents } from './recents'
 import { SESSION_FILE, exportSession } from './session'
@@ -18,6 +19,7 @@ export type ProjectIpcDeps = {
 
 export function registerProjectIpc(
   ctx: AppContext,
+  dialogs: Dialogs,
   deps: ProjectIpcDeps,
   bootProjectPath: string | null
 ): void {
@@ -67,43 +69,20 @@ export function registerProjectIpc(
     deps.recordRecent(path)
   })
 
-  // Hidden (e2e) skips native dialogs; OSC_EDITOR_DIALOG_PATH stands in for
-  // the user's pick (open returns null without it, save falls back to the
-  // suggested path).
+  // Dialog results become grants here, never inside the dialog layer.
   ipcMain.handle('project:openDialog', async (e) => {
-    if (ctx.hidden) {
-      const p = process.env.OSC_EDITOR_DIALOG_PATH ?? null
-      return p ? ctx.grantProjectPath(p) : null
-    }
     const win = BrowserWindow.fromWebContents(e.sender)
-    // openDirectory: a .oscproj is a plain dir wherever LSTypeIsPackage
-    // doesn't apply (dev runs, non-mac).
-    const res = await dialog.showOpenDialog(win!, {
-      defaultPath: ctx.projectDir ?? ctx.workdir,
-      filters: [{ name: 'Project', extensions: ['oscproj', 'json'] }],
-      properties: ['openFile', 'openDirectory']
-    })
-    return res.canceled || res.filePaths.length === 0
-      ? null
-      : ctx.grantProjectPath(res.filePaths[0])
+    const p = await dialogs.openProject(win!, ctx.projectDir ?? ctx.workdir)
+    return p == null ? null : ctx.grantProjectPath(p)
   })
   ipcMain.handle('project:saveDialog', async (e, defaultPath?: string) => {
     const fallback = defaultPath ?? join(ctx.projectDir ?? ctx.workdir, 'Untitled.oscproj')
-    if (ctx.hidden) {
-      // Empty OSC_EDITOR_DIALOG_PATH stands in for a cancelled dialog.
-      const p = process.env.OSC_EDITOR_DIALOG_PATH
-      return p === '' ? null : ctx.grantProjectPath(p ?? fallback)
-    }
     const win = BrowserWindow.fromWebContents(e.sender)
-    const res = await dialog.showSaveDialog(win!, {
-      defaultPath: fallback,
-      filters: [{ name: 'Project', extensions: ['oscproj'] }]
-    })
-    return res.canceled || !res.filePath ? null : ctx.grantProjectPath(res.filePath)
+    const p = await dialogs.saveProject(win!, fallback)
+    return p == null ? null : ctx.grantProjectPath(p)
   })
 
-  // Ask where to save; null = user cancelled. Hidden (e2e) skips the native
-  // dialog — it would hang the test — and writes the default session.jsonl.
+  // Ask where to save; null = user cancelled.
   ipcMain.handle('session:export', async (e, project: ProjectFile) => {
     // Default next to the project: a bundle's parent dir, not inside it.
     const exportDir =
@@ -112,16 +91,9 @@ export function registerProjectIpc(
         : ctx.projectDir.endsWith('.oscproj')
           ? dirname(ctx.projectDir)
           : ctx.projectDir
-    let outPath = join(exportDir, SESSION_FILE)
-    if (!ctx.hidden) {
-      const win = BrowserWindow.fromWebContents(e.sender)
-      const res = await dialog.showSaveDialog(win!, {
-        defaultPath: outPath,
-        filters: [{ name: 'JSONL', extensions: ['jsonl'] }]
-      })
-      if (res.canceled || !res.filePath) return null
-      outPath = res.filePath
-    }
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const outPath = await dialogs.exportSessionPath(win!, join(exportDir, SESSION_FILE))
+    if (outPath == null) return null
     return exportSession(ctx.resolveClip, project, outPath)
   })
 }

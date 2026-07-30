@@ -1,9 +1,11 @@
-import { app, shell, BrowserWindow, Menu, dialog } from 'electron'
+import { app, shell, BrowserWindow, Menu } from 'electron'
 import { existsSync, mkdirSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { basename, dirname, join, resolve } from 'path'
 import { AppContext } from './appContext'
+import { envDialogs } from './dialogs'
+import { nativeDialogs } from './nativeDialogs'
 import { normalizeProjectPath, readProjectPorts } from './project'
 import { SpawnMode, TapManager } from './tap'
 import { PlayerManager } from './player'
@@ -34,6 +36,10 @@ const hidden = process.env.OSC_EDITOR_HIDDEN === '1'
 
 // Recordings for unsaved projects land here, never in the cwd.
 const ctx = new AppContext(workdir, dataDir, join(dataDir, 'recordings'), hidden)
+
+// Every user-facing prompt goes through this seam; hidden (e2e) swaps in
+// the OSC_EDITOR_* env stand-ins (a native dialog would hang the test).
+const dialogs = hidden ? envDialogs : nativeDialogs
 
 // First CLI arg = project file to open at boot (packaged apps have no script arg).
 const cliArg = process.argv[app.isPackaged ? 1 : 2]
@@ -74,24 +80,6 @@ app.on('second-instance', (_e, argv, workingDirectory) => {
   else bootProjectPath = projectPath
 })
 
-// Hidden (e2e) takes the quit-prompt choice from OSC_EDITOR_QUIT_CHOICE
-// instead of a native dialog; the default is discard, matching the
-// documented no-autosave quit.
-function quitChoice(win: BrowserWindow): number {
-  if (hidden) {
-    const byName: Record<string, number> = { save: 0, discard: 1, cancel: 2 }
-    return byName[process.env.OSC_EDITOR_QUIT_CHOICE ?? 'discard'] ?? 1
-  }
-  return dialog.showMessageBoxSync(win, {
-    type: 'warning',
-    buttons: ['Save', "Don't Save", 'Cancel'],
-    defaultId: 0,
-    cancelId: 2,
-    message: 'You have unsaved changes.',
-    detail: 'Your changes will be lost if you close without saving.'
-  })
-}
-
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
     width: 1200,
@@ -119,9 +107,9 @@ function createWindow(): void {
   mainWindow.on('close', (e) => {
     if (ctx.forceClose || !ctx.dirtyState) return
     e.preventDefault()
-    const choice = quitChoice(mainWindow)
-    if (choice === 2) return
-    if (choice === 1) {
+    const choice = dialogs.quitChoice(mainWindow)
+    if (choice === 'cancel') return
+    if (choice === 'discard') {
       ctx.forceClose = true
       mainWindow.close()
       return
@@ -157,13 +145,7 @@ function recordRecent(path: string): void {
 function openRecent(path: string): void {
   if (!existsSync(normalizeProjectPath(path))) {
     const win = BrowserWindow.getAllWindows()[0]
-    if (win && !hidden) {
-      dialog.showMessageBoxSync(win, {
-        type: 'warning',
-        message: 'Project not found.',
-        detail: path
-      })
-    }
+    if (win) dialogs.warnMissingProject(win, path)
     removeRecent(dataDir, path)
     installMenu()
     return
@@ -326,6 +308,7 @@ app.whenReady().then(() => {
   registerUndoIpc(ctx)
   registerProjectIpc(
     ctx,
+    dialogs,
     { recordRecent, openRecent, recentLabel, refreshMenu: installMenu },
     bootProjectPath
   )
@@ -337,19 +320,7 @@ app.whenReady().then(() => {
   openAfterReady = (path) => {
     const win = BrowserWindow.getAllWindows()[0]
     if (!win) return
-    if (ctx.dirtyState) {
-      const discard = hidden
-        ? process.env.OSC_EDITOR_QUIT_CHOICE !== 'cancel'
-        : dialog.showMessageBoxSync(win, {
-            type: 'warning',
-            buttons: ['Discard Changes and Open', 'Cancel'],
-            defaultId: 0,
-            cancelId: 1,
-            message: 'You have unsaved changes.',
-            detail: 'Opening another project will discard them.'
-          }) === 0
-      if (!discard) return
-    }
+    if (ctx.dirtyState && !dialogs.confirmDiscardForOpen(win)) return
     ctx.grantProjectPath(path)
     win.webContents.send('project:openPath', path)
   }
