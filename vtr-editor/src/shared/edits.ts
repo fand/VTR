@@ -5,7 +5,8 @@ export function editsEmpty(edits?: ClipEdits): boolean {
     !edits ||
     ((!edits.set || Object.keys(edits.set).length === 0) &&
       (!edits.del || Object.keys(edits.del).length === 0) &&
-      (!edits.add || edits.add.length === 0))
+      (!edits.add || edits.add.length === 0) &&
+      (!edits.curves || edits.curves.length === 0))
   )
 }
 
