@@ -278,3 +278,28 @@ fn test_pump_resumes_after_seek_dedup() {
     r.step(1.0); // seek: 0.5, recorded as the group's last sample
     assert_first_near(&r.step(1.2), 0.6); // pump continues from there
 }
+
+#[test]
+fn test_pump_orders_curve_sample_and_events_by_time() {
+    // One step crosses the span end (sample clamps to t=1.0) and a later
+    // event: the event is the later write and must land last.
+    let s = load(&[
+        curve("/x", 0, &[0.0], [0.0, 1.0], [0.0, 1.0]),
+        ev(1.1, "/x", &[9.0]),
+    ]);
+    let mut r = resolver(&s);
+    r.step(0.95);
+    assert_eq!(firsts(&r.step(1.15)), vec![1.0, 9.0]);
+}
+
+#[test]
+fn test_pump_same_time_tie_goes_to_curve() {
+    // Event exactly at the span end: the curve is the edit layer and wins.
+    let s = load(&[
+        curve("/x", 0, &[0.0], [0.0, 1.0], [0.0, 1.0]),
+        ev(1.0, "/x", &[9.0]),
+    ]);
+    let mut r = resolver(&s);
+    r.step(0.95);
+    assert_eq!(firsts(&r.step(1.05)), vec![9.0, 1.0]);
+}

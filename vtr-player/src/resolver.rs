@@ -115,22 +115,28 @@ impl Resolver {
         let session = self.session.clone();
         let lo = session.t.partition_point(|&x| x <= prev);
         let hi = session.t.partition_point(|&x| x <= pos);
-        let mut out: Vec<Emit> = (lo..hi).map(|i| self.emit(i)).collect();
-        // Curve samples follow the recorded events: one per active group,
-        // clamped to the span end so the final value always lands.
+        // Events and curve samples merge in time order — a step can cross a
+        // span end and a later event at once, and the later write must land
+        // last (the seek rule). Curve samples clamp to the span end so the
+        // final value always lands; same-time ties go to the curve.
+        // (time, tiebreak, emission): usize::MAX sorts curves after events.
+        let mut out: Vec<(f64, usize, Emit)> =
+            (lo..hi).map(|i| (session.t[i], i, self.emit(i))).collect();
         for (g, group) in session.curve_groups.iter().enumerate() {
             if pos < group.start || prev >= group.end {
                 continue;
             }
-            let args = session.curve_group_args(g, pos.min(group.end));
+            let t = pos.min(group.end);
+            let args = session.curve_group_args(g, t);
             if self.group_last[g].as_ref() == Some(&args) {
                 continue;
             }
             let (addr, port) = &session.addrs[group.addr_id as usize];
-            out.push((*port, addr.clone(), args.clone()));
+            out.push((t, usize::MAX, (*port, addr.clone(), args.clone())));
             self.group_last[g] = Some(args);
         }
-        out
+        out.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        out.into_iter().map(|(_, _, e)| e).collect()
     }
 
     /// Addresses with at least one event — or an active curve span — in (t0, t1].
