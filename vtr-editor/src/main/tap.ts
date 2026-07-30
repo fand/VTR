@@ -139,7 +139,14 @@ export class TapManager {
     })
     this.spawnedAt = Date.now()
     proc.stderr?.on('data', (d: Buffer) => console.log(`[vtr-tap] ${d.toString().trimEnd()}`))
-    proc.on('exit', (code, signal) => {
+    // 'error' fires instead of 'exit' when the spawn itself fails (binary
+    // missing mid-rebuild, EAGAIN…) and may fire alongside it; both funnel
+    // into one guarded handler so every death drops the connection and
+    // respawns exactly once.
+    let dead = false
+    const died = (why: string): void => {
+      if (dead) return
+      dead = true
       this.proc = null
       this.dropConnection(new Error('vtr-tap exited'))
       if (this.stopping) return
@@ -154,13 +161,11 @@ export class TapManager {
       const lived = Date.now() - this.spawnedAt
       this.respawnDelay =
         lived < 2000 ? Math.min(this.respawnDelay * 2, RESPAWN_DELAY_MAX_MS) : RESPAWN_DELAY_MS
-      console.log(`vtr-tap exited (${code ?? signal}), respawning in ${this.respawnDelay}ms`)
+      console.log(`${why}, respawning in ${this.respawnDelay}ms`)
       setTimeout(() => this.spawnTap(), this.respawnDelay)
-    })
-    proc.on('error', (e) => {
-      this.proc = null
-      console.error(`vtr-tap spawn failed: ${e.message}`)
-    })
+    }
+    proc.on('exit', (code, signal) => died(`vtr-tap exited (${code ?? signal})`))
+    proc.on('error', (e) => died(`vtr-tap spawn failed: ${e.message}`))
     this.proc = proc
   }
 
