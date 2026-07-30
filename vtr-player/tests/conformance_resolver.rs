@@ -154,3 +154,190 @@ fn test_jump_threshold_is_configurable() {
     r.step(0.5);
     assert_eq!(firsts(&r.step(2.0)), vec![1.0, 1.5, 2.0]); // 1.5s step still pumps
 }
+
+// ---------------------------------------------------------------------------
+// Bezier curves (session `type:"curve"` lines).
+
+/// Linear 2-knot curve on `a` controlling args[arg] of the given template.
+fn curve(a: &str, arg: usize, template: &[f64], span: [f64; 2], vals: [f64; 2]) -> Value {
+    json!({
+        "type": "curve", "port": 10010, "a": a, "arg": arg,
+        "types": "f".repeat(template.len()), "args": template,
+        "knots": [
+            {"t": span[0], "v": vals[0]},
+            {"t": span[1], "v": vals[1]},
+        ],
+    })
+}
+
+fn assert_first_near(out: &[Emit], want: f64) {
+    assert_eq!(out.len(), 1, "expected one emission, got {out:?}");
+    let got = out[0].2[0].as_f64().unwrap();
+    assert!((got - want).abs() < 1e-9, "got {got}, want {want}");
+}
+
+#[test]
+fn test_pump_interpolates_curve_per_step() {
+    let s = load(&[curve("/x", 0, &[0.0], [0.0, 1.0], [0.0, 1.0])]);
+    let mut r = resolver(&s);
+    assert_first_near(&r.step(0.0), 0.0); // first step: seek catch-up
+    assert_first_near(&r.step(0.25), 0.25);
+    assert_first_near(&r.step(0.5), 0.5);
+    assert_first_near(&r.step(0.75), 0.75);
+}
+
+#[test]
+fn test_pump_lands_final_value_at_span_end_then_goes_quiet() {
+    let s = load(&[curve("/x", 0, &[0.0], [0.0, 1.0], [0.0, 1.0])]);
+    let mut r = resolver(&s);
+    r.step(0.9);
+    assert_first_near(&r.step(1.3), 1.0); // clamped to the span end
+    assert_eq!(r.step(1.7), vec![]); // finished: no more samples
+}
+
+#[test]
+fn test_pump_skips_duplicate_flat_samples() {
+    let s = load(&[curve("/x", 0, &[0.0], [0.0, 1.0], [0.5, 0.5])]);
+    let mut r = resolver(&s);
+    assert_first_near(&r.step(0.0), 0.5);
+    assert_eq!(r.step(0.2), vec![]); // same value: suppressed
+    assert_eq!(r.step(0.4), vec![]);
+}
+
+#[test]
+fn test_seek_resolves_curve_value_at_pos() {
+    let s = load(&[curve("/x", 0, &[0.0], [1.0, 2.0], [0.0, 1.0])]);
+    let mut r = resolver(&s);
+    assert_first_near(&r.step(1.5), 0.5); // inside the span
+    let mut r = resolver(&s);
+    assert_first_near(&r.step(9.0), 1.0); // after: flat at the last knot
+    let mut r = resolver(&s);
+    assert_first_near(&r.step(0.2), 0.0); // before: clamps to the first knot
+}
+
+#[test]
+fn test_event_vs_curve_latest_definition_wins() {
+    let s = load(&[
+        curve("/x", 0, &[0.0], [0.0, 1.0], [0.0, 1.0]),
+        ev(2.0, "/x", &[9.0]),
+    ]);
+    // Curve span passed, then a later event: the event wins.
+    let mut r = resolver(&s);
+    assert_eq!(firsts(&r.step(3.0)), vec![9.0]);
+    // Inside the span, before the event: the curve wins.
+    let mut r = resolver(&s);
+    assert_first_near(&r.step(0.5), 0.5);
+    // Between span end and the event: the curve's end value still wins.
+    let mut r = resolver(&s);
+    assert_first_near(&r.step(1.5), 1.0);
+}
+
+#[test]
+fn test_same_time_tie_goes_to_curve() {
+    let s = load(&[
+        ev(1.0, "/x", &[9.0]),
+        curve("/x", 0, &[0.0], [0.0, 1.0], [0.0, 1.0]),
+    ]);
+    let mut r = resolver(&s);
+    assert_first_near(&r.step(1.0), 1.0); // not 9.0
+}
+
+#[test]
+fn test_curves_on_one_address_merge_into_one_message() {
+    let s = load(&[
+        curve("/xy", 0, &[0.0, 0.0], [0.0, 1.0], [0.0, 1.0]),
+        curve("/xy", 1, &[0.0, 0.0], [0.0, 1.0], [1.0, 0.0]),
+    ]);
+    let mut r = resolver(&s);
+    r.step(0.0);
+    let out = r.step(0.25);
+    assert_eq!(out.len(), 1);
+    assert!((out[0].2[0].as_f64().unwrap() - 0.25).abs() < 1e-9);
+    assert!((out[0].2[1].as_f64().unwrap() - 0.75).abs() < 1e-9);
+}
+
+#[test]
+fn test_trigger_curve_suppressed_on_seek() {
+    let s = load(&[curve("/kick", 0, &[0.0], [0.0, 1.0], [0.0, 1.0])]);
+    let mut r = Resolver::new(s.clone(), Some(&is_kick), 0.5);
+    assert_eq!(r.step(0.5), vec![]); // seek: triggers stay silent
+}
+
+#[test]
+fn test_backward_seek_into_curve_reresolves() {
+    let s = load(&[curve("/x", 0, &[0.0], [0.0, 1.0], [0.0, 1.0])]);
+    let mut r = resolver(&s);
+    r.step(2.0); // past the span: 1.0
+    assert_first_near(&r.step(0.5), 0.5); // scrub back inside
+}
+
+#[test]
+fn test_pump_resumes_after_seek_dedup() {
+    let s = load(&[curve("/x", 0, &[0.0], [0.0, 2.0], [0.0, 1.0])]);
+    let mut r = resolver(&s);
+    r.step(1.0); // seek: 0.5, recorded as the group's last sample
+    assert_first_near(&r.step(1.2), 0.6); // pump continues from there
+}
+
+#[test]
+fn test_pump_orders_curve_sample_and_events_by_time() {
+    // One step crosses the span end (sample clamps to t=1.0) and a later
+    // event: the event is the later write and must land last.
+    let s = load(&[
+        curve("/x", 0, &[0.0], [0.0, 1.0], [0.0, 1.0]),
+        ev(1.1, "/x", &[9.0]),
+    ]);
+    let mut r = resolver(&s);
+    r.step(0.95);
+    assert_eq!(firsts(&r.step(1.15)), vec![1.0, 9.0]);
+}
+
+#[test]
+fn test_pump_same_time_tie_goes_to_curve() {
+    // Event exactly at the span end: the curve is the edit layer and wins.
+    let s = load(&[
+        curve("/x", 0, &[0.0], [0.0, 1.0], [0.0, 1.0]),
+        ev(1.0, "/x", &[9.0]),
+    ]);
+    let mut r = resolver(&s);
+    r.step(0.95);
+    assert_eq!(firsts(&r.step(1.05)), vec![9.0, 1.0]);
+}
+
+#[test]
+fn test_same_arg_curves_with_disjoint_spans_take_turns() {
+    // Two curves on one (addr, arg): A ramps [1,2], B ramps [10,11]. The
+    // one with the latest definition time <= pos wins, so A plays its span
+    // and holds until B's span starts.
+    let s = load(&[
+        curve("/x", 0, &[0.0], [1.0, 2.0], [0.0, 1.0]),
+        curve("/x", 0, &[0.0], [10.0, 11.0], [5.0, 6.0]),
+    ]);
+    let mut r = resolver(&s);
+    assert_first_near(&r.step(0.5), 0.0); // before both: A's flat-left
+    let mut r = resolver(&s);
+    assert_first_near(&r.step(1.5), 0.5); // inside A
+    let mut r = resolver(&s);
+    assert_first_near(&r.step(5.0), 1.0); // between: A's end holds
+    let mut r = resolver(&s);
+    assert_first_near(&r.step(10.5), 5.5); // inside B
+    // Pump through A's span: A interpolates, B stays out of the way.
+    let mut r = resolver(&s);
+    r.step(1.0);
+    assert_first_near(&r.step(1.25), 0.25);
+}
+
+#[test]
+fn test_same_arg_nested_span_yields_back_to_the_outer_curve() {
+    // Outer [0,10] ramp, inner [2,4] flat 9 (appended later). Inside the
+    // inner span the inner curve wins the def-time tie; after it ends the
+    // outer curve's later definition takes over again.
+    let s = load(&[
+        curve("/x", 0, &[0.0], [0.0, 10.0], [0.0, 1.0]),
+        curve("/x", 0, &[0.0], [2.0, 4.0], [9.0, 9.0]),
+    ]);
+    let mut r = resolver(&s);
+    assert_first_near(&r.step(3.0), 9.0); // inner wins the tie at pos
+    let mut r = resolver(&s);
+    assert_first_near(&r.step(5.0), 0.5); // outer def 5 > inner def 4
+}

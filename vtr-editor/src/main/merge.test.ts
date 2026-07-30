@@ -89,3 +89,133 @@ test('edits on added events merge like recorded ones', () => {
     ['/a', 4]
   ])
 })
+
+test('overlay curves land on the timeline, trimmed and shifted', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vtr-merge-'))
+  writeFileSync(join(dir, 'f.jsonl'), '{"t":0.0,"port":10000,"a":"/x","args":[1]}\n')
+  const project: ProjectFile = {
+    version: 1,
+    tracks: [{ clips: [{ file: 'f.jsonl', offset: 10, trimIn: 1, trimOut: 3 }] }],
+    edits: {
+      'f.jsonl': {
+        curves: [
+          // Spans the whole trim window and beyond: clipped to [1, 3].
+          {
+            port: 10000,
+            a: '/x',
+            arg: 0,
+            args: [0],
+            types: 'f',
+            knots: [
+              { t: 0, v: 0 },
+              { t: 4, v: 1 }
+            ]
+          },
+          // Fully outside the trim window: dropped.
+          {
+            port: 10000,
+            a: '/y',
+            arg: 0,
+            args: [0],
+            types: 'f',
+            knots: [
+              { t: 3.5, v: 0 },
+              { t: 4, v: 1 }
+            ]
+          }
+        ]
+      }
+    }
+  }
+  const { curves } = mergeProject((f) => join(dir, f), project)
+  expect(curves).toHaveLength(1)
+  const knots = curves[0].knots
+  // Clip-local [1, 3] → timeline [10, 12].
+  expect(knots[0].t).toBe(10)
+  expect(knots[knots.length - 1].t).toBe(12)
+  // The clipped linear ramp keeps its values: v = t/4 at the boundaries.
+  expect(knots[0].v).toBeCloseTo(0.25, 6)
+  expect(knots[knots.length - 1].v).toBeCloseTo(0.75, 6)
+})
+
+test('a trim boundary within round6 of a knot keeps the curve valid', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vtr-merge-'))
+  writeFileSync(join(dir, 'f.jsonl'), '{"t":0.0,"port":10000,"a":"/x","args":[1]}\n')
+  const project: ProjectFile = {
+    version: 1,
+    // trimIn lands 4e-7 left of the middle knot: the boundary split emits a
+    // sliver segment that round6 collapses.
+    tracks: [{ clips: [{ file: 'f.jsonl', offset: 0, trimIn: 0.9999996, trimOut: 3 }] }],
+    edits: {
+      'f.jsonl': {
+        curves: [
+          {
+            port: 10000,
+            a: '/x',
+            arg: 0,
+            args: [0],
+            types: 'f',
+            knots: [
+              { t: 0, v: 0 },
+              { t: 1, v: 0.5, o: [0.3, 0.1] },
+              { t: 2, v: 1 }
+            ]
+          }
+        ]
+      }
+    }
+  }
+  const { curves } = mergeProject((f) => join(dir, f), project)
+  expect(curves).toHaveLength(1)
+  const knots = curves[0].knots
+  // The sliver knot collapsed into the middle knot, which now opens the curve.
+  expect(knots).toHaveLength(2)
+  expect(knots[0].v).toBeCloseTo(0.5, 6)
+  // Strictly increasing t (the player rejects the whole curve otherwise).
+  for (let i = 1; i < knots.length; i++) {
+    expect(knots[i].t).toBeGreaterThan(knots[i - 1].t)
+  }
+  // Boundary knots keep only inward handles; handle dts stay in their spans.
+  expect(knots[0].i).toBeUndefined()
+  expect(knots[knots.length - 1].o).toBeUndefined()
+  for (let i = 0; i < knots.length; i++) {
+    const o = knots[i].o
+    if (o) expect(o[0]).toBeLessThanOrEqual(knots[i + 1].t - knots[i].t)
+    const inn = knots[i].i
+    if (inn) expect(-inn[0]).toBeLessThanOrEqual(knots[i].t - knots[i - 1].t)
+  }
+})
+
+test('curveDel and muted clips drop curves', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vtr-merge-'))
+  writeFileSync(join(dir, 'g.jsonl'), '{"t":0.0,"port":10000,"a":"/x","args":[1]}\n')
+  const curve = {
+    port: 10000,
+    a: '/x',
+    arg: 0,
+    args: [0],
+    types: 'f',
+    knots: [
+      { t: 0, v: 0 },
+      { t: 1, v: 1 }
+    ]
+  }
+  const project: ProjectFile = {
+    version: 1,
+    tracks: [
+      {
+        clips: [
+          { file: 'g.jsonl', offset: 0, trimIn: 0, trimOut: 2 },
+          { file: 'h.jsonl', offset: 5, trimIn: 0, trimOut: 2, muted: true }
+        ]
+      }
+    ],
+    edits: {
+      'g.jsonl': { curves: [curve, { ...curve, a: '/kept' }], curveDel: { 0: true } },
+      'h.jsonl': { curves: [curve] }
+    }
+  }
+  writeFileSync(join(dir, 'h.jsonl'), '{"t":0.0,"port":10000,"a":"/x","args":[1]}\n')
+  const { curves } = mergeProject((f) => join(dir, f), project)
+  expect(curves.map((c) => c.a)).toEqual(['/kept'])
+})

@@ -112,13 +112,17 @@ const requireGranted = (p: string): string => {
   return projectPath
 }
 
-// Inline-load routes: every port seen in the merged events maps to the
-// forward port (the player emits only on routed ports). The old direct
-// preview also sent everything to the forward port, whatever port the
-// clip was recorded on.
-function routesFor(events: OscEvent[], forward: number): Record<string, number> {
+// Inline-load routes: every port seen in the merged events or curves maps
+// to the forward port (the player emits only on routed ports). The old
+// direct preview also sent everything to the forward port, whatever port
+// the clip was recorded on.
+function routesFor(
+  merged: { events: OscEvent[]; curves: { port: number }[] },
+  forward: number
+): Record<string, number> {
   const routes: Record<string, number> = {}
-  for (const e of events) routes[e.port] = forward
+  for (const e of merged.events) routes[e.port] = forward
+  for (const c of merged.curves) routes[c.port] = forward
   return routes
 }
 
@@ -550,7 +554,7 @@ app.whenReady().then(() => {
     const merged = mergeProject(resolveClip, project)
     const duration = Math.max(merged.duration, project.duration ?? 0)
     const p = requirePlayer()
-    await p.loadInline(merged.events, duration, routesFor(merged.events, forwardPort()))
+    await p.loadInline(merged.events, merged.curves, duration, routesFor(merged, forwardPort()))
     await p.seek(fromSec)
     const transport = await p.play()
     return { duration, transport }
@@ -576,7 +580,7 @@ app.whenReady().then(() => {
     const merged = mergeProject(resolveClip, project)
     const duration = Math.max(merged.duration, project.duration ?? 0)
     player
-      ?.loadInline(merged.events, duration, routesFor(merged.events, forwardPort()))
+      ?.loadInline(merged.events, merged.curves, duration, routesFor(merged, forwardPort()))
       .catch((e) => console.log(`residency load failed: ${(e as Error).message}`))
   })
 

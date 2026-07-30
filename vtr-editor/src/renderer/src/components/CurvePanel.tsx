@@ -1,19 +1,25 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Magnet, Maximize2, Pencil, SquareDashed } from 'lucide-react'
+import { Magnet, Maximize2, Pencil, Spline, SquareDashed } from 'lucide-react'
+import { clipCurve } from '../../../shared/curve'
 import { applyEditsIndexed } from '../../../shared/edits'
-import type { ClipEdits, OscEvent } from '../../../shared/types'
+import type { ClipCurve, ClipEdits, CurveKnot, OscEvent } from '../../../shared/types'
 import { ClipInst, clipLen, formatRulerLabel } from '../timeline/model'
+import { applyKnotMoves, setKnotHandle } from './curveEdit'
+import { MIN_FIT_POINTS, buildCurveReplace } from './curveReplace'
 import {
   PAD,
   fitZoomX,
   hitCurve,
+  hitKnot,
   hitPoint,
+  mergedValueAt,
   tAt,
   vAt,
-  valueAt,
   visibleRange,
+  walkMerged,
   xAt,
   yAt,
+  type GeomEl,
   type Scale
 } from './curveGeom'
 import { eventsCache } from './eventsCache'
@@ -29,6 +35,7 @@ declare global {
       selected: boolean
       dimmed: boolean
       pointCount: number
+      curveCount: number
     }[]
     __curvePoints?: {
       label: string
@@ -37,6 +44,14 @@ declare global {
       selected: boolean
       t: number
       v: number
+    }[]
+    __curveKnots?: {
+      label: string
+      x: number
+      y: number
+      t: number
+      v: number
+      selected: boolean
     }[]
   }
 }
@@ -101,12 +116,28 @@ interface CurvePoint {
   ev: OscEvent
 }
 
+/** One overlay curve drawn on a property: timeline-space knots, already
+ *  trim-clipped to its clip. */
+interface PropCurve {
+  clip: ClipInst
+  /** Index into the clip overlay's curves array (ClipEdits key space). */
+  curveIndex: number
+  /** The overlay record itself (clip-local knots; edits rebuild from it). */
+  src: ClipCurve
+  /** srcIndex maps back into src.knots; -1 marks synthetic boundary knots
+   *  from trim clipping (drawn but not editable). */
+  knots: (CurveKnot & { srcIndex: number })[]
+}
+
 interface Property {
   /** `${addr} ${argIndex}` — stable id, never shown. */
   key: string
   label: string
   color: string
   points: CurvePoint[]
+  curves: PropCurve[]
+  /** Points + curve spans merged and t-sorted; one drawn path per property. */
+  els: GeomEl[]
   min: number
   max: number
 }
@@ -116,6 +147,7 @@ function buildProperties(
   edits: Record<string, ClipEdits>
 ): Property[] {
   const byKey = new Map<string, CurvePoint[]>()
+  const curvesByKey = new Map<string, PropCurve[]>()
   const argCount = new Map<string, number>()
   for (const { clip, events } of clipEvents) {
     for (const { ev, idx } of applyEditsIndexed(events, edits[clip.file])) {
@@ -136,6 +168,29 @@ function buildProperties(
         })
       })
     }
+    const clipEdits = edits[clip.file]
+    clipEdits?.curves?.forEach((c, ci) => {
+      if (clipEdits.curveDel?.[ci]) return
+      const clipped = clipCurve(c.knots, clip.trimIn, clip.trimOut)
+      if (!clipped) return
+      argCount.set(c.a, Math.max(argCount.get(c.a) ?? 1, c.args.length))
+      const key = `${c.a} ${c.arg}`
+      if (!byKey.has(key)) byKey.set(key, [])
+      let list = curvesByKey.get(key)
+      if (!list) curvesByKey.set(key, (list = []))
+      list.push({
+        clip,
+        curveIndex: ci,
+        src: c,
+        knots: clipped.map((k) => ({
+          ...k,
+          t: clip.offset + (k.t - clip.trimIn),
+          // Interior knots are copied verbatim by clipCurve, so an exact
+          // t match identifies the source knot; boundary splits get -1.
+          srcIndex: c.knots.findIndex((sk) => sk.t === k.t)
+        }))
+      })
+    })
   }
   // Sort by address, then arg index, so the list order is stable and scannable.
   const sorted = [...byKey.entries()].sort(([a], [b]) => {
@@ -145,6 +200,7 @@ function buildProperties(
   })
   return sorted.map(([key, points], i) => {
     points.sort((a, b) => a.t - b.t)
+    const curves = curvesByKey.get(key) ?? []
     const [addr, argIdx] = key.split(' ')
     const label = (argCount.get(addr) ?? 1) > 1 ? `${addr}[${argIdx}]` : addr
     // Value axis defaults to 0..1; data outside widens it.
@@ -154,7 +210,21 @@ function buildProperties(
       min = Math.min(min, p.v)
       max = Math.max(max, p.v)
     }
-    return { key, label, color: propColor(i), points, min, max }
+    // Control points bound a bezier (convex hull), so knot + handle values
+    // are a safe extent for the curve itself.
+    for (const pc of curves) {
+      for (const k of pc.knots) {
+        for (const v of [k.v, k.v + (k.i?.[1] ?? 0), k.v + (k.o?.[1] ?? 0)]) {
+          min = Math.min(min, v)
+          max = Math.max(max, v)
+        }
+      }
+    }
+    const els: GeomEl[] = [
+      ...points.map((pt) => ({ t: pt.t, v: pt.v })),
+      ...curves.map((pc, ci) => ({ t: pc.knots[0].t, knots: pc.knots, curve: ci }))
+    ].sort((a, b) => a.t - b.t)
+    return { key, label, color: propColor(i), points, curves, els, min, max }
   })
 }
 
@@ -172,24 +242,40 @@ function useSize(ref: React.RefObject<HTMLDivElement | null>): { w: number; h: n
   return size
 }
 
-export interface PointSel {
+/** One selected discrete point (an event's numeric arg). */
+export interface EventPointSel {
   /** Clip file the event belongs to (ClipEdits key space). */
   file: string
   eventIndex: number
   argIndex: number
 }
 
-function selKey(s: PointSel): string {
-  return `${s.file}:${s.eventIndex}:${s.argIndex}`
+/** One selected bezier knot; curveIndex keys the overlay's curves array. */
+export interface KnotSel {
+  file: string
+  curveIndex: number
+  knotIndex: number
 }
 
-function ptSel(pt: CurvePoint): PointSel {
+export type PointSel = EventPointSel | KnotSel
+
+function selKey(s: PointSel): string {
+  return 'curveIndex' in s
+    ? `${s.file}:c${s.curveIndex}:${s.knotIndex}`
+    : `${s.file}:${s.eventIndex}:${s.argIndex}`
+}
+
+function ptSel(pt: CurvePoint): EventPointSel {
   return { file: pt.clip.file, eventIndex: pt.eventIndex, argIndex: pt.argIndex }
+}
+
+function knotSel(pc: PropCurve, srcIndex: number): KnotSel {
+  return { file: pc.clip.file, curveIndex: pc.curveIndex, knotIndex: srcIndex }
 }
 
 /** One appended point: the overlay event plus its selection identity. */
 export interface PointAdd {
-  sel: PointSel
+  sel: EventPointSel
   ev: OscEvent
 }
 
@@ -250,13 +336,22 @@ function CurvePlayhead({
 }
 
 /** One numeric-arg edit: absolute clip-local t and/or value for args[argIndex]. */
-export interface PointPatch {
+export interface EventPatch {
   file: string
   eventIndex: number
   t?: number
   argIndex?: number
   value?: number
 }
+
+/** Whole-array knot replacement for one overlay curve (clip-local t). */
+export interface CurvePatch {
+  file: string
+  curveIndex: number
+  knots: CurveKnot[]
+}
+
+export type PointPatch = EventPatch | CurvePatch
 
 export function CurvePanel({
   clips,
@@ -268,7 +363,8 @@ export function CurvePanel({
   selectedPoints,
   onSelectPoints,
   onPointEdit,
-  onPointAdd
+  onPointAdd,
+  onCurveReplace
 }: {
   /** Every clip whose events are shown; empty shows the placeholder. */
   clips: ClipInst[]
@@ -285,6 +381,11 @@ export function CurvePanel({
   /** Appends events to the clips' edit overlays. A pencil stroke streams
    *  single adds (transient) and re-sends the whole batch with isCommit. */
   onPointAdd: (adds: PointAdd[], isCommit: boolean) => void
+  /** Replaces points atomically: one undo entry for the deletes + curve adds. */
+  onCurveReplace: (
+    dels: { file: string; eventIndex: number }[],
+    adds: { file: string; curve: ClipCurve }[]
+  ) => void
 }): React.JSX.Element {
   // Events per clip path; the cache never goes stale (files are immutable).
   const [loaded, setLoaded] = useState<Map<string, OscEvent[]>>(new Map())
@@ -441,6 +542,39 @@ export function CurvePanel({
 
   const selKeys = useMemo(() => new Set(selectedPoints.map(selKey)), [selectedPoints])
 
+  // Replace with Curve targets: the selected points, else the selected
+  // properties' full point sets. Each (property, clip) group needs
+  // MIN_FIT_POINTS to convert; smaller groups are left alone.
+  const replaceTargets = (): CurvePoint[] => {
+    const usePointSel = selKeys.size > 0
+    const chosen: CurvePoint[] = []
+    for (const p of shown) {
+      if (hidden.has(p.key) || dimmed(p.key)) continue
+      if (!usePointSel && !selectedProps.has(p.key)) continue
+      const byClip = new Map<number, CurvePoint[]>()
+      for (const pt of p.points) {
+        if (usePointSel && !selKeys.has(selKey(ptSel(pt)))) continue
+        let list = byClip.get(pt.clip.id)
+        if (!list) byClip.set(pt.clip.id, (list = []))
+        list.push(pt)
+      }
+      for (const pts of byClip.values()) {
+        if (pts.length >= MIN_FIT_POINTS) chosen.push(...pts)
+      }
+    }
+    return chosen
+  }
+  const canReplace = clips.length > 0 && replaceTargets().length > 0
+
+  const replaceWithCurve = (): void => {
+    const targets = replaceTargets()
+    if (targets.length === 0) return
+    const rep = buildCurveReplace(
+      targets.map((pt) => ({ file: pt.clip.file, eventIndex: pt.eventIndex, ev: pt.ev }))
+    )
+    if (rep) onCurveReplace(rep.dels, rep.adds)
+  }
+
   // Fit the X zoom to the selected points, else the selected curves (via
   // dimmed()), else everything shown. Vertical zoom stays put.
   const fitZoom = (): void => {
@@ -453,6 +587,15 @@ export function CurvePanel({
           if (usePointSel && !selKeys.has(selKey(ptSel(pt)))) continue
           t0 = Math.min(t0, pt.t)
           t1 = Math.max(t1, pt.t)
+        }
+        for (const pc of p.curves) {
+          for (const k of pc.knots) {
+            if (usePointSel && !(k.srcIndex >= 0 && selKeys.has(selKey(knotSel(pc, k.srcIndex))))) {
+              continue
+            }
+            t0 = Math.min(t0, k.t)
+            t1 = Math.max(t1, k.t)
+          }
         }
       }
       return [t0, t1]
@@ -488,39 +631,99 @@ export function CurvePanel({
     return Math.round(v / step) * step
   }
 
-  // Point drag moves every selected point by the same Δt / Δvalue (value in
-  // each property's own scale). Horizontal = t (clamped to the point's own
-  // clip span), vertical = value. Scales are frozen at drag start so the
-  // growing min/max doesn't feed back.
+  // Drag targets: discrete points and bezier knots move under the same
+  // rules. Positions and value scales are frozen at drag start so the
+  // streaming edits don't feed back; knots keep a handle on the frozen
+  // overlay record (src) so each move rebuilds the whole knot array from it.
+  type DragTarget =
+    | { pt: CurvePoint; min: number; max: number }
+    | { pc: PropCurve; srcIndex: number; t: number; v: number; min: number; max: number }
+
+  /** A target's frozen timeline position + value scale. */
+  const targetPos = (target: DragTarget): { t: number; v: number; min: number; max: number } =>
+    'pt' in target ? { t: target.pt.t, v: target.pt.v, min: target.min, max: target.max } : target
+
+  /** Every drawn point/knot in the given selection (drag/xform group). */
+  const dragTargets = (sel: Set<string>): DragTarget[] => {
+    const targets: DragTarget[] = []
+    for (const p of curves) {
+      for (const cp of p.points) {
+        if (sel.has(selKey(ptSel(cp)))) targets.push({ pt: cp, min: p.min, max: p.max })
+      }
+      for (const pc of p.curves) {
+        for (const k of pc.knots) {
+          if (k.srcIndex < 0 || !sel.has(selKey(knotSel(pc, k.srcIndex)))) continue
+          targets.push({ pc, srcIndex: k.srcIndex, t: k.t, v: k.v, min: p.min, max: p.max })
+        }
+      }
+    }
+    return targets
+  }
+
+  /** Target moves (new timeline t + value) → patches. Point moves map onto
+   *  event patches; knot moves collapse into one whole-array patch per
+   *  curve, with order and handle invariants enforced by applyKnotMoves. */
+  const movePatches = (moves: { target: DragTarget; tl: number; v: number }[]): PointPatch[] => {
+    const out: PointPatch[] = []
+    const byCurve = new Map<string, { pc: PropCurve; m: Map<number, { t: number; v: number }> }>()
+    for (const { target, tl, v } of moves) {
+      const c = 'pt' in target ? target.pt.clip : target.pc.clip
+      const clamped = Math.min(Math.max(tl, c.offset), c.offset + clipLen(c))
+      const tLocal = c.trimIn + (clamped - c.offset)
+      if ('pt' in target) {
+        out.push({
+          file: c.file,
+          eventIndex: target.pt.eventIndex,
+          t: tLocal,
+          argIndex: target.pt.argIndex,
+          value: v
+        })
+      } else {
+        const key = `${c.file}:${target.pc.curveIndex}`
+        let g = byCurve.get(key)
+        if (!g) byCurve.set(key, (g = { pc: target.pc, m: new Map() }))
+        g.m.set(target.srcIndex, { t: tLocal, v })
+      }
+    }
+    for (const { pc, m } of byCurve.values()) {
+      out.push({
+        file: pc.clip.file,
+        curveIndex: pc.curveIndex,
+        knots: applyKnotMoves(pc.src.knots, m)
+      })
+    }
+    return out
+  }
+
   const drag = useRef<{
-    targets: { pt: CurvePoint; min: number; max: number }[]
+    targets: DragTarget[]
     startX: number
     startY: number
     moved: boolean
     last: PointPatch[] | null
   } | null>(null)
 
-  const startPointDrag = (e: React.PointerEvent<HTMLDivElement>, pt: CurvePoint): void => {
-    const key = selKey(ptSel(pt))
+  const startPointDrag = (e: React.PointerEvent<HTMLDivElement>, sel: PointSel): void => {
+    const key = selKey(sel)
     if (e.shiftKey) {
       // Shift toggles membership; no drag.
       onSelectPoints(
         selKeys.has(key)
           ? selectedPoints.filter((s) => selKey(s) !== key)
-          : [...selectedPoints, ptSel(pt)]
+          : [...selectedPoints, sel]
       )
       return
     }
     // Grabbing an unselected point selects just it; a selected one drags the group.
-    const sel = selKeys.has(key) ? selKeys : new Set([key])
-    if (!selKeys.has(key)) onSelectPoints([ptSel(pt)])
-    const targets: { pt: CurvePoint; min: number; max: number }[] = []
-    for (const p of curves) {
-      for (const cp of p.points) {
-        if (sel.has(selKey(ptSel(cp)))) targets.push({ pt: cp, min: p.min, max: p.max })
-      }
+    const group = selKeys.has(key) ? selKeys : new Set([key])
+    if (!selKeys.has(key)) onSelectPoints([sel])
+    drag.current = {
+      targets: dragTargets(group),
+      startX: e.clientX,
+      startY: e.clientY,
+      moved: false,
+      last: null
     }
-    drag.current = { targets, startX: e.clientX, startY: e.clientY, moved: false, last: null }
     e.currentTarget.setPointerCapture(e.pointerId)
   }
 
@@ -532,17 +735,16 @@ export function CurvePanel({
     if (!d.moved && Math.abs(dx) < 3 && Math.abs(dy) < 3) return
     d.moved = true
     const dt = (dx / Math.max(innerW - 2 * PAD, 1)) * tRange
-    d.last = d.targets.map(({ pt, min, max }) => {
-      const c = pt.clip
-      const tl = Math.min(Math.max(snapTime(pt.t + dt), c.offset), c.offset + clipLen(c))
-      return {
-        file: c.file,
-        eventIndex: pt.eventIndex,
-        t: c.trimIn + (tl - c.offset),
-        argIndex: pt.argIndex,
-        value: snapValue(pt.v + (-dy / Math.max(innerH - 2 * PAD, 1)) * (max - min || 1), min, max)
-      }
-    })
+    d.last = movePatches(
+      d.targets.map((target) => {
+        const { t, v, min, max } = targetPos(target)
+        return {
+          target,
+          tl: snapTime(t + dt),
+          v: snapValue(v + (-dy / Math.max(innerH - 2 * PAD, 1)) * (max - min || 1), min, max)
+        }
+      })
+    )
     onPointEdit(d.last, false)
   }
 
@@ -566,6 +768,35 @@ export function CurvePanel({
     h: number
   }
 
+  /** Drawn selected points + knots (hidden/dimmed curves excluded), with
+   *  their frozen pixel positions. Feeds the box bounds and xform targets. */
+  const drawnSelected = (): (DragTarget & { px0: number; py0: number })[] => {
+    const out: (DragTarget & { px0: number; py0: number })[] = []
+    for (const p of shown) {
+      if (hidden.has(p.key) || dimmed(p.key)) continue
+      for (const pt of p.points) {
+        if (!selKeys.has(selKey(ptSel(pt)))) continue
+        out.push({ pt, min: p.min, max: p.max, px0: x(pt.t), py0: y(p, pt.v) })
+      }
+      for (const pc of p.curves) {
+        for (const k of pc.knots) {
+          if (k.srcIndex < 0 || !selKeys.has(selKey(knotSel(pc, k.srcIndex)))) continue
+          out.push({
+            pc,
+            srcIndex: k.srcIndex,
+            t: k.t,
+            v: k.v,
+            min: p.min,
+            max: p.max,
+            px0: x(k.t),
+            py0: y(p, k.v)
+          })
+        }
+      }
+    }
+    return out
+  }
+
   // Bounding box of the drawn selected points (hidden/dimmed curves excluded).
   const selBox = ((): Box | null => {
     if (!useBox || selectedPoints.length < 2 || clips.length === 0) return null
@@ -574,18 +805,12 @@ export function CurvePanel({
     let x1 = -Infinity
     let y1 = -Infinity
     let n = 0
-    for (const p of shown) {
-      if (hidden.has(p.key) || dimmed(p.key)) continue
-      for (const pt of p.points) {
-        if (!selKeys.has(selKey(ptSel(pt)))) continue
-        const px = x(pt.t)
-        const py = y(p, pt.v)
-        x0 = Math.min(x0, px)
-        y0 = Math.min(y0, py)
-        x1 = Math.max(x1, px)
-        y1 = Math.max(y1, py)
-        n++
-      }
+    for (const { px0, py0 } of drawnSelected()) {
+      x0 = Math.min(x0, px0)
+      y0 = Math.min(y0, py0)
+      x1 = Math.max(x1, px0)
+      y1 = Math.max(y1, py0)
+      n++
     }
     return n >= 2 ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null
   })()
@@ -595,20 +820,13 @@ export function CurvePanel({
     startX: number
     startY: number
     box0: Box
-    targets: { pt: CurvePoint; min: number; max: number; px0: number; py0: number }[]
+    targets: (DragTarget & { px0: number; py0: number })[]
     moved: boolean
     last: PointPatch[] | null
   } | null>(null)
 
   const beginXform = (e: React.PointerEvent, mode: XformMode, box: Box): void => {
-    const targets: { pt: CurvePoint; min: number; max: number; px0: number; py0: number }[] = []
-    for (const p of shown) {
-      if (hidden.has(p.key) || dimmed(p.key)) continue
-      for (const pt of p.points) {
-        if (!selKeys.has(selKey(ptSel(pt)))) continue
-        targets.push({ pt, min: p.min, max: p.max, px0: x(pt.t), py0: y(p, pt.v) })
-      }
-    }
+    const targets = drawnSelected()
     xform.current = {
       mode,
       startX: e.clientX,
@@ -644,22 +862,21 @@ export function CurvePanel({
           return { nx: px, ny: b.h > 0 ? b.y + ((py - b.y) * (b.h + dy)) / b.h : py }
       }
     }
-    d.last = d.targets.map(({ pt, min, max, px0, py0 }) => {
-      const { nx, ny } = map(px0, py0)
-      const c = pt.clip
-      const tl = Math.min(Math.max(snapTime(tAt(scale, nx)), c.offset), c.offset + clipLen(c))
-      return {
-        file: c.file,
-        eventIndex: pt.eventIndex,
-        t: c.trimIn + (tl - c.offset),
-        argIndex: pt.argIndex,
-        value: snapValue(
-          pt.v + (-(ny - py0) / Math.max(innerH - 2 * PAD, 1)) * (max - min || 1),
-          min,
-          max
-        )
-      }
-    })
+    d.last = movePatches(
+      d.targets.map((target) => {
+        const { nx, ny } = map(target.px0, target.py0)
+        const { v, min, max } = targetPos(target)
+        return {
+          target,
+          tl: snapTime(tAt(scale, nx)),
+          v: snapValue(
+            v + (-(ny - target.py0) / Math.max(innerH - 2 * PAD, 1)) * (max - min || 1),
+            min,
+            max
+          )
+        }
+      })
+    )
     onPointEdit(d.last, false)
   }
 
@@ -678,6 +895,110 @@ export function CurvePanel({
     beginXform(e, mode, selBox)
   }
 
+  // Bezier handles: every selected knot shows its incoming/outgoing handle
+  // (the linear-third default where the knot has none yet), draggable to
+  // reshape the segment. Handle offsets are clip-local seconds, which map
+  // 1:1 onto timeline seconds (offset/trim only translate).
+  interface HandleView {
+    p: Property
+    pc: PropCurve
+    srcIndex: number
+    side: 'i' | 'o'
+    /** Knot position: timeline t / property-scale v, and pixels. */
+    kt: number
+    kv: number
+    kx: number
+    ky: number
+    /** Handle end, pixels. */
+    hx: number
+    hy: number
+  }
+
+  const handleViews = (): HandleView[] => {
+    if (clips.length === 0) return []
+    const out: HandleView[] = []
+    for (const p of interactiveProps()) {
+      for (const pc of p.curves) {
+        for (const k of pc.knots) {
+          if (k.srcIndex < 0 || !selKeys.has(selKey(knotSel(pc, k.srcIndex)))) continue
+          const kn = pc.src.knots
+          const i = k.srcIndex
+          const mk = (side: 'i' | 'o', dt: number, dv: number): void => {
+            out.push({
+              p,
+              pc,
+              srcIndex: i,
+              side,
+              kt: k.t,
+              kv: k.v,
+              kx: x(k.t),
+              ky: y(p, k.v),
+              hx: x(k.t + dt),
+              hy: y(p, k.v + dv)
+            })
+          }
+          if (i > 0) {
+            const [dt, dv] = kn[i].i ?? [(kn[i - 1].t - kn[i].t) / 3, (kn[i - 1].v - kn[i].v) / 3]
+            mk('i', dt, dv)
+          }
+          if (i + 1 < kn.length) {
+            const [dt, dv] = kn[i].o ?? [(kn[i + 1].t - kn[i].t) / 3, (kn[i + 1].v - kn[i].v) / 3]
+            mk('o', dt, dv)
+          }
+        }
+      }
+    }
+    return out
+  }
+
+  const handleDrag = useRef<{
+    pc: PropCurve
+    srcIndex: number
+    side: 'i' | 'o'
+    kt: number
+    kv: number
+    min: number
+    max: number
+    last: CurvePatch | null
+  } | null>(null)
+
+  const onHandleDown = (e: React.PointerEvent<SVGCircleElement>, h: HandleView): void => {
+    if (e.button !== 0) return
+    e.stopPropagation()
+    handleDrag.current = {
+      pc: h.pc,
+      srcIndex: h.srcIndex,
+      side: h.side,
+      kt: h.kt,
+      kv: h.kv,
+      min: h.p.min,
+      max: h.p.max,
+      last: null
+    }
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+
+  const onHandleMove = (pos: { x: number; y: number }, axisLock: boolean): void => {
+    const d = handleDrag.current
+    if (!d) return
+    let dt = tAt(scale, pos.x) - d.kt
+    let dv = vAt(scale, { min: d.min, max: d.max }, pos.y) - d.kv
+    if (axisLock) {
+      // Shift: lock the handle to the knot's dominant pixel axis — flat
+      // (horizontal) or straight up/down (vertical).
+      const dxPx = pos.x - xAt(scale, d.kt)
+      const dyPx = pos.y - yAt(scale, { min: d.min, max: d.max }, d.kv)
+      if (Math.abs(dxPx) >= Math.abs(dyPx)) dv = 0
+      else dt = 0
+    }
+    d.last = {
+      file: d.pc.clip.file,
+      curveIndex: d.pc.curveIndex,
+      knots: setKnotHandle(d.pc.src.knots, d.srcIndex, d.side, dt, dv)
+    }
+    onPointEdit([d.last], false)
+  }
+
   // Hover: the tooltip always shows the point nearest to the cursor (px
   // distance). Selected properties win; otherwise all visible points compete.
   // The scan runs per pointermove but feeds only the HoverTooltip child, so
@@ -689,9 +1010,9 @@ export function CurvePanel({
     let best: HoverInfo | null = null
     let bestD = Infinity
     for (const p of sel.length > 0 ? sel : visible) {
-      for (const pt of p.points) {
-        const px = x(pt.t)
-        const py = y(p, pt.v)
+      const consider = (t: number, v: number): void => {
+        const px = x(t)
+        const py = y(p, v)
         const d = (px - mouse.x) ** 2 + (py - mouse.y) ** 2
         if (d < bestD) {
           bestD = d
@@ -699,10 +1020,12 @@ export function CurvePanel({
             px,
             py,
             anchor: px > innerW - 120 ? 'end' : 'start',
-            text: `${p.label}: ${fmt(pt.v)} @ ${fmt(pt.t)}s`
+            text: `${p.label}: ${fmt(v)} @ ${fmt(t)}s`
           }
         }
       }
+      for (const pt of p.points) consider(pt.t, pt.v)
+      for (const pc of p.curves) for (const k of pc.knots) consider(k.t, k.v)
     }
     return best
   }
@@ -743,9 +1066,7 @@ export function CurvePanel({
   // touches the selection, not even transiently. A second press nearby
   // within the window drops it; any other press applies it first. (Chromium
   // leaves pointerdown.detail at 0, so double presses are detected by hand.)
-  const pendingSel = useRef<{ timer: number; x: number; y: number; apply: () => void } | null>(
-    null
-  )
+  const pendingSel = useRef<{ timer: number; x: number; y: number; apply: () => void } | null>(null)
   const SELECT_DELAY_MS = 300
   const DBL_PX = 8
 
@@ -779,26 +1100,42 @@ export function CurvePanel({
     addCount: (file: string) => number,
     onCurve = false
   ): PointAdd | null => {
-    if (p.points.length === 0) return null
+    if (p.points.length === 0 && p.curves.length === 0) return null
     const t = snapTime(tAt(scale, pos.x))
-    const v = onCurve ? valueAt(p.points, t) : snapValue(vAt(scale, p, pos.y), p.min, p.max)
-    let tpl = p.points[0]
+    const v = onCurve
+      ? (mergedValueAt(p, t) ?? 0)
+      : snapValue(vAt(scale, p, pos.y), p.min, p.max)
+    // Template: the nearest point's event; on a fully-replaced property the
+    // nearest curve's message template.
+    let tpl: CurvePoint | null = null
     for (const pt of p.points) {
-      if (Math.abs(pt.t - t) < Math.abs(tpl.t - t)) tpl = pt
+      if (!tpl || Math.abs(pt.t - t) < Math.abs(tpl.t - t)) tpl = pt
     }
-    const c = tpl.clip
+    let src: { clip: ClipInst; port: number; a: string; args: unknown[]; argIndex: number }
+    if (tpl) {
+      src = { clip: tpl.clip, port: tpl.ev.port, a: tpl.ev.a, args: tpl.ev.args, argIndex: tpl.argIndex }
+    } else {
+      let pc = p.curves[0]
+      const dist = (c: PropCurve): number =>
+        Math.max(c.knots[0].t - t, 0, t - c.knots[c.knots.length - 1].t)
+      for (const c of p.curves) {
+        if (dist(c) < dist(pc)) pc = c
+      }
+      src = { clip: pc.clip, port: pc.src.port, a: pc.src.a, args: pc.src.args, argIndex: pc.src.arg }
+    }
+    const c = src.clip
     const events = loaded.get(c.path)
     if (!events) return null
     const tl = Math.min(Math.max(t, c.offset), c.offset + clipLen(c))
-    const args = [...tpl.ev.args]
-    args[tpl.argIndex] = v
+    const args = [...src.args]
+    args[src.argIndex] = v
     return {
       sel: {
         file: c.file,
         eventIndex: events.length + addCount(c.file),
-        argIndex: tpl.argIndex
+        argIndex: src.argIndex
       },
-      ev: { t: c.trimIn + (tl - c.offset), port: tpl.ev.port, a: tpl.ev.a, args }
+      ev: { t: c.trimIn + (tl - c.offset), port: src.port, a: src.a, args }
     }
   }
 
@@ -878,8 +1215,19 @@ export function CurvePanel({
     // A point under the cursor: select / drag it (the group if selected).
     const ph = hitPoint(props, scale, pos, POINT_HIT_PX)
     if (ph) {
-      startPointDrag(e, props[ph.prop].points[ph.point])
+      startPointDrag(e, ptSel(props[ph.prop].points[ph.point]))
       return
+    }
+    // A bezier knot: same select/drag semantics as a point. Synthetic trim
+    // boundary knots aren't editable and fall through to the curve line.
+    const kh = hitKnot(props, scale, pos, POINT_HIT_PX)
+    if (kh) {
+      const pc = props[kh.prop].curves[kh.curve]
+      const srcIndex = pc.knots[kh.knot].srcIndex
+      if (srcIndex >= 0) {
+        startPointDrag(e, knotSel(pc, srcIndex))
+        return
+      }
     }
     // A curve line: cmd+click inserts, pencil draws, plain click selects.
     const ch = hitCurve(props, scale, pos, CURVE_HIT_PX)
@@ -953,6 +1301,7 @@ export function CurvePanel({
     const pos = svgPos(e)
     const props = interactiveProps()
     if (hitPoint(props, scale, pos, POINT_HIT_PX)) return
+    if (hitKnot(props, scale, pos, POINT_HIT_PX)) return
     const ch = hitCurve(props, scale, pos, CURVE_HIT_PX)
     if (ch != null) addPointAt(props[ch], pos)
   }
@@ -960,6 +1309,10 @@ export function CurvePanel({
   const onEditorMove = (e: React.PointerEvent<HTMLDivElement>): void => {
     const pos = svgPos(e)
     updateHover(pos)
+    if (handleDrag.current) {
+      onHandleMove(pos, e.shiftKey)
+      return
+    }
     if (drag.current) {
       onPointMove(e)
       return
@@ -985,21 +1338,32 @@ export function CurvePanel({
     setMarqueeRect(rect)
     const seen = new Set(m.base.map(selKey))
     const hits = [...m.base]
+    const consider = (px: number, py: number, sel: PointSel): void => {
+      if (px < rect.x || px > rect.x + rect.w || py < rect.y || py > rect.y + rect.h) return
+      if (seen.has(selKey(sel))) return
+      seen.add(selKey(sel))
+      hits.push(sel)
+    }
     for (const p of shown) {
       if (hidden.has(p.key) || dimmed(p.key)) continue
-      for (const pt of p.points) {
-        const px = x(pt.t)
-        const py = y(p, pt.v)
-        if (px < rect.x || px > rect.x + rect.w || py < rect.y || py > rect.y + rect.h) continue
-        if (seen.has(selKey(ptSel(pt)))) continue
-        seen.add(selKey(ptSel(pt)))
-        hits.push(ptSel(pt))
+      for (const pt of p.points) consider(x(pt.t), y(p, pt.v), ptSel(pt))
+      for (const pc of p.curves) {
+        for (const k of pc.knots) {
+          if (k.srcIndex >= 0) consider(x(k.t), y(p, k.v), knotSel(pc, k.srcIndex))
+        }
       }
     }
     onSelectPoints(hits)
   }
 
   const onEditorUp = (): void => {
+    const hd = handleDrag.current
+    if (hd) {
+      handleDrag.current = null
+      // One undo entry per handle drag; a plain click on a handle is a noop.
+      if (hd.last) onPointEdit([hd.last], true)
+      return
+    }
     if (drag.current) {
       onPointUp()
       return
@@ -1098,7 +1462,8 @@ export function CurvePanel({
       label: p.label,
       selected: selectedProps.has(p.key),
       dimmed: dimmed(p.key),
-      pointCount: p.points.length
+      pointCount: p.points.length,
+      curveCount: p.curves.length
     }))
     window.__curvePoints = rect
       ? drawn
@@ -1112,6 +1477,22 @@ export function CurvePanel({
               t: pt.t,
               v: pt.v
             }))
+          )
+      : []
+    window.__curveKnots = rect
+      ? drawn
+          .filter((p) => !dimmed(p.key))
+          .flatMap((p) =>
+            p.curves.flatMap((pc) =>
+              pc.knots.map((k) => ({
+                label: p.label,
+                x: rect.left + x(k.t) - sl,
+                y: rect.top + y(p, k.v) - st,
+                t: k.t,
+                v: k.v,
+                selected: k.srcIndex >= 0 && selKeys.has(selKey(knotSel(pc, k.srcIndex)))
+              }))
+            )
           )
       : []
     const canvas = canvasRef.current
@@ -1129,37 +1510,39 @@ export function CurvePanel({
     const t0 = tAt(scale, sl - PAD)
     const t1 = tAt(scale, sl + w + PAD)
     for (const p of drawn) {
-      const [lo, hi] = visibleRange(p.points, t0, t1)
-      if (hi < lo) continue
       const dim = dimmed(p.key)
       ctx.globalAlpha = dim ? 0.1 : 1
       ctx.strokeStyle = p.color
       ctx.lineWidth = selectedProps.has(p.key) ? 3 : 1.5
+      // One path per property: step-after lines and bezier spans merged.
+      // The y map is affine, so mapping the control points maps the curve.
       ctx.beginPath()
-      let prevY = 0
+      walkMerged(p, scale, t0, t1, {
+        moveTo: (px, py) => ctx.moveTo(px, py),
+        lineTo: (px, py) => ctx.lineTo(px, py),
+        bezierTo: (x1, y1, x2, y2, x3, y3) => ctx.bezierCurveTo(x1, y1, x2, y2, x3, y3)
+      })
+      ctx.stroke()
+      if (dim) continue
+      ctx.fillStyle = p.color
+      const [lo, hi] = visibleRange(p.points, t0, t1)
+      ctx.beginPath()
       for (let i = lo; i <= hi; i++) {
         const px = x(p.points[i].t)
         const py = y(p, p.points[i].v)
-        if (i === lo) ctx.moveTo(px, py)
-        else {
-          // Step-after: hold the previous value, then jump.
-          ctx.lineTo(px, prevY)
-          ctx.lineTo(px, py)
-        }
-        prevY = py
+        ctx.moveTo(px + 3, py)
+        ctx.arc(px, py, 3, 0, Math.PI * 2)
       }
-      ctx.stroke()
-      if (!dim) {
-        ctx.fillStyle = p.color
-        ctx.beginPath()
-        for (let i = lo; i <= hi; i++) {
-          const px = x(p.points[i].t)
-          const py = y(p, p.points[i].v)
-          ctx.moveTo(px + 3, py)
-          ctx.arc(px, py, 3, 0, Math.PI * 2)
+      ctx.fill()
+      // Knots draw as squares to read apart from points.
+      ctx.beginPath()
+      for (const pc of p.curves) {
+        if (pc.knots[0].t > t1 || pc.knots[pc.knots.length - 1].t < t0) continue
+        for (const k of pc.knots) {
+          ctx.rect(x(k.t) - 3, y(p, k.v) - 3, 6, 6)
         }
-        ctx.fill()
       }
+      ctx.fill()
     }
     ctx.globalAlpha = 1
   }
@@ -1199,8 +1582,22 @@ export function CurvePanel({
         >
           <Pencil size={14} />
         </button>
+        <button
+          className="btn small snap"
+          data-tip="Replace with Curve"
+          aria-label="replace with curve"
+          disabled={!canReplace}
+          onClick={replaceWithCurve}
+        >
+          <Spline size={14} />
+        </button>
         <div className="spacer" />
-        <button className="btn small snap" data-tip="Fit zoom" aria-label="fit zoom" onClick={fitZoom}>
+        <button
+          className="btn small snap"
+          data-tip="Fit zoom"
+          aria-label="fit zoom"
+          onClick={fitZoom}
+        >
           <Maximize2 size={14} />
         </button>
         <span className="curve-zoom-label">X</span>
@@ -1349,6 +1746,51 @@ export function CurvePanel({
                           />
                         ))
                     )}
+                    {interactiveProps().flatMap((p) =>
+                      p.curves.flatMap((pc) =>
+                        pc.knots
+                          .filter(
+                            (k) => k.srcIndex >= 0 && selKeys.has(selKey(knotSel(pc, k.srcIndex)))
+                          )
+                          .map((k) => (
+                            <rect
+                              key={`k${pc.clip.id}:${pc.curveIndex}:${k.srcIndex}`}
+                              className="curve-knot selected"
+                              x={x(k.t) - 4}
+                              y={y(p, k.v) - 4}
+                              width={8}
+                              height={8}
+                              fill={p.color}
+                              stroke="#fff"
+                              strokeWidth={1.5}
+                            />
+                          ))
+                      )
+                    )}
+                    {handleViews().map((h) => (
+                      <g
+                        key={`h${h.pc.clip.id}:${h.pc.curveIndex}:${h.srcIndex}:${h.side}`}
+                        className="curve-handle-g"
+                      >
+                        <line
+                          className="curve-handle-line"
+                          x1={h.kx}
+                          y1={h.ky}
+                          x2={h.hx}
+                          y2={h.hy}
+                        />
+                        <circle
+                          className={`curve-handle ${h.side === 'i' ? 'in' : 'out'}`}
+                          cx={h.hx}
+                          cy={h.hy}
+                          r={4}
+                          fill="#fff"
+                          stroke={h.p.color}
+                          strokeWidth={1.5}
+                          onPointerDown={(e) => onHandleDown(e, h)}
+                        />
+                      </g>
+                    ))}
                     {selBox && (
                       <g className="curve-xform">
                         <rect

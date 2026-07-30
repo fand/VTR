@@ -147,6 +147,41 @@ export const UNDO_CAP = 1000
 export const DEFAULT_DURATION = 60
 
 /**
+ * One knot of a piecewise cubic bezier curve. Consecutive knots span one
+ * cubic segment: p0/p3 are the knots, p1 = p0 + o, p2 = p3 + i. A missing
+ * handle means linear toward that neighbor. Handle dt must keep the
+ * segment's time monotone (writers clamp; readers clamp defensively).
+ */
+export interface CurveKnot {
+  t: number
+  v: number
+  /** Incoming handle offset [dt, dv], dt <= 0. */
+  i?: [number, number]
+  /** Outgoing handle offset [dt, dv], dt >= 0. */
+  o?: [number, number]
+}
+
+/**
+ * A bezier curve controlling one numeric arg of an address. In a ClipEdits
+ * overlay t is clip-local; exported to session.jsonl as a `type:"curve"`
+ * line with timeline t. Emissions are `args` with `args[arg]` replaced by
+ * the interpolated value; curves on the same (port, a) with different `arg`
+ * merge into one message per sample.
+ */
+export interface ClipCurve {
+  port: number
+  a: string
+  /** Controlled arg index. */
+  arg: number
+  /** Message template for emissions. */
+  args: unknown[]
+  /** OSC type tags (same contract as OscEvent.types). */
+  types?: string
+  /** Knots sorted by strictly increasing t; at least 2. */
+  knots: CurveKnot[]
+}
+
+/**
  * Non-destructive edit overlay on a clip file's events. Keys are the event's
  * index in the original JSONL (deletes don't shift keys). The recording itself
  * is never rewritten.
@@ -161,6 +196,10 @@ export interface ClipEdits {
    * start at the original event count and never shift.
    */
   add?: OscEvent[]
+  /** Bezier curves added by the editor (clip-local t). Append-only. */
+  curves?: ClipCurve[]
+  /** curveIndex → deleted. Deletes don't shift keys, mirroring `del`. */
+  curveDel?: Record<number, true>
 }
 
 /** Structural mirror of immer's Patch (kept immer-free for the main process). */

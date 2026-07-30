@@ -7,10 +7,27 @@ const ev = (t: number, args: unknown[] = [0]): OscEvent => ({ t, port: 1, a: '/x
 test('editsEmpty: absent, empty containers, and each non-empty kind', () => {
   expect(editsEmpty(undefined)).toBe(true)
   expect(editsEmpty({})).toBe(true)
-  expect(editsEmpty({ set: {}, del: {}, add: [] })).toBe(true)
+  expect(editsEmpty({ set: {}, del: {}, add: [], curves: [] })).toBe(true)
   expect(editsEmpty({ set: { 0: { t: 1 } } })).toBe(false)
   expect(editsEmpty({ del: { 0: true } })).toBe(false)
   expect(editsEmpty({ add: [ev(0)] })).toBe(false)
+  // Curves alone keep the sidecar alive (they ride the same overlay).
+  expect(
+    editsEmpty({
+      curves: [
+        {
+          port: 1,
+          a: '/x',
+          arg: 0,
+          args: [0],
+          knots: [
+            { t: 0, v: 0 },
+            { t: 1, v: 1 }
+          ]
+        }
+      ]
+    })
+  ).toBe(false)
 })
 
 test('set/del reach added events via keys past the original count', () => {

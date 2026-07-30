@@ -1060,6 +1060,21 @@ body {
   touch-action: none;
 }
 
+.curve-knot.selected {
+  cursor: grab;
+  touch-action: none;
+}
+
+.curve-handle-line {
+  stroke: rgba(255, 255, 255, 0.4);
+  pointer-events: none;
+}
+
+.curve-handle {
+  cursor: grab;
+  touch-action: none;
+}
+
 /* Invisible fat stroke over each curve; clicks on it insert points. */
 .curve-hit {
   pointer-events: stroke;

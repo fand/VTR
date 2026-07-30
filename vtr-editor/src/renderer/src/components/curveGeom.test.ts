@@ -3,13 +3,18 @@ import {
   PAD,
   fitZoomX,
   hitCurve,
+  hitKnot,
   hitPoint,
+  mergedValueAt,
   tAt,
   vAt,
   valueAt,
   visibleRange,
+  walkMerged,
   xAt,
   yAt,
+  type GeomEl,
+  type GeomProp,
   type Scale
 } from './curveGeom'
 
@@ -74,6 +79,94 @@ test('hitCurve hits horizontal and vertical step segments', () => {
   ).toBeNull()
 })
 
+// A point at t=1 (v=0), a linear bezier span t=4..8 rising 0→1: the merged
+// path holds v=0 from the point to the span, jumps onto it, then curves.
+const mergedProp = (): GeomProp => {
+  const knots = [
+    { t: 4, v: 0 },
+    { t: 8, v: 1 }
+  ]
+  const els: GeomEl[] = [
+    { t: 1, v: 0 },
+    { t: 4, knots, curve: 0 }
+  ]
+  return { min: 0, max: 1, points: [{ t: 1, v: 0 }], els }
+}
+
+test('walkMerged draws points and curve spans as one path', () => {
+  const cmds: string[] = []
+  walkMerged(mergedProp(), s, -Infinity, Infinity, {
+    moveTo: (x, y) => cmds.push(`M${x},${y}`),
+    lineTo: (x, y) => cmds.push(`L${x},${y}`),
+    bezierTo: (...a) => cmds.push(`C${a.map((n) => Math.round(n)).join(',')}`)
+  })
+  const p = mergedProp()
+  const y0 = yAt(s, p, 0)
+  // moveTo the point, hold to the span start (same y here), one cubic.
+  expect(cmds).toEqual([
+    `M${xAt(s, 1)},${y0}`,
+    `L${xAt(s, 4)},${y0}`,
+    `L${xAt(s, 4)},${y0}`,
+    `C${[
+      xAt(s, 4 + 4 / 3),
+      yAt(s, p, 1 / 3),
+      xAt(s, 8 - 4 / 3),
+      yAt(s, p, 2 / 3),
+      xAt(s, 8),
+      yAt(s, p, 1)
+    ]
+      .map((n) => Math.round(n))
+      .join(',')}`
+  ])
+})
+
+test('walkMerged culls to the window but keeps entering lines', () => {
+  const cmds: string[] = []
+  // Window over the hold line only: both its endpoints still walk.
+  walkMerged(mergedProp(), s, 2, 3, {
+    moveTo: () => cmds.push('M'),
+    lineTo: () => cmds.push('L'),
+    bezierTo: () => cmds.push('C')
+  })
+  expect(cmds).toEqual(['M', 'L', 'L', 'C'])
+  // Window entirely right of everything: nothing walks.
+  const none: string[] = []
+  walkMerged({ min: 0, max: 1, points: [{ t: 1, v: 0 }] }, s, 5, 9, {
+    moveTo: () => none.push('M'),
+    lineTo: () => none.push('L'),
+    bezierTo: () => none.push('C')
+  })
+  expect(none).toEqual([])
+})
+
+test('hitCurve hits the bezier span and the connecting hold line', () => {
+  const p = mergedProp()
+  // Mid-span of the linear bezier: t=6 → v=0.5.
+  expect(hitCurve([p], s, { x: xAt(s, 6), y: yAt(s, p, 0.5) + 2 }, 5)).toBe(0)
+  // On the hold line between the point and the span.
+  expect(hitCurve([p], s, { x: xAt(s, 2.5), y: yAt(s, p, 0) - 2 }, 5)).toBe(0)
+  // Far off the curve.
+  expect(hitCurve([p], s, { x: xAt(s, 6), y: yAt(s, p, 0.95) }, 5)).toBeNull()
+})
+
+test('hitKnot finds the nearest knot within radius', () => {
+  const p = {
+    min: 0,
+    max: 1,
+    curves: [
+      {
+        knots: [
+          { t: 4, v: 0 },
+          { t: 8, v: 1 }
+        ]
+      }
+    ]
+  }
+  const at8 = { x: xAt(s, 8), y: yAt(s, p, 1) }
+  expect(hitKnot([p], s, { x: at8.x + 4, y: at8.y }, 6)).toEqual({ prop: 0, curve: 0, knot: 1 })
+  expect(hitKnot([p], s, { x: at8.x + 9, y: at8.y }, 6)).toBeNull()
+})
+
 test('valueAt evaluates the step-after curve', () => {
   const pts = [
     { t: 1, v: 0.1 },
@@ -125,4 +218,24 @@ test('visibleRange widens by one point each side', () => {
   expect(visibleRange(pts, 2.5, 2.6)).toEqual([2, 3])
   expect(visibleRange(pts, 7, 9)).toEqual([0, -1])
   expect(visibleRange([], 0, 1)).toEqual([0, -1])
+})
+
+test('mergedValueAt interpolates inside curve spans and steps elsewhere', () => {
+  // Linear curve [2,4] ramps 0->1, discrete points at t=6 (0.2) and t=8 (0.7).
+  const knots = [
+    { t: 2, v: 0 },
+    { t: 4, v: 1 }
+  ]
+  const els: GeomEl[] = [
+    { t: 2, knots, curve: 0 },
+    { t: 6, v: 0.2 },
+    { t: 8, v: 0.7 }
+  ]
+  const p: GeomProp = { min: 0, max: 1, points: [], els }
+  expect(mergedValueAt(p, 1)).toBe(0) // before everything: flat-left
+  expect(mergedValueAt(p, 3)).toBeCloseTo(0.5, 9) // inside the span
+  expect(mergedValueAt(p, 5)).toBe(1) // after the span: end value holds
+  expect(mergedValueAt(p, 7)).toBe(0.2) // the point takes over
+  expect(mergedValueAt(p, 9)).toBe(0.7)
+  expect(mergedValueAt({ min: 0, max: 1, points: [] }, 0)).toBeNull()
 })

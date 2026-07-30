@@ -11,7 +11,7 @@ export function exportSession(
   outPath: string
 ): ExportResult {
   const merged = mergeProject(resolveClip, project)
-  const { events } = merged
+  const { events, curves } = merged
   // Session length = timeline length (never shorter than the content).
   const duration = Math.max(merged.duration, project.duration ?? 0)
   const ports = project.ports ?? DEFAULT_PORTS
@@ -26,6 +26,21 @@ export function exportSession(
   ]
   for (const e of events) {
     lines.push(JSON.stringify({ t: e.t, port: e.port, a: e.a, types: e.types, args: e.args }))
+  }
+  // Curve lines after the events: loaders don't care about the order, but
+  // stable output diffs nicely. Old players skip them (unknown type).
+  for (const c of curves) {
+    lines.push(
+      JSON.stringify({
+        type: 'curve',
+        port: c.port,
+        a: c.a,
+        arg: c.arg,
+        types: c.types,
+        args: c.args,
+        knots: c.knots
+      })
+    )
   }
   lines.push(JSON.stringify({ type: 'session_end', t: duration }))
 
