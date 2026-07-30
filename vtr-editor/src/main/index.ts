@@ -1,36 +1,22 @@
-import { app, shell, BrowserWindow, Menu, dialog, ipcMain } from 'electron'
+import { app, shell, BrowserWindow, Menu, dialog } from 'electron'
 import { existsSync, mkdirSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { basename, dirname, join, resolve } from 'path'
-import { clipSummary, readClip } from './clips'
-import { mergeProject } from './merge'
-import {
-  commitProject,
-  loadProject,
-  normalizeProjectPath,
-  readProjectPorts,
-  resolveClipPath
-} from './project'
-import { SESSION_FILE, exportSession } from './session'
-import { ensureWithin } from './paths'
+import { AppContext } from './appContext'
+import { normalizeProjectPath, readProjectPorts } from './project'
 import { SpawnMode, TapManager } from './tap'
 import { PlayerManager } from './player'
 import { TransportFollow } from './transportFollow'
 import { findBinary } from './binary'
 import { addRecent, clearRecents, loadRecents, removeRecent } from './recents'
-import { appendUndo, clearUndoLog, loadUndoLog, transferUndoLog, truncateUndoAfter } from './undo'
-import {
-  DEFAULT_PORTS,
-  normalizePorts,
-  type LoadedProject,
-  type OscEvent,
-  type PortConfig,
-  type ProjectFile,
-  type TapPush,
-  type TransportState,
-  type UndoEntry
-} from '../shared/types'
+import { clearUndoLog } from './undo'
+import { registerProjectIpc } from './projectIpc'
+import { registerTapIpc } from './tapIpc'
+import { registerPlayerIpc } from './playerIpc'
+import { registerWindowIpc } from './windowIpc'
+import { registerUndoIpc } from './undoIpc'
+import { normalizePorts, type TapPush } from '../shared/types'
 
 // Working directory: cwd when launched from the CLI (per spec).
 const workdir = process.cwd()
@@ -43,8 +29,11 @@ if (process.env.OSC_EDITOR_DATA_DIR) {
 const dataDir = app.getPath('userData')
 mkdirSync(dataDir, { recursive: true })
 
+// e2e: never show a window or steal focus.
+const hidden = process.env.OSC_EDITOR_HIDDEN === '1'
+
 // Recordings for unsaved projects land here, never in the cwd.
-const stagingDir = join(dataDir, 'recordings')
+const ctx = new AppContext(workdir, dataDir, join(dataDir, 'recordings'), hidden)
 
 // First CLI arg = project file to open at boot (packaged apps have no script arg).
 const cliArg = process.argv[app.isPackaged ? 1 : 2]
@@ -85,85 +74,9 @@ app.on('second-instance', (_e, argv, workingDirectory) => {
   else bootProjectPath = projectPath
 })
 
-// Dir the current project lives in (the .oscproj bundle, or the dir of a
-// legacy flat project.json). Null until a project is opened or saved.
-let projectDir: string | null = null
-
-// Clip files resolve against the project bundle, then staging.
-const resolveClip = (file: string): string =>
-  resolveClipPath(projectDir ?? workdir, stagingDir, file)
-
-// Roots a renderer-supplied clip path may point into.
-const clipRoots = (): (string | null)[] => [projectDir ?? workdir, stagingDir]
-
-// Project paths the user explicitly granted (CLI arg or a native dialog
-// result). project:save and project:loadPath refuse anything else, so a
-// compromised renderer can't write or read arbitrary locations.
-const grantedPaths = new Set<string>()
-const grantProjectPath = (p: string): string => {
-  grantedPaths.add(normalizeProjectPath(p))
-  return p
-}
-const requireGranted = (p: string): string => {
-  const projectPath = normalizeProjectPath(p)
-  if (!grantedPaths.has(projectPath)) {
-    throw new Error(`project path not granted by a dialog: ${p}`)
-  }
-  return projectPath
-}
-
-// Inline-load routes: every port seen in the merged events or curves maps
-// to the forward port (the player emits only on routed ports). The old
-// direct preview also sent everything to the forward port, whatever port
-// the clip was recorded on.
-function routesFor(
-  merged: { events: OscEvent[]; curves: { port: number }[] },
-  forward: number
-): Record<string, number> {
-  const routes: Record<string, number> = {}
-  for (const e of merged.events) routes[e.port] = forward
-  for (const c of merged.curves) routes[c.port] = forward
-  return routes
-}
-
-// The undo log lives in the project bundle; untitled sessions stage it in
-// userData and it moves into the bundle on Save As.
-const undoDir = (): string => projectDir ?? dataDir
-
-// undoSeq of the last saved/loaded doc; log compaction must keep everything
-// past it (boot's redo / crash-recovery tail).
-let savedUndoSeq = 0
-
-let tap: TapManager | null = null
-let tapError: string | null = null
-
-function requireTap(): TapManager {
-  if (!tap) throw new Error(tapError ?? 'vtr-tap not running')
-  return tap
-}
-
-let player: PlayerManager | null = null
-let playerError: string | null = null
-let transportFollow: TransportFollow | null = null
-// Last foreign transport state, kept so a renderer that loads (or reloads)
-// after a change can seed its playhead instead of assuming 0.
-let lastTransport: { state: TransportState; at: number } | null = null
-
-function requirePlayer(): PlayerManager {
-  if (!player) throw new Error(playerError ?? 'vtr-player not running')
-  return player
-}
-
-// e2e: never show a window or steal focus.
-const hidden = process.env.OSC_EDITOR_HIDDEN === '1'
-
-// Unsaved-changes guard: the renderer reports dirty through window:setFile;
-// closing a dirty window prompts save/discard/cancel. Hidden (e2e) takes the
-// choice from OSC_EDITOR_QUIT_CHOICE instead of a native dialog; the default
-// is discard, matching the documented no-autosave quit.
-let dirtyState = false
-let forceClose = false
-
+// Hidden (e2e) takes the quit-prompt choice from OSC_EDITOR_QUIT_CHOICE
+// instead of a native dialog; the default is discard, matching the
+// documented no-autosave quit.
 function quitChoice(win: BrowserWindow): number {
   if (hidden) {
     const byName: Record<string, number> = { save: 0, discard: 1, cancel: 2 }
@@ -202,13 +115,14 @@ function createWindow(): void {
     if (!hidden) mainWindow.show()
   })
 
+  // Closing a dirty window prompts save/discard/cancel.
   mainWindow.on('close', (e) => {
-    if (forceClose || !dirtyState) return
+    if (ctx.forceClose || !ctx.dirtyState) return
     e.preventDefault()
     const choice = quitChoice(mainWindow)
     if (choice === 2) return
     if (choice === 1) {
-      forceClose = true
+      ctx.forceClose = true
       mainWindow.close()
       return
     }
@@ -360,7 +274,8 @@ app.whenReady().then(() => {
       (process.env.VTR_TAP_SPAWN as SpawnMode) ??
       (app.isPackaged && process.platform === 'darwin' ? 'launchd' : 'child')
     const bin = findBinary('vtr-tap', { ...binEnv, envBin: process.env.VTR_TAP_BIN })
-    tap = new TapManager(bin, dataDir, stagingDir, mode, ports)
+    const tap = new TapManager(bin, dataDir, ctx.stagingDir, mode, ports)
+    ctx.tap = tap
     tap.spawnTap()
     // Recording state flows renderer-ward through this one channel: events
     // and baseline/reset snapshots alike (snapshot-apply lives there).
@@ -372,217 +287,48 @@ app.whenReady().then(() => {
       (status) => pushTap({ type: 'reset', status })
     )
   } catch (e) {
-    tapError = (e as Error).message
-    console.error(tapError)
+    ctx.tapError = (e as Error).message
+    console.error(ctx.tapError)
   }
 
+  let transportFollow: TransportFollow | null = null
   try {
     const bin = findBinary('vtr-player', { ...binEnv, envBin: process.env.VTR_PLAYER_BIN })
     // The tap socket path is fixed under dataDir even when the tap failed
     // to start — the player just retries the connection.
-    player = new PlayerManager(
+    const player = new PlayerManager(
       bin,
       dataDir,
       ports.echo,
       ports.echoHost,
       join(dataDir, 'vtr-tap.sock')
     )
+    ctx.player = player
     player.spawnPlayer()
     // Mirror the player's push transport back into the editor: a seek or
     // play/stop from TD or a controller moves the renderer's playhead.
     transportFollow = new TransportFollow(player, (s) => {
-      lastTransport = { state: s, at: Date.now() }
+      ctx.lastTransport = { state: s, at: Date.now() }
       BrowserWindow.getAllWindows()[0]?.webContents.send('transport:update', s)
     })
     transportFollow.start()
   } catch (e) {
-    playerError = (e as Error).message
-    console.error(playerError)
+    ctx.playerError = (e as Error).message
+    console.error(ctx.playerError)
   }
-
-  // Record straight into the open project's bundle; staging only when untitled.
-  ipcMain.handle('tap:start', () =>
-    requireTap().start(projectDir ? join(projectDir, 'clips') : undefined)
-  )
-  ipcMain.handle('tap:stop', () => requireTap().stop())
-  ipcMain.handle('tap:status', () => requireTap().status())
-  ipcMain.handle('clip:summary', (_e, path: string) => clipSummary(ensureWithin(clipRoots(), path)))
-  ipcMain.handle('tap:setPorts', (_e, ports: PortConfig) => {
-    requireTap().setPorts(ports)
-    player?.setEcho(ports.echo, ports.echoHost)
-  })
-  ipcMain.handle('player:status', () => requirePlayer().status())
-  ipcMain.handle('app:workdir', () => workdir)
-  // In-window File menu mirrors the app menu's Open Recent.
-  ipcMain.handle('recents:list', () =>
-    loadRecents(dataDir).map((p) => ({ path: p, label: recentLabel(p) }))
-  )
-  // Only paths already in the recents list may be opened: opening grants the
-  // path, and a compromised renderer must not mint grants for arbitrary files.
-  ipcMain.handle('recents:open', (_e, path: string) => {
-    if (!loadRecents(dataDir).includes(path)) throw new Error(`not a recent project: ${path}`)
-    openRecent(path)
-  })
-  ipcMain.handle('recents:clear', () => {
-    clearRecents(dataDir)
-    installMenu()
-  })
-  // macOS: proxy icon in the title bar carries the full path; the edited
-  // state shows as a dot on the close button. No-ops on other platforms.
-  ipcMain.handle('window:setFile', (e, path: string | null, dirty: boolean) => {
-    dirtyState = dirty
-    const win = BrowserWindow.fromWebContents(e.sender)
-    win?.setRepresentedFilename(path ?? '')
-    win?.setDocumentEdited(dirty)
-  })
-  // The renderer saved after a quit prompt chose Save; finish the close.
-  ipcMain.handle('window:confirmClose', (e) => {
-    forceClose = true
-    BrowserWindow.fromWebContents(e.sender)?.close()
-  })
-  // Raw events; the renderer applies its own (possibly newer) edit overlay.
-  // A stale path (clip collected into a bundle since) re-resolves by name.
-  ipcMain.handle('clip:events', (_e, path: string) => {
-    try {
-      return readClip(ensureWithin(clipRoots(), path)).events
-    } catch {
-      return readClip(resolveClip(basename(path))).events
-    }
-  })
-  ipcMain.handle('clip:reveal', (_e, file: string) => {
-    const path = resolveClip(basename(file))
-    if (!existsSync(path)) throw new Error(`clip file not found: ${basename(file)}`)
-    shell.showItemInFolder(path)
-  })
-  // Boot load: the CLI-arg project (if any); the default is an empty project.
-  // Load/save accept a .oscproj bundle or a flat project.json path; the
-  // renderer keeps the path as given (window title, save target).
-  const load = (path: string): { path: string; project: LoadedProject } => {
-    const projectPath = normalizeProjectPath(path)
-    const project = loadProject(projectPath, stagingDir)
-    if (!project) throw new Error(`project not found: ${path}`)
-    projectDir = dirname(projectPath)
-    savedUndoSeq = project.undoSeq ?? 0
-    recordRecent(path)
-    return { path, project }
-  }
-  if (bootProjectPath) grantProjectPath(bootProjectPath)
-  ipcMain.handle('project:load', () => (bootProjectPath ? load(bootProjectPath) : null))
-  ipcMain.handle('project:loadPath', (_e, path: string) => {
-    requireGranted(path)
-    return load(path)
-  })
-  ipcMain.handle('project:save', (_e, path: string, project: ProjectFile) => {
-    const projectPath = requireGranted(path)
-    const dir = dirname(projectPath)
-    mkdirSync(dir, { recursive: true })
-    // Sources resolve with the outgoing projectDir; adopt the new one only
-    // after the transactional commit went through.
-    commitProject(projectPath, project, stagingDir, resolveClip)
-    transferUndoLog(undoDir(), dir, projectDir === null)
-    projectDir = dir
-    savedUndoSeq = project.undoSeq ?? 0
-    recordRecent(path)
-  })
-  // Hidden (e2e) skips native dialogs; OSC_EDITOR_DIALOG_PATH stands in for
-  // the user's pick (open returns null without it, save falls back to the
-  // suggested path).
-  ipcMain.handle('project:openDialog', async (e) => {
-    if (hidden) {
-      const p = process.env.OSC_EDITOR_DIALOG_PATH ?? null
-      return p ? grantProjectPath(p) : null
-    }
-    const win = BrowserWindow.fromWebContents(e.sender)
-    // openDirectory: a .oscproj is a plain dir wherever LSTypeIsPackage
-    // doesn't apply (dev runs, non-mac).
-    const res = await dialog.showOpenDialog(win!, {
-      defaultPath: projectDir ?? workdir,
-      filters: [{ name: 'Project', extensions: ['oscproj', 'json'] }],
-      properties: ['openFile', 'openDirectory']
-    })
-    return res.canceled || res.filePaths.length === 0 ? null : grantProjectPath(res.filePaths[0])
-  })
-  ipcMain.handle('project:saveDialog', async (e, defaultPath?: string) => {
-    const fallback = defaultPath ?? join(projectDir ?? workdir, 'Untitled.oscproj')
-    if (hidden) {
-      // Empty OSC_EDITOR_DIALOG_PATH stands in for a cancelled dialog.
-      const p = process.env.OSC_EDITOR_DIALOG_PATH
-      return p === '' ? null : grantProjectPath(p ?? fallback)
-    }
-    const win = BrowserWindow.fromWebContents(e.sender)
-    const res = await dialog.showSaveDialog(win!, {
-      defaultPath: fallback,
-      filters: [{ name: 'Project', extensions: ['oscproj'] }]
-    })
-    return res.canceled || !res.filePath ? null : grantProjectPath(res.filePath)
-  })
-  ipcMain.handle('undo:load', () => loadUndoLog(undoDir()))
-  ipcMain.handle('undo:append', (_e, entry: UndoEntry) =>
-    appendUndo(undoDir(), entry, savedUndoSeq)
-  )
-  ipcMain.handle('undo:truncateAfter', (_e, seq: number) => truncateUndoAfter(undoDir(), seq))
-  // Ask where to save; null = user cancelled. Hidden (e2e) skips the native
-  // dialog — it would hang the test — and writes the default session.jsonl.
-  ipcMain.handle('session:export', async (e, project: ProjectFile) => {
-    // Default next to the project: a bundle's parent dir, not inside it.
-    const exportDir =
-      projectDir == null
-        ? workdir
-        : projectDir.endsWith('.oscproj')
-          ? dirname(projectDir)
-          : projectDir
-    let outPath = join(exportDir, SESSION_FILE)
-    if (!hidden) {
-      const win = BrowserWindow.fromWebContents(e.sender)
-      const res = await dialog.showSaveDialog(win!, {
-        defaultPath: outPath,
-        filters: [{ name: 'JSONL', extensions: ['jsonl'] }]
-      })
-      if (res.canceled || !res.filePath) return null
-      outPath = res.filePath
-    }
-    return exportSession(resolveClip, project, outPath)
+  app.on('will-quit', () => {
+    transportFollow?.stop()
   })
 
-  // Preview playback is delegated to vtr-player: inline-load the merged
-  // project with routes, then drive the shared push transport. The player's
-  // emit loop is the only preview emitter — one resolver serves preview,
-  // file replay, and TD scrubs alike. Errors reject to the renderer's
-  // banner; there is no editor-side fallback path anymore.
-  const forwardPort = (): number => tap?.ports.forward ?? DEFAULT_PORTS.forward
-  ipcMain.handle('preview:play', async (_e, project: ProjectFile, fromSec: number) => {
-    const merged = mergeProject(resolveClip, project)
-    const duration = Math.max(merged.duration, project.duration ?? 0)
-    const p = requirePlayer()
-    await p.loadInline(merged.events, merged.curves, duration, routesFor(merged, forwardPort()))
-    await p.seek(fromSec)
-    const transport = await p.play()
-    return { duration, transport }
-  })
-  ipcMain.handle('preview:seek', (_e, fromSec: number) => requirePlayer().seek(fromSec))
-  ipcMain.handle('preview:stop', async () => {
-    const transport = await requirePlayer().stopTransport()
-    return { position: transport.playhead }
-  })
-  // Session residency: keep the player holding the current merged project
-  // even when idle, so a TD-side scrub resolves against something. Called
-  // on project open and (debounced) after edits. Best-effort.
-  // Seed for a freshly (re)loaded renderer: the last foreign transport
-  // state, extrapolated while playing so the playhead lands where the
-  // transport actually is, not where it was at the last gen bump.
-  ipcMain.handle('transport:last', (): TransportState | null => {
-    if (!lastTransport) return null
-    const { state, at } = lastTransport
-    if (!state.playing) return state
-    return { ...state, playhead: state.playhead + (Date.now() - at) / 1000 }
-  })
-  ipcMain.handle('player:loadInline', (_e, project: ProjectFile) => {
-    const merged = mergeProject(resolveClip, project)
-    const duration = Math.max(merged.duration, project.duration ?? 0)
-    player
-      ?.loadInline(merged.events, merged.curves, duration, routesFor(merged, forwardPort()))
-      .catch((e) => console.log(`residency load failed: ${(e as Error).message}`))
-  })
+  registerTapIpc(ctx)
+  registerPlayerIpc(ctx)
+  registerWindowIpc(ctx)
+  registerUndoIpc(ctx)
+  registerProjectIpc(
+    ctx,
+    { recordRecent, openRecent, recentLabel, refreshMenu: installMenu },
+    bootProjectPath
+  )
 
   createWindow()
 
@@ -591,7 +337,7 @@ app.whenReady().then(() => {
   openAfterReady = (path) => {
     const win = BrowserWindow.getAllWindows()[0]
     if (!win) return
-    if (dirtyState) {
+    if (ctx.dirtyState) {
       const discard = hidden
         ? process.env.OSC_EDITOR_QUIT_CHOICE !== 'cancel'
         : dialog.showMessageBoxSync(win, {
@@ -604,7 +350,7 @@ app.whenReady().then(() => {
           }) === 0
       if (!discard) return
     }
-    grantProjectPath(path)
+    ctx.grantProjectPath(path)
     win.webContents.send('project:openPath', path)
   }
 
@@ -614,9 +360,8 @@ app.whenReady().then(() => {
 })
 
 app.on('will-quit', () => {
-  transportFollow?.stop()
-  tap?.shutdown()
-  player?.shutdown()
+  ctx.tap?.shutdown()
+  ctx.player?.shutdown()
 })
 
 app.on('window-all-closed', () => {
