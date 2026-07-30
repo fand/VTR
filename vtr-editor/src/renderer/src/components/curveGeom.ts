@@ -1,7 +1,7 @@
 /** Pure screen-space geometry for the curve editor: point/curve hit-testing
  *  and coordinate mapping, shared by the canvas painter and the pointer
  *  handlers. No DOM here so it unit-tests with vitest. */
-import { segmentCtrl } from '../../../shared/curve'
+import { evalCurve, segmentCtrl } from '../../../shared/curve'
 import type { CurveKnot } from '../../../shared/types'
 
 export const PAD = 10
@@ -47,6 +47,25 @@ export const valueAt = (points: { t: number; v: number }[], t: number): number =
   for (const pt of points) {
     if (pt.t > t) break
     v = pt.v
+  }
+  return v
+}
+
+/** Merged curve value at time t: the last-started element wins — a point
+ *  holds its value, a curve interpolates inside its span and holds its end
+ *  value after. Before every element the first one's flat-left value
+ *  applies. Null when the property is empty. */
+export function mergedValueAt(p: GeomProp, t: number): number | null {
+  const els: readonly GeomEl[] = p.els ?? p.points
+  if (els.length === 0) return null
+  let v: number | null = null
+  for (const el of els) {
+    if (el.t > t) break
+    v = 'knots' in el ? evalCurve(el.knots, t) : el.v
+  }
+  if (v == null) {
+    const el = els[0]
+    v = 'knots' in el ? el.knots[0].v : el.v
   }
   return v
 }

@@ -12,9 +12,9 @@ import {
   hitCurve,
   hitKnot,
   hitPoint,
+  mergedValueAt,
   tAt,
   vAt,
-  valueAt,
   visibleRange,
   walkMerged,
   xAt,
@@ -1100,26 +1100,42 @@ export function CurvePanel({
     addCount: (file: string) => number,
     onCurve = false
   ): PointAdd | null => {
-    if (p.points.length === 0) return null
+    if (p.points.length === 0 && p.curves.length === 0) return null
     const t = snapTime(tAt(scale, pos.x))
-    const v = onCurve ? valueAt(p.points, t) : snapValue(vAt(scale, p, pos.y), p.min, p.max)
-    let tpl = p.points[0]
+    const v = onCurve
+      ? (mergedValueAt(p, t) ?? 0)
+      : snapValue(vAt(scale, p, pos.y), p.min, p.max)
+    // Template: the nearest point's event; on a fully-replaced property the
+    // nearest curve's message template.
+    let tpl: CurvePoint | null = null
     for (const pt of p.points) {
-      if (Math.abs(pt.t - t) < Math.abs(tpl.t - t)) tpl = pt
+      if (!tpl || Math.abs(pt.t - t) < Math.abs(tpl.t - t)) tpl = pt
     }
-    const c = tpl.clip
+    let src: { clip: ClipInst; port: number; a: string; args: unknown[]; argIndex: number }
+    if (tpl) {
+      src = { clip: tpl.clip, port: tpl.ev.port, a: tpl.ev.a, args: tpl.ev.args, argIndex: tpl.argIndex }
+    } else {
+      let pc = p.curves[0]
+      const dist = (c: PropCurve): number =>
+        Math.max(c.knots[0].t - t, 0, t - c.knots[c.knots.length - 1].t)
+      for (const c of p.curves) {
+        if (dist(c) < dist(pc)) pc = c
+      }
+      src = { clip: pc.clip, port: pc.src.port, a: pc.src.a, args: pc.src.args, argIndex: pc.src.arg }
+    }
+    const c = src.clip
     const events = loaded.get(c.path)
     if (!events) return null
     const tl = Math.min(Math.max(t, c.offset), c.offset + clipLen(c))
-    const args = [...tpl.ev.args]
-    args[tpl.argIndex] = v
+    const args = [...src.args]
+    args[src.argIndex] = v
     return {
       sel: {
         file: c.file,
         eventIndex: events.length + addCount(c.file),
-        argIndex: tpl.argIndex
+        argIndex: src.argIndex
       },
-      ev: { t: c.trimIn + (tl - c.offset), port: tpl.ev.port, a: tpl.ev.a, args }
+      ev: { t: c.trimIn + (tl - c.offset), port: src.port, a: src.a, args }
     }
   }
 

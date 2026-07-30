@@ -5,6 +5,7 @@ import {
   hitCurve,
   hitKnot,
   hitPoint,
+  mergedValueAt,
   tAt,
   vAt,
   valueAt,
@@ -217,4 +218,24 @@ test('visibleRange widens by one point each side', () => {
   expect(visibleRange(pts, 2.5, 2.6)).toEqual([2, 3])
   expect(visibleRange(pts, 7, 9)).toEqual([0, -1])
   expect(visibleRange([], 0, 1)).toEqual([0, -1])
+})
+
+test('mergedValueAt interpolates inside curve spans and steps elsewhere', () => {
+  // Linear curve [2,4] ramps 0->1, discrete points at t=6 (0.2) and t=8 (0.7).
+  const knots = [
+    { t: 2, v: 0 },
+    { t: 4, v: 1 }
+  ]
+  const els: GeomEl[] = [
+    { t: 2, knots, curve: 0 },
+    { t: 6, v: 0.2 },
+    { t: 8, v: 0.7 }
+  ]
+  const p: GeomProp = { min: 0, max: 1, points: [], els }
+  expect(mergedValueAt(p, 1)).toBe(0) // before everything: flat-left
+  expect(mergedValueAt(p, 3)).toBeCloseTo(0.5, 9) // inside the span
+  expect(mergedValueAt(p, 5)).toBe(1) // after the span: end value holds
+  expect(mergedValueAt(p, 7)).toBe(0.2) // the point takes over
+  expect(mergedValueAt(p, 9)).toBe(0.7)
+  expect(mergedValueAt({ min: 0, max: 1, points: [] }, 0)).toBeNull()
 })
