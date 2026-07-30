@@ -373,6 +373,14 @@ export function Timeline({
       e.preventDefault()
       const viewX = e.clientX - el.getBoundingClientRect().left
       pinchAnchor.current = { t: (el.scrollLeft + viewX - LABEL_W) / pxPerSec, viewX }
+      // The zoom clamp lives in the parent: a pinch at the range edge
+      // commits nothing, so the layout effect never consumes this anchor.
+      // Drop it at the frame boundary (a consuming commit flushes first) so
+      // a later zoom button press can't apply a stale anchor and jump the
+      // scroll.
+      requestAnimationFrame(() => {
+        pinchAnchor.current = null
+      })
       onZoom(Math.exp(-e.deltaY * 0.01))
     }
     el.addEventListener('wheel', onWheel, { passive: false })

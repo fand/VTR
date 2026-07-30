@@ -425,6 +425,14 @@ export function CurvePanel({
   // Normalized time position under the cursor at pinch start; scroll is
   // restored after the zoomed width renders so that point stays put.
   const pinchAnchor = useRef<{ norm: number; viewX: number } | null>(null)
+  // zoomX for the wheel handler (subscribed once): lets it detect a clamped
+  // pinch, which must not arm the anchor — no render would consume it, and
+  // the layout effect (also keyed on `w`) would apply it minutes later on a
+  // zoom button press or window resize, jumping the scroll.
+  const zoomXRef = useRef(zoomX)
+  useLayoutEffect(() => {
+    zoomXRef.current = zoomX
+  }, [zoomX])
   // scrollLeft to apply after a fit-zoom re-render, same timing as the pinch.
   const fitScroll = useRef<number | null>(null)
 
@@ -435,6 +443,9 @@ export function CurvePanel({
       const scroll = scrollRef.current
       if (!e.ctrlKey || !scroll) return
       e.preventDefault()
+      const next = Math.min(Math.max(zoomXRef.current * Math.exp(-e.deltaY * 0.01), 1), MAX_ZOOM)
+      if (next === zoomXRef.current) return // clamped: nothing will re-render
+      zoomXRef.current = next
       // Anchor from the DOM, not React state: pinch events outrun re-renders,
       // and scrollLeft/scrollWidth are always consistent with each other.
       const viewX = e.clientX - el.getBoundingClientRect().left
@@ -442,7 +453,7 @@ export function CurvePanel({
         norm: (scroll.scrollLeft + viewX - PAD) / Math.max(scroll.scrollWidth - 2 * PAD, 1),
         viewX
       }
-      setZoomX((z) => Math.min(Math.max(z * Math.exp(-e.deltaY * 0.01), 1), MAX_ZOOM))
+      setZoomX(next)
     }
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
