@@ -855,14 +855,21 @@ export function CurvePanel({
     d.moved = true
     const b = d.box0
     // Edges scale toward the opposite (anchored) edge; zero extent is a noop.
+    // The time scale clamps at zero width: dragging past the anchor would
+    // reverse knot order, which applyKnotMoves resolves by piling the knots
+    // at the anchor (its order invariant), not mirroring — destructive.
+    // Value flips stay allowed; values carry no order invariant.
     const map = (px: number, py: number): { nx: number; ny: number } => {
       switch (d.mode) {
         case 'move':
           return { nx: px + dx, ny: py + dy }
         case 'left':
-          return { nx: b.w > 0 ? b.x + b.w - ((b.x + b.w - px) * (b.w - dx)) / b.w : px, ny: py }
+          return {
+            nx: b.w > 0 ? b.x + b.w - ((b.x + b.w - px) * Math.max(b.w - dx, 0)) / b.w : px,
+            ny: py
+          }
         case 'right':
-          return { nx: b.w > 0 ? b.x + ((px - b.x) * (b.w + dx)) / b.w : px, ny: py }
+          return { nx: b.w > 0 ? b.x + ((px - b.x) * Math.max(b.w + dx, 0)) / b.w : px, ny: py }
         case 'top':
           return { nx: px, ny: b.h > 0 ? b.y + b.h - ((b.y + b.h - py) * (b.h - dy)) / b.h : py }
         case 'bottom':
