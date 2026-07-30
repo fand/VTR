@@ -4,28 +4,9 @@ Refactor backlog. Branch: `refactor/cleanup` (based on `fix/curve-resolution-dif
 Done so far: dead code, write_line throttle, playhead key unification,
 curve golden fixture (+ serde_json float_roundtrip fix), vtr-core crate,
 ControlChannel/ChildSupervisor, CurvePanel decomposition, uiScale
-(zoomSlider + useElementSize), overlay transforms in shared/edits.ts.
-
-## Next: unify "which definition wins at t" (agreed, not started)
-
-Three hand-synced copies of latest-definition-wins + earliest flat-left clamp:
-
-- `vtr-player/src/resolver.rs:196-231` `resolve_at` — event vs curve pick,
-  ties go to the curve; its `(None, None)` arm re-derives the same
-  comparison against the *earliest* definitions (near-mirror code).
-- `vtr-player/src/session.rs:118-170` `curve_group_args` — same shape again
-  per arg: latest-def-wins loop + earliest-clamp fallback, ties to the
-  later line.
-
-Plan:
-1. First check how tightly `tests/conformance_resolver.rs` +
-   `conformance_session.rs` pin these paths (ties, clamp, per-arg cases);
-   add conformance cases if thin — BEFORE touching the code.
-2. Extract a small `pick_latest_or_earliest` helper parameterized by
-   (definition time, tiebreak); use it in all three places.
-   `resolve_at` (74 lines) should roughly halve.
-
-Risk: core playback correctness; the conformance suites are the net.
+(zoomSlider + useElementSize), overlay transforms in shared/edits.ts,
+pick_latest_or_earliest (vtr-player/src/pick.rs; resolve_at +
+curve_group_args now share it, new conformance cases pin the clamp/ties).
 
 ## Backlog (from the survey, not yet agreed)
 

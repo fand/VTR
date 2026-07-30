@@ -228,3 +228,29 @@ fn test_same_arg_curves_share_a_group() {
     let args = s.curve_group_args(0, 10.5);
     assert!((args[0].as_f64().unwrap() - 5.5).abs() < 1e-9);
 }
+
+#[test]
+fn test_curve_group_args_clamps_to_the_earliest_span_before_both() {
+    let s = load(&[
+        curve_line("/x", 0, json!([{"t": 10.0, "v": 5.0}, {"t": 11.0, "v": 6.0}])),
+        curve_line("/x", 0, json!([{"t": 3.0, "v": 0.5}, {"t": 4.0, "v": 1.0}])),
+    ]);
+    // t before both spans: the earliest span's flat-left value, regardless
+    // of line order.
+    let args = s.curve_group_args(0, 1.0);
+    assert!((args[0].as_f64().unwrap() - 0.5).abs() < 1e-9, "{args:?}");
+}
+
+#[test]
+fn test_curve_group_args_ties_go_to_the_later_line() {
+    // Same span twice: the later line is the newer edit and wins — both
+    // inside the span (started tie) and before it (earliest-clamp tie).
+    let s = load(&[
+        curve_line("/x", 0, json!([{"t": 3.0, "v": 0.0}, {"t": 4.0, "v": 1.0}])),
+        curve_line("/x", 0, json!([{"t": 3.0, "v": 8.0}, {"t": 4.0, "v": 9.0}])),
+    ]);
+    let args = s.curve_group_args(0, 3.5);
+    assert!((args[0].as_f64().unwrap() - 8.5).abs() < 1e-9, "{args:?}");
+    let args = s.curve_group_args(0, 1.0);
+    assert!((args[0].as_f64().unwrap() - 8.0).abs() < 1e-9, "{args:?}");
+}

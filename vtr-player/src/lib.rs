@@ -2,6 +2,7 @@ pub mod control;
 pub mod curve;
 pub mod echo;
 pub mod pattern;
+pub mod pick;
 pub mod relay;
 pub mod resolver;
 pub mod session;

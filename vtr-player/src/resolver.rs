@@ -31,6 +31,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use crate::pick;
 use crate::session::Session;
 
 /// (listen port, address, args) — the caller maps port through routes and sends.
@@ -194,46 +195,31 @@ impl Resolver {
             }
             let times = &session.addr_t[k];
             let j = times.partition_point(|&x| x <= pos);
-            // Defined event: the last one at or before pos.
-            let event = (j > 0).then(|| (times[j - 1], session.addr_events[k][j - 1]));
-            // Defined curve: the group once pos has reached its span.
-            let group = session.addr_group[k].filter(|&g| session.curve_groups[g].start <= pos);
-            let pick = match (event, group) {
-                // Latest definition wins; ties go to the curve (edit layer).
-                (Some((et, i)), Some(g)) => {
-                    let gt = pos.min(session.curve_groups[g].end);
-                    if et > gt {
-                        Src::Event(i)
-                    } else {
-                        Src::Group(g)
-                    }
-                }
-                (Some((_, i)), None) => Src::Event(i),
-                (None, Some(g)) => Src::Group(g),
-                // Nothing defined at pos: clamp to the earliest definition
-                // (values extend flat before the first data point).
-                (None, None) => {
-                    let ev0 = times.first().map(|&t| (t, session.addr_events[k][0]));
-                    let grp = session.addr_group[k].map(|g| (session.curve_groups[g].start, g));
-                    match (ev0, grp) {
-                        (Some((et, i)), Some((gt, g))) => {
-                            if et < gt {
-                                Src::Event(i)
-                            } else {
-                                Src::Group(g)
-                            }
-                        }
-                        (Some((_, i)), None) => Src::Event(i),
-                        (None, Some((_, g))) => Src::Group(g),
-                        (None, None) => continue,
-                    }
-                }
+            // Two candidates, curve last so ties go to it (the edit layer):
+            // an event's def time is the last event at or before pos, a
+            // curve's is min(pos, span end) once pos has reached its span.
+            let mut cands: Vec<pick::Candidate> = Vec::new();
+            if let Some(&t0) = times.first() {
+                cands.push(((j > 0).then(|| times[j - 1]), t0));
+            }
+            let group = session.addr_group[k];
+            if let Some(g) = group {
+                let grp = &session.curve_groups[g];
+                cands.push(((grp.start <= pos).then(|| pos.min(grp.end)), grp.start));
+            }
+            let Some((w, started)) = pick::pick_latest_or_earliest(&cands) else {
+                continue;
             };
-            match pick {
-                Src::Event(i) => chosen.push((session.t[i], i, Src::Event(i))),
-                Src::Group(g) => {
-                    let def = pos.min(session.curve_groups[g].end).max(session.curve_groups[g].start);
+            match group {
+                // The curve, when present, is the last candidate.
+                Some(g) if w == cands.len() - 1 => {
+                    let grp = &session.curve_groups[g];
+                    let def = pos.min(grp.end).max(grp.start);
                     chosen.push((def, usize::MAX, Src::Group(g)));
+                }
+                _ => {
+                    let i = session.addr_events[k][if started { j - 1 } else { 0 }];
+                    chosen.push((session.t[i], i, Src::Event(i)));
                 }
             }
         }

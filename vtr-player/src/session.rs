@@ -14,6 +14,7 @@ use anyhow::{Context, Result};
 use serde_json::Value;
 
 use crate::curve::{self, Knot};
+use crate::pick;
 
 /// OSC type tags whose args can live in the shared float pool. Everything
 /// else (strings, blobs, bools, ...) keeps its parsed args in `raw_args`
@@ -128,33 +129,17 @@ impl Session {
             }
             let run = &group.members[i..j];
             i = j;
-            // Started curves: latest definition time, ties to the later line.
-            let mut win: Option<usize> = None;
-            let mut best = f64::NEG_INFINITY;
-            for &m in run {
-                let knots = &self.curves[m].knots;
-                if knots[0].t <= t {
-                    let def = t.min(knots[knots.len() - 1].t);
-                    if def >= best {
-                        best = def;
-                        win = Some(m);
-                    }
-                }
-            }
-            // Nothing started: clamp to the earliest span (flat-left),
-            // ties again to the later line.
-            let m = win.unwrap_or_else(|| {
-                let mut w = run[0];
-                let mut start = f64::INFINITY;
-                for &m in run {
-                    let s = self.curves[m].knots[0].t;
-                    if s <= start {
-                        start = s;
-                        w = m;
-                    }
-                }
-                w
-            });
+            // Line order = candidate order, so ties go to the newer edit.
+            let cands: Vec<pick::Candidate> = run
+                .iter()
+                .map(|&m| {
+                    let knots = &self.curves[m].knots;
+                    let start = knots[0].t;
+                    ((start <= t).then(|| t.min(knots[knots.len() - 1].t)), start)
+                })
+                .collect();
+            let (w, _) = pick::pick_latest_or_earliest(&cands).expect("run is non-empty");
+            let m = run[w];
             let c = &self.curves[m];
             let v = curve::value_at(&c.knots, t);
             let val = match c.types.chars().nth(c.arg) {

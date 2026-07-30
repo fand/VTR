@@ -305,6 +305,32 @@ fn test_pump_same_time_tie_goes_to_curve() {
 }
 
 #[test]
+fn test_seek_before_event_and_curve_clamps_to_the_earliest_definition() {
+    // Both definitions lie after pos: clamp to the earlier one.
+    // Event first: its value extends flat-left.
+    let s = load(&[
+        ev(2.0, "/x", &[9.0]),
+        curve("/x", 0, &[0.0], [5.0, 6.0], [0.5, 1.0]),
+    ]);
+    let mut r = resolver(&s);
+    assert_eq!(firsts(&r.step(1.0)), vec![9.0]);
+    // Curve first: its flat-left value wins.
+    let s = load(&[
+        ev(7.0, "/x", &[9.0]),
+        curve("/x", 0, &[0.0], [5.0, 6.0], [0.5, 1.0]),
+    ]);
+    let mut r = resolver(&s);
+    assert_first_near(&r.step(1.0), 0.5);
+    // Same time: the tie goes to the curve (edit layer), like everywhere.
+    let s = load(&[
+        ev(5.0, "/x", &[9.0]),
+        curve("/x", 0, &[0.0], [5.0, 6.0], [0.5, 1.0]),
+    ]);
+    let mut r = resolver(&s);
+    assert_first_near(&r.step(1.0), 0.5);
+}
+
+#[test]
 fn test_same_arg_curves_with_disjoint_spans_take_turns() {
     // Two curves on one (addr, arg): A ramps [1,2], B ramps [10,11]. The
     // one with the latest definition time <= pos wins, so A plays its span
