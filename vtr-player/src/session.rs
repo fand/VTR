@@ -109,13 +109,52 @@ impl Session {
     }
 
     /// Merged message for curve group g at time t: the first member's
-    /// template with each member's controlled arg replaced by its
-    /// interpolated value (int-tagged args rounded). Values extend flat
-    /// outside each member's span.
+    /// template with each controlled arg replaced by its winning curve's
+    /// interpolated value (int-tagged args rounded). Several curves on one
+    /// arg follow the event rule: the one with the latest definition time
+    /// (`min(t, span end)` once `t >= span start`) wins, ties go to the
+    /// later line (the newer edit); before every span the earliest curve
+    /// supplies its flat-left value. Values extend flat outside a span.
     pub fn curve_group_args(&self, g: usize, t: f64) -> Vec<Value> {
         let group = &self.curve_groups[g];
         let mut args = self.curves[group.members[0]].template.clone();
-        for &m in &group.members {
+        // Members are arg-sorted; each run of one arg picks a single winner.
+        let mut i = 0;
+        while i < group.members.len() {
+            let arg = self.curves[group.members[i]].arg;
+            let mut j = i + 1;
+            while j < group.members.len() && self.curves[group.members[j]].arg == arg {
+                j += 1;
+            }
+            let run = &group.members[i..j];
+            i = j;
+            // Started curves: latest definition time, ties to the later line.
+            let mut win: Option<usize> = None;
+            let mut best = f64::NEG_INFINITY;
+            for &m in run {
+                let knots = &self.curves[m].knots;
+                if knots[0].t <= t {
+                    let def = t.min(knots[knots.len() - 1].t);
+                    if def >= best {
+                        best = def;
+                        win = Some(m);
+                    }
+                }
+            }
+            // Nothing started: clamp to the earliest span (flat-left),
+            // ties again to the later line.
+            let m = win.unwrap_or_else(|| {
+                let mut w = run[0];
+                let mut start = f64::INFINITY;
+                for &m in run {
+                    let s = self.curves[m].knots[0].t;
+                    if s <= start {
+                        start = s;
+                        w = m;
+                    }
+                }
+                w
+            });
             let c = &self.curves[m];
             let v = curve::value_at(&c.knots, t);
             let val = match c.types.chars().nth(c.arg) {

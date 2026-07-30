@@ -156,8 +156,10 @@ increasing and handle `dt` stays within its segment (readers clamp). The
 player emits the message template `args` with `args[arg]` replaced by the
 interpolated value, one sample per resolve step; curves on the same
 `(port, a)` with different `arg` merge into one message. Outside its span a
-curve extends flat, like discrete data on seek. Players from before this
-field skip curve lines (unknown `type`).
+curve extends flat, like discrete data on seek. Several curves on one
+`(port, a, arg)` follow the event rule: the latest definition time
+(`min(pos, span end)` once `pos ≥ span start`) wins, ties go to the later
+line. Players from before this field skip curve lines (unknown `type`).
 
 Session files wrap events in `{"type":"session_start",...}` /
 `{"type":"session_end","t":...}` marker lines. `session_start` carries

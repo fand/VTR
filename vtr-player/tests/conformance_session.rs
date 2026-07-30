@@ -211,3 +211,20 @@ fn test_curve_group_args_respects_int_tags() {
     assert!(args[0].is_i64(), "int-tagged arg rounds: {args:?}");
     assert_eq!(args[1], json!(7.5)); // untouched template arg rides along
 }
+
+#[test]
+fn test_same_arg_curves_share_a_group() {
+    let s = load(&[
+        curve_line("/x", 0, json!([{"t": 0.0, "v": 0.0}, {"t": 1.0, "v": 1.0}])),
+        curve_line("/x", 0, json!([{"t": 10.0, "v": 5.0}, {"t": 11.0, "v": 6.0}])),
+    ]);
+    assert_eq!(s.curve_groups.len(), 1);
+    assert_eq!(s.curve_groups[0].members.len(), 2);
+    assert_eq!(s.curve_groups[0].start, 0.0);
+    assert_eq!(s.curve_groups[0].end, 11.0);
+    // The earlier line's curve wins its own span; the later takes over.
+    let args = s.curve_group_args(0, 0.5);
+    assert!((args[0].as_f64().unwrap() - 0.5).abs() < 1e-9);
+    let args = s.curve_group_args(0, 10.5);
+    assert!((args[0].as_f64().unwrap() - 5.5).abs() < 1e-9);
+}

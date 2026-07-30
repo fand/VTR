@@ -70,6 +70,12 @@ Extend the conformance suite first — these rules become
   `min(pos, span end)` once `pos ≥ span start`). The editor's conversion
   deletes covered points, so overlap is rare, but the rule keeps mixed
   sessions deterministic.
+- **Several curves on one `(port, a, arg)`** (two clips, or two replaces on
+  one clip) follow the same rule: latest definition time wins, ties to the
+  later line (the newer edit). Before every span the earliest curve's
+  flat-left value applies. The editor also carves a new curve's span out of
+  overlapping same-arg overlay curves, so overlap survives only across
+  clips or hand-edited files.
 - **Pump** (continuous playback): per step, recorded events in `(prev, pos]`
   emit as today, then each active curve emits its sample at `pos` — so push
   replay interpolates at the 5 ms tick and sync clients get one sample per

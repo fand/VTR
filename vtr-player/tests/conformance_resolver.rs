@@ -303,3 +303,41 @@ fn test_pump_same_time_tie_goes_to_curve() {
     r.step(0.95);
     assert_eq!(firsts(&r.step(1.05)), vec![9.0, 1.0]);
 }
+
+#[test]
+fn test_same_arg_curves_with_disjoint_spans_take_turns() {
+    // Two curves on one (addr, arg): A ramps [1,2], B ramps [10,11]. The
+    // one with the latest definition time <= pos wins, so A plays its span
+    // and holds until B's span starts.
+    let s = load(&[
+        curve("/x", 0, &[0.0], [1.0, 2.0], [0.0, 1.0]),
+        curve("/x", 0, &[0.0], [10.0, 11.0], [5.0, 6.0]),
+    ]);
+    let mut r = resolver(&s);
+    assert_first_near(&r.step(0.5), 0.0); // before both: A's flat-left
+    let mut r = resolver(&s);
+    assert_first_near(&r.step(1.5), 0.5); // inside A
+    let mut r = resolver(&s);
+    assert_first_near(&r.step(5.0), 1.0); // between: A's end holds
+    let mut r = resolver(&s);
+    assert_first_near(&r.step(10.5), 5.5); // inside B
+    // Pump through A's span: A interpolates, B stays out of the way.
+    let mut r = resolver(&s);
+    r.step(1.0);
+    assert_first_near(&r.step(1.25), 0.25);
+}
+
+#[test]
+fn test_same_arg_nested_span_yields_back_to_the_outer_curve() {
+    // Outer [0,10] ramp, inner [2,4] flat 9 (appended later). Inside the
+    // inner span the inner curve wins the def-time tie; after it ends the
+    // outer curve's later definition takes over again.
+    let s = load(&[
+        curve("/x", 0, &[0.0], [0.0, 10.0], [0.0, 1.0]),
+        curve("/x", 0, &[0.0], [2.0, 4.0], [9.0, 9.0]),
+    ]);
+    let mut r = resolver(&s);
+    assert_first_near(&r.step(3.0), 9.0); // inner wins the tie at pos
+    let mut r = resolver(&s);
+    assert_first_near(&r.step(5.0), 0.5); // outer def 5 > inner def 4
+}
