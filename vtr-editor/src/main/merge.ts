@@ -1,4 +1,4 @@
-import { clipCurve } from '../shared/curve'
+import { clampHandleTimes, clipCurve } from '../shared/curve'
 import { applyEdits } from '../shared/edits'
 import type { ClipCurve, CurveKnot, OscEvent, ProjectFile } from '../shared/types'
 import { readClip } from './clips'
@@ -17,10 +17,23 @@ function placeCurve(
 ): ClipCurve | null {
   const clipped = clipCurve(curve.knots, trimIn, trimOut)
   if (!clipped) return null
-  const knots: CurveKnot[] = clipped.map((k) => ({
-    ...k,
-    t: round6(offset + (k.t - trimIn))
-  }))
+  // round6 can land a boundary-split sliver knot on its neighbor's grid
+  // point; the player rejects non-increasing knots (dropping the whole
+  // curve), so collapse equal-t knots instead (the later wins, keeping the
+  // curve's end value).
+  const knots: CurveKnot[] = []
+  for (const k of clipped) {
+    const placed = { ...k, t: round6(offset + (k.t - trimIn)) }
+    const prev = knots[knots.length - 1]
+    if (prev && placed.t <= prev.t) knots[knots.length - 1] = placed
+    else knots.push(placed)
+  }
+  if (knots.length < 2) return null
+  // Collapsing can shrink spans below a handle's dt and re-expose boundary
+  // handles; restore both invariants.
+  delete knots[0].i
+  delete knots[knots.length - 1].o
+  clampHandleTimes(knots)
   return { ...curve, knots }
 }
 

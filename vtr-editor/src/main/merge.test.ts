@@ -138,6 +138,54 @@ test('overlay curves land on the timeline, trimmed and shifted', () => {
   expect(knots[knots.length - 1].v).toBeCloseTo(0.75, 6)
 })
 
+test('a trim boundary within round6 of a knot keeps the curve valid', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vtr-merge-'))
+  writeFileSync(join(dir, 'f.jsonl'), '{"t":0.0,"port":10000,"a":"/x","args":[1]}\n')
+  const project: ProjectFile = {
+    version: 1,
+    // trimIn lands 4e-7 left of the middle knot: the boundary split emits a
+    // sliver segment that round6 collapses.
+    tracks: [{ clips: [{ file: 'f.jsonl', offset: 0, trimIn: 0.9999996, trimOut: 3 }] }],
+    edits: {
+      'f.jsonl': {
+        curves: [
+          {
+            port: 10000,
+            a: '/x',
+            arg: 0,
+            args: [0],
+            types: 'f',
+            knots: [
+              { t: 0, v: 0 },
+              { t: 1, v: 0.5, o: [0.3, 0.1] },
+              { t: 2, v: 1 }
+            ]
+          }
+        ]
+      }
+    }
+  }
+  const { curves } = mergeProject((f) => join(dir, f), project)
+  expect(curves).toHaveLength(1)
+  const knots = curves[0].knots
+  // The sliver knot collapsed into the middle knot, which now opens the curve.
+  expect(knots).toHaveLength(2)
+  expect(knots[0].v).toBeCloseTo(0.5, 6)
+  // Strictly increasing t (the player rejects the whole curve otherwise).
+  for (let i = 1; i < knots.length; i++) {
+    expect(knots[i].t).toBeGreaterThan(knots[i - 1].t)
+  }
+  // Boundary knots keep only inward handles; handle dts stay in their spans.
+  expect(knots[0].i).toBeUndefined()
+  expect(knots[knots.length - 1].o).toBeUndefined()
+  for (let i = 0; i < knots.length; i++) {
+    const o = knots[i].o
+    if (o) expect(o[0]).toBeLessThanOrEqual(knots[i + 1].t - knots[i].t)
+    const inn = knots[i].i
+    if (inn) expect(-inn[0]).toBeLessThanOrEqual(knots[i].t - knots[i - 1].t)
+  }
+})
+
 test('curveDel and muted clips drop curves', () => {
   const dir = mkdtempSync(join(tmpdir(), 'vtr-merge-'))
   writeFileSync(join(dir, 'g.jsonl'), '{"t":0.0,"port":10000,"a":"/x","args":[1]}\n')
