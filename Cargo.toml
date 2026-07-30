@@ -1,5 +1,5 @@
 [workspace]
-members = ["vtr-tap", "vtr-player"]
+members = ["vtr-core", "vtr-tap", "vtr-player"]
 resolver = "2"
 
 [workspace.dependencies]

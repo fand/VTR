@@ -5,78 +5,17 @@
 //! echo is driven by the tap event log regardless of which command changed
 //! the state.
 
-use std::net::{SocketAddr, UdpSocket};
+use std::net::UdpSocket;
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::Result;
-use rosc::{OscMessage, OscPacket, OscType};
+use vtr_core::{arg_as_f64, flatten, relay_frame, RateLimitedLog, MAX_DATAGRAM};
 
 use crate::echo::Echo;
 use crate::state::SharedState;
 use crate::transport::Transport;
-
-const MAX_DATAGRAM: usize = 65_507;
-
-/// Logs at most once per second; counts what it swallowed in between.
-/// Anything reaching the relay port can repeat at packet rate.
-struct RateLimitedLog {
-    last: Option<Instant>,
-    suppressed: u64,
-}
-
-impl RateLimitedLog {
-    fn new() -> Self {
-        Self {
-            last: None,
-            suppressed: 0,
-        }
-    }
-
-    fn log(&mut self, msg: &str) {
-        let now = Instant::now();
-        if self.last.is_none_or(|l| (now - l).as_secs_f64() >= 1.0) {
-            if self.suppressed > 0 {
-                eprintln!("vtr-player: {msg} ({} similar suppressed)", self.suppressed);
-            } else {
-                eprintln!("vtr-player: {msg}");
-            }
-            self.suppressed = 0;
-            self.last = Some(now);
-        } else {
-            self.suppressed += 1;
-        }
-    }
-}
-
-fn parse_frame(buf: &[u8]) -> Option<(SocketAddr, &[u8])> {
-    let nl = buf.iter().position(|&b| b == b'\n')?;
-    let header = std::str::from_utf8(&buf[..nl]).ok()?;
-    let origin = header.strip_prefix("v1 ")?.parse().ok()?;
-    Some((origin, &buf[nl + 1..]))
-}
-
-fn flatten(packet: OscPacket, out: &mut Vec<OscMessage>) {
-    match packet {
-        OscPacket::Message(m) => out.push(m),
-        OscPacket::Bundle(b) => {
-            for p in b.content {
-                flatten(p, out);
-            }
-        }
-    }
-}
-
-fn arg_as_f64(arg: Option<&OscType>) -> Option<f64> {
-    match arg {
-        Some(OscType::Float(f)) => Some(*f as f64),
-        Some(OscType::Double(d)) => Some(*d),
-        Some(OscType::Int(i)) => Some(*i as f64),
-        Some(OscType::Long(i)) => Some(*i as f64),
-        _ => None,
-    }
-}
 
 pub fn spawn(
     sock: UdpSocket,
@@ -86,8 +25,8 @@ pub fn spawn(
 ) -> Result<()> {
     thread::Builder::new().name("relay".into()).spawn(move || {
         let mut buf = [0u8; MAX_DATAGRAM];
-        let mut recv_log = RateLimitedLog::new();
-        let mut frame_log = RateLimitedLog::new();
+        let mut recv_log = RateLimitedLog::new("vtr-player");
+        let mut frame_log = RateLimitedLog::new("vtr-player");
         loop {
             let n = match sock.recv(&mut buf) {
                 Ok(n) => n,
@@ -99,7 +38,7 @@ pub fn spawn(
                     continue;
                 }
             };
-            let Some((origin, payload)) = parse_frame(&buf[..n]) else {
+            let Some((origin, payload)) = relay_frame::parse(&buf[..n]) else {
                 frame_log.log(&format!("warn: bad relay frame ({n} bytes) dropped"));
                 continue;
             };

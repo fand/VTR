@@ -14,9 +14,10 @@ use rosc::{OscMessage, OscPacket, OscType};
 use serde::Serialize;
 use serde_json::{json, Value};
 
+use vtr_core::{arg_as_f64, flatten, relay_frame, RateLimitedLog, MAX_DATAGRAM, PLAYER_ADDRS};
+
 use crate::config::Config;
 
-const MAX_DATAGRAM: usize = 65_507;
 /// Kernel receive buffer for the listen socket (best effort).
 const RECV_BUF_BYTES: usize = 4 * 1024 * 1024;
 /// Max packets queued to the writer before we drop (and count) instead of blocking.
@@ -30,36 +31,6 @@ const CTL_CHANNEL_CAP: usize = 256;
 /// well under the player's own origin expiry (3 min) so a live controller
 /// never falls out of its registry.
 const ORIGIN_REFRESH: Duration = Duration::from_secs(60);
-
-/// Logs at most once per second; counts what it swallowed in between.
-struct RateLimitedLog {
-    last: Option<Instant>,
-    suppressed: u64,
-}
-
-impl RateLimitedLog {
-    fn new() -> Self {
-        Self {
-            last: None,
-            suppressed: 0,
-        }
-    }
-
-    fn log(&mut self, msg: &str) {
-        let now = Instant::now();
-        if self.last.is_none_or(|l| (now - l).as_secs_f64() >= 1.0) {
-            if self.suppressed > 0 {
-                eprintln!("vtr-tap: {msg} ({} similar suppressed)", self.suppressed);
-            } else {
-                eprintln!("vtr-tap: {msg}");
-            }
-            self.suppressed = 0;
-            self.last = Some(now);
-        } else {
-            self.suppressed += 1;
-        }
-    }
-}
 
 /// Latest `/vtr/clock` beacon.
 #[derive(Debug, Clone, Copy)]
@@ -126,7 +97,7 @@ impl OriginNotifier {
             seen: HashMap::new(),
             sock: UdpSocket::bind("0.0.0.0:0").context("bind origin-notify socket")?,
             relay,
-            log: RateLimitedLog::new(),
+            log: RateLimitedLog::new("vtr-tap"),
         })
     }
 
@@ -155,8 +126,7 @@ impl OriginNotifier {
         let Ok(payload) = rosc::encoder::encode(&packet) else {
             return;
         };
-        let mut frame = format!("v1 {origin}\n").into_bytes();
-        frame.extend_from_slice(&payload);
+        let frame = relay_frame::encode(origin, &payload);
         if let Err(e) = self.sock.send_to(&frame, self.relay) {
             self.log.log(&format!("origin-notify send error: {e}"));
         }
@@ -390,7 +360,7 @@ impl Tap {
             Some(addr) => Some(Notify {
                 sock: UdpSocket::bind("0.0.0.0:0").context("bind td-notify socket")?,
                 addr,
-                log: RateLimitedLog::new(),
+                log: RateLimitedLog::new("vtr-tap"),
             }),
             None => None,
         };
@@ -419,9 +389,9 @@ impl Tap {
             thread::Builder::new().name("recv".into()).spawn(move || {
                 let mut buf = [0u8; MAX_DATAGRAM];
                 // TD down turns every forward into an error (~120/s); throttle.
-                let mut recv_log = RateLimitedLog::new();
-                let mut fwd_log = RateLimitedLog::new();
-                let mut ctl_log = RateLimitedLog::new();
+                let mut recv_log = RateLimitedLog::new("vtr-tap");
+                let mut fwd_log = RateLimitedLog::new("vtr-tap");
+                let mut ctl_log = RateLimitedLog::new("vtr-tap");
                 loop {
                     let (n, origin) = match listen.recv_from(&mut buf) {
                         Ok(r) => r,
@@ -488,18 +458,17 @@ impl Tap {
             };
             let relay_addr = config.relay;
             thread::Builder::new().name("control".into()).spawn(move || {
-                let mut arg_log = RateLimitedLog::new();
-                let mut rec_log = RateLimitedLog::new();
-                let mut unknown_log = RateLimitedLog::new();
-                let mut mixed_log = RateLimitedLog::new();
-                let mut clock_src_log = RateLimitedLog::new();
-                let mut relay_log = RateLimitedLog::new();
+                let mut arg_log = RateLimitedLog::new("vtr-tap");
+                let mut rec_log = RateLimitedLog::new("vtr-tap");
+                let mut unknown_log = RateLimitedLog::new("vtr-tap");
+                let mut mixed_log = RateLimitedLog::new("vtr-tap");
+                let mut clock_src_log = RateLimitedLog::new("vtr-tap");
+                let mut relay_log = RateLimitedLog::new("vtr-tap");
                 // Last /vtr/clock sender, for multi-sender arbitration warnings.
                 let mut last_clock: Option<(SocketAddr, Instant)> = None;
                 for pkt in ctl_rx {
                     // Relay first, fire-and-forget: a dead player is invisible.
-                    let mut frame = format!("v1 {}\n", pkt.origin).into_bytes();
-                    frame.extend_from_slice(&pkt.buf);
+                    let frame = relay_frame::encode(pkt.origin, &pkt.buf);
                     if let Err(e) = relay_sock.send_to(&frame, relay_addr) {
                         relay_log.log(&format!("relay send error: {e}"));
                     }
@@ -583,10 +552,7 @@ impl Tap {
                             // Player-handled addresses and unknowns: relay
                             // already happened.
                             a if a.starts_with("/vtr/") => {
-                                if !matches!(
-                                    a,
-                                    "/vtr/play" | "/vtr/stop" | "/vtr/seek" | "/vtr/echo"
-                                ) {
+                                if !PLAYER_ADDRS.contains(&a) {
                                     unknown_log.log(&format!("warn: unknown {a} dropped"));
                                 }
                             }
@@ -617,9 +583,9 @@ impl Tap {
                 last_clip: None,
                 write_error: None,
                 write_errors: 0,
-                parse_log: RateLimitedLog::new(),
-                arg_log: RateLimitedLog::new(),
-                write_log: RateLimitedLog::new(),
+                parse_log: RateLimitedLog::new("vtr-tap"),
+                arg_log: RateLimitedLog::new("vtr-tap"),
+                write_log: RateLimitedLog::new("vtr-tap"),
             };
             thread::Builder::new()
                 .name("writer".into())
@@ -945,17 +911,6 @@ fn decode_control(buf: &[u8]) -> Option<Vec<OscMessage>> {
         .then_some(msgs)
 }
 
-fn flatten(packet: OscPacket, out: &mut Vec<OscMessage>) {
-    match packet {
-        OscPacket::Message(m) => out.push(m),
-        OscPacket::Bundle(b) => {
-            for p in b.content {
-                flatten(p, out);
-            }
-        }
-    }
-}
-
 /// int64s beyond ±2^53 don't survive a JS JSON.parse (f64 rounding).
 const JS_SAFE_INT: u64 = 1 << 53;
 
@@ -1010,17 +965,6 @@ fn bind_udp(addr: SocketAddr, recv_buf: Option<usize>) -> Result<UdpSocket> {
     Ok(socket.into())
 }
 
-fn arg_as_f64(arg: Option<&OscType>) -> Option<f64> {
-    match arg {
-        Some(OscType::Float(f)) => Some(*f as f64),
-        Some(OscType::Double(d)) => Some(*d),
-        // Some senders beacon ints (e.g. a paused rate of 0); accept them.
-        Some(OscType::Int(i)) => Some(*i as f64),
-        Some(OscType::Long(i)) => Some(*i as f64),
-        _ => None,
-    }
-}
-
 fn round6(x: f64) -> f64 {
     (x * 1e6).round() / 1e6
 }
@@ -1052,9 +996,9 @@ mod tests {
             last_clip: None,
             write_error: None,
             write_errors: 0,
-            parse_log: RateLimitedLog::new(),
-            arg_log: RateLimitedLog::new(),
-            write_log: RateLimitedLog::new(),
+            parse_log: RateLimitedLog::new("vtr-tap"),
+            arg_log: RateLimitedLog::new("vtr-tap"),
+            write_log: RateLimitedLog::new("vtr-tap"),
         }
     }
 
@@ -1130,7 +1074,7 @@ mod tests {
             (OscType::Inf, 'I', json!("<impulse>")),
             (OscType::Nil, 'N', Value::Null),
         ];
-        let mut log = RateLimitedLog::new();
+        let mut log = RateLimitedLog::new("vtr-tap");
         for (arg, tag, value) in cases {
             let (t, v) = arg_to_json_tagged(&arg, &mut log).unwrap();
             assert_eq!((t, v), (tag, value), "arg {arg:?}");
@@ -1139,7 +1083,7 @@ mod tests {
 
     #[test]
     fn big_long_becomes_string_small_stays_number() {
-        let mut log = RateLimitedLog::new();
+        let mut log = RateLimitedLog::new("vtr-tap");
         let big = (1i64 << 53) + 1;
         assert_eq!(
             arg_to_json_tagged(&OscType::Long(big), &mut log).unwrap(),
@@ -1162,7 +1106,7 @@ mod tests {
 
     #[test]
     fn blob_skips_value_and_tag() {
-        let mut log = RateLimitedLog::new();
+        let mut log = RateLimitedLog::new("vtr-tap");
         assert!(arg_to_json_tagged(&OscType::Blob(vec![1, 2, 3]), &mut log).is_none());
     }
 
@@ -1216,7 +1160,7 @@ mod tests {
         let notify = Notify {
             sock: UdpSocket::bind("127.0.0.1:0").unwrap(),
             addr: rx.local_addr().unwrap(),
-            log: RateLimitedLog::new(),
+            log: RateLimitedLog::new("vtr-tap"),
         };
         (rx, notify)
     }

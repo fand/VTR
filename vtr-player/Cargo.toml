@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+vtr-core = { path = "../vtr-core" }
 anyhow = { workspace = true }
 clap = { workspace = true }
 rosc = { workspace = true }
