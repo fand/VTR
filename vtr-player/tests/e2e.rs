@@ -895,7 +895,7 @@ fn watch_blocks_until_gen_changes() {
     assert_eq!(r["ok"], true, "resp = {r}");
     assert!(r["gen"].as_u64().unwrap() > g, "watch should wake: {r}");
     assert_eq!(r["origin"], "editor");
-    assert!((r["t"].as_f64().unwrap() - 4.0).abs() < 0.05);
+    assert!((r["playhead"].as_f64().unwrap() - 4.0).abs() < 0.05);
 }
 
 #[test]

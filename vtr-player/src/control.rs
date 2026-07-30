@@ -138,8 +138,7 @@ fn dispatch(request: &Value, ctx: &Ctx, conn: &mut ConnState) -> Value {
     }
 }
 
-fn transport_reply(ctx: &Ctx) -> Value {
-    let s = ctx.transport.snapshot();
+fn transport_json(s: &crate::transport::TransportSnap) -> Value {
     json!({
         "ok": true,
         "playing": s.playing,
@@ -149,18 +148,15 @@ fn transport_reply(ctx: &Ctx) -> Value {
     })
 }
 
+fn transport_reply(ctx: &Ctx) -> Value {
+    transport_json(&ctx.transport.snapshot())
+}
+
 /// Long-poll the transport: block until `gen` moves (or a timeout), then
 /// reply with the current snapshot. A timeout replies with the same gen.
 fn watch(request: &Value, ctx: &Ctx) -> Value {
     let since = request["gen"].as_u64().unwrap_or(0);
-    let s = ctx.transport.watch(since, WATCH_TIMEOUT);
-    json!({
-        "ok": true,
-        "gen": s.generation,
-        "origin": s.origin,
-        "t": s.t,
-        "playing": s.playing,
-    })
+    transport_json(&ctx.transport.watch(since, WATCH_TIMEOUT))
 }
 
 fn parse_route_overrides(v: Option<&Value>) -> HashMap<u16, u16> {

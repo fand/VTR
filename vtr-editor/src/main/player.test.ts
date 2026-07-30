@@ -178,7 +178,7 @@ test('watch parses the transport snapshot', async () => {
   const { player } = await setup((req, reply) => {
     if (req.cmd === 'watch') {
       expect(req.gen).toBe(7)
-      reply({ ok: true, gen: 8, origin: 'td', t: 3.25, playing: true })
+      reply({ ok: true, gen: 8, origin: 'td', playhead: 3.25, playing: true })
     }
   })
   await expect(player.watch(7)).resolves.toEqual({
@@ -202,6 +202,6 @@ test('watch rides its own connection so a pending watch never delays a command',
   await new Promise((r) => setTimeout(r, 20)) // let the watch land server-side
   await player.seek(1.0) // must resolve while the watch is still pending
   expect(connections()).toBe(2)
-  watchReplies[0]({ ok: true, gen: 1, origin: 'osc', t: 1.0, playing: false })
+  watchReplies[0]({ ok: true, gen: 1, origin: 'osc', playhead: 1.0, playing: false })
   await expect(watching).resolves.toMatchObject({ gen: 1, origin: 'osc' })
 })

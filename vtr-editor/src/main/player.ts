@@ -328,13 +328,7 @@ export class PlayerManager {
    * on the same socket.
    */
   async watch(gen: number): Promise<TransportState> {
-    const r = await this.poll.request('watch', { gen }, WATCH_TIMEOUT_MS)
-    return {
-      gen: Number(r.gen ?? 0),
-      origin: String(r.origin ?? ''),
-      playhead: Number(r.t ?? 0),
-      playing: Boolean(r.playing)
-    }
+    return toTransportState(await this.poll.request('watch', { gen }, WATCH_TIMEOUT_MS))
   }
 
   private request(
