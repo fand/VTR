@@ -30,8 +30,9 @@ export interface CurveReplace {
 /**
  * Deleting an event removes every arg's point, not just the fitted
  * property's — so each numeric arg of the covered events is fitted as its
- * own curve (per file + port + address), and no sibling data is lost.
- * Returns null when nothing produces a fittable curve.
+ * own curve (per file + port + address), and an event is only deleted when
+ * every one of its numeric args is carried by a curve: no sibling data is
+ * lost. Returns null when nothing produces a fittable curve.
  */
 export function buildCurveReplace(inputs: ReplaceInput[]): CurveReplace | null {
   // Dedup events (a multi-arg event arrives once per selected property).
@@ -48,18 +49,20 @@ export function buildCurveReplace(inputs: ReplaceInput[]): CurveReplace | null {
     list.push(input)
   }
   const adds: CurveReplace['adds'] = []
-  const fitted = new Set<string>() // files:eventIndex covered by some curve
+  const fitted = new Set<string>() // files:eventIndex covered by curves
   for (const list of groups.values()) {
     list.sort((a, b) => a.ev.t - b.ev.t)
-    const tpl = list[0].ev
     const argCount = Math.max(...list.map((i) => i.ev.args.length))
+    const fittedArgs = new Set<number>()
     for (let arg = 0; arg < argCount; arg++) {
-      const points = list
-        .filter((i) => typeof i.ev.args[arg] === 'number')
-        .map((i) => ({ t: i.ev.t, v: i.ev.args[arg] as number }))
+      const carriers = list.filter((i) => typeof i.ev.args[arg] === 'number')
+      const points = carriers.map((i) => ({ t: i.ev.t, v: i.ev.args[arg] as number }))
       if (points.length < 2) continue
       const knots = fitCurve(points, FIT_ERROR)
       if (!knots) continue
+      // Template from an event that actually has this arg: the earliest
+      // one's args can be shorter than `arg` when arg counts vary.
+      const tpl = carriers[0].ev
       adds.push({
         file: list[0].file,
         curve: {
@@ -71,12 +74,18 @@ export function buildCurveReplace(inputs: ReplaceInput[]): CurveReplace | null {
           knots
         }
       })
-      for (const i of list) fitted.add(`${i.file}:${i.eventIndex}`)
+      fittedArgs.add(arg)
+    }
+    // Delete only events whose every numeric arg is carried by a curve;
+    // a lone extra arg (too few points to fit) keeps its event visible
+    // instead of silently dropping the value.
+    for (const i of list) {
+      const covered = i.ev.args.every((a, ai) => typeof a !== 'number' || fittedArgs.has(ai))
+      if (covered && fittedArgs.size > 0) fitted.add(`${i.file}:${i.eventIndex}`)
     }
   }
   if (adds.length === 0) return null
-  // Only delete events some curve actually covers; an unfittable group
-  // (e.g. all-duplicate times) keeps its points.
+  // An unfittable group (e.g. all-duplicate times) keeps its points.
   const dels = [...events.values()]
     .filter((i) => fitted.has(`${i.file}:${i.eventIndex}`))
     .map(({ file, eventIndex }) => ({ file, eventIndex }))

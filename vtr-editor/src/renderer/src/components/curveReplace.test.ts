@@ -70,6 +70,34 @@ describe('buildCurveReplace', () => {
     expect(out.dels).toHaveLength(10)
   })
 
+  it('templates each arg from an event that has it', () => {
+    // Earliest event has one arg; the rest carry two.
+    const inputs = [
+      input('a.jsonl', 0, { a: '/xy', t: 0, args: [0], types: 'f' }),
+      ...Array.from({ length: 19 }, (_, i) => {
+        const t = (i + 1) / 19
+        return input('a.jsonl', i + 1, { a: '/xy', t, args: [t, 1 - t], types: 'ff' })
+      })
+    ]
+    const out = buildCurveReplace(inputs)!
+    const arg1 = out.adds.find((a) => a.curve.arg === 1)!
+    expect(arg1.curve.args).toHaveLength(2)
+    expect(arg1.curve.types).toBe('ff')
+  })
+
+  it('keeps an event whose extra numeric arg cannot be fitted', () => {
+    // e9 alone carries arg 1; one point can't span a curve, so deleting e9
+    // would silently drop the 42.
+    const inputs = [
+      ...ramp('a.jsonl', 9, (t) => t),
+      input('a.jsonl', 9, { t: 1, args: [1, 42], types: 'ff' })
+    ]
+    const out = buildCurveReplace(inputs)!
+    expect(out.adds.map((a) => a.curve.arg)).toEqual([0])
+    expect(out.dels).toHaveLength(9)
+    expect(out.dels.some((d) => d.eventIndex === 9)).toBe(false)
+  })
+
   it('returns null when nothing is fittable', () => {
     expect(buildCurveReplace([])).toBeNull()
     // A single event can't span a curve.
