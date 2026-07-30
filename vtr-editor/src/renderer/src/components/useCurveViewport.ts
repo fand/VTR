@@ -5,20 +5,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { PAD } from './curveGeom'
 import { MAX_ZOOM } from './curveModel'
-
-export function useSize(ref: React.RefObject<HTMLDivElement | null>): { w: number; h: number } {
-  const [size, setSize] = useState({ w: 0, h: 0 })
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const measure = (): void => setSize({ w: el.clientWidth, h: el.clientHeight })
-    measure()
-    const ro = new ResizeObserver(measure)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [ref])
-  return size
-}
+import { useElementSize } from './uiScale'
 
 export interface CurveViewport {
   w: number
@@ -43,7 +30,7 @@ export function useCurveViewport(
   editorRef: React.RefObject<HTMLDivElement | null>,
   scrollRef: React.RefObject<HTMLDivElement | null>
 ): CurveViewport {
-  const { w, h } = useSize(editorRef)
+  const { w, h } = useElementSize(editorRef)
 
   // Pinch (ctrl+wheel) or the X slider zooms the time axis; 1 = the time
   // range fits the panel. The Y slider zooms the value axis; past 1 the

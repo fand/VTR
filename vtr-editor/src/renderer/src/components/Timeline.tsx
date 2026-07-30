@@ -10,6 +10,7 @@ import {
   formatRulerLabel,
   recordingWarning
 } from '../timeline/model'
+import { useElementSize, zoomSlider } from './uiScale'
 
 export interface PlayingState {
   startPos: number
@@ -32,14 +33,6 @@ export const MIN_PX_PER_SEC = 2
 export const MAX_PX_PER_SEC = 400
 const TRIM_HANDLE_PX = 8
 const RULER_STEPS = [0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300]
-
-function zoomToSlider(px: number, min: number): number {
-  return (100 * Math.log(px / min)) / Math.log(MAX_PX_PER_SEC / min)
-}
-
-function sliderToZoom(v: number, min: number): number {
-  return min * Math.pow(MAX_PX_PER_SEC / min, v / 100)
-}
 
 type DragMode = 'move' | 'trim-in' | 'trim-out'
 
@@ -245,6 +238,7 @@ export function Timeline({
   onPxPerSecChange,
   onHoverTime
 }: TimelineProps): React.JSX.Element {
+  const zoom = zoomSlider(minPxPerSec, MAX_PX_PER_SEC)
   const drag = useRef<Drag | null>(null)
   // Snap on: clip move/trim locks onto other clips' edges.
   const [snap, setSnap] = useState(false)
@@ -270,16 +264,7 @@ export function Timeline({
   // Visible scroll range: ruler marks render only for it, so a huge duration
   // never turns into millions of mark divs.
   const [scrollX, setScrollX] = useState(0)
-  const [viewW, setViewW] = useState(0)
-  useEffect(() => {
-    const el = scrollRef.current
-    if (!el) return
-    const measure = (): void => setViewW(el.clientWidth)
-    measure()
-    const ro = new ResizeObserver(measure)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [])
+  const { w: viewW } = useElementSize(scrollRef)
   // Time + viewport x under the cursor at pinch start; scroll is restored
   // after the zoomed width renders so that point stays put.
   const pinchAnchor = useRef<{ t: number; viewX: number } | null>(null)
@@ -630,10 +615,10 @@ export function Timeline({
           min={0}
           max={100}
           step={1}
-          value={zoomToSlider(pxPerSec, minPxPerSec)}
-          style={{ '--val': `${zoomToSlider(pxPerSec, minPxPerSec)}%` } as React.CSSProperties}
+          value={zoom.toSlider(pxPerSec)}
+          style={{ '--val': `${zoom.toSlider(pxPerSec)}%` } as React.CSSProperties}
           aria-label="zoom"
-          onChange={(e) => onPxPerSecChange(sliderToZoom(Number(e.target.value), minPxPerSec))}
+          onChange={(e) => onPxPerSecChange(zoom.fromSlider(Number(e.target.value)))}
         />
         <button
           className="btn small"

@@ -40,13 +40,6 @@ export function fmt(n: number): string {
 }
 
 export const MAX_ZOOM = 50
-/** Header sliders run 0..100 and map to 1..MAX_ZOOM exponentially. */
-export function zoomToSlider(z: number): number {
-  return (100 * Math.log(z)) / Math.log(MAX_ZOOM)
-}
-export function sliderToZoom(v: number): number {
-  return Math.pow(MAX_ZOOM, v / 100)
-}
 
 export interface CurvePoint {
   /** Timeline seconds (clip offset applied). */

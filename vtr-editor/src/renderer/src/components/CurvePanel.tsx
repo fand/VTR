@@ -13,9 +13,7 @@ import {
   MAX_ZOOM,
   ptSel,
   selKey,
-  sliderToZoom,
   stepDecimals,
-  zoomToSlider,
   type CurvePoint,
   type PointAdd,
   type PointPatch,
@@ -23,6 +21,7 @@ import {
   type Property
 } from './curveModel'
 import { paintCurves } from './curvePaint'
+import { zoomSlider } from './uiScale'
 import { useCurveInteraction } from './useCurveInteraction'
 import { useCurveViewport } from './useCurveViewport'
 import { eventsCache } from './eventsCache'
@@ -38,6 +37,9 @@ export type {
   PointPatch,
   PointSel
 } from './curveModel'
+
+/** Curve sliders map 0..100 onto 1..MAX_ZOOM. */
+const zoom = zoomSlider(1, MAX_ZOOM)
 
 interface HoverInfo {
   px: number
@@ -505,10 +507,10 @@ export function CurvePanel({
           min={0}
           max={100}
           step={1}
-          value={zoomToSlider(zoomX)}
-          style={{ '--val': `${zoomToSlider(zoomX)}%` } as React.CSSProperties}
+          value={zoom.toSlider(zoomX)}
+          style={{ '--val': `${zoom.toSlider(zoomX)}%` } as React.CSSProperties}
           aria-label="x zoom"
-          onChange={(e) => vp.setZoomX(sliderToZoom(Number(e.target.value)))}
+          onChange={(e) => vp.setZoomX(zoom.fromSlider(Number(e.target.value)))}
         />
         <span className="curve-zoom-label">Y</span>
         <input
@@ -517,10 +519,10 @@ export function CurvePanel({
           min={0}
           max={100}
           step={1}
-          value={zoomToSlider(zoomY)}
-          style={{ '--val': `${zoomToSlider(zoomY)}%` } as React.CSSProperties}
+          value={zoom.toSlider(zoomY)}
+          style={{ '--val': `${zoom.toSlider(zoomY)}%` } as React.CSSProperties}
           aria-label="y zoom"
-          onChange={(e) => vp.setZoomY(sliderToZoom(Number(e.target.value)))}
+          onChange={(e) => vp.setZoomY(zoom.fromSlider(Number(e.target.value)))}
         />
       </div>
       <div className="curve-body">
