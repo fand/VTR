@@ -978,11 +978,19 @@ export function CurvePanel({
     e.currentTarget.setPointerCapture(e.pointerId)
   }
 
-  const onHandleMove = (pos: { x: number; y: number }): void => {
+  const onHandleMove = (pos: { x: number; y: number }, axisLock: boolean): void => {
     const d = handleDrag.current
     if (!d) return
-    const dt = tAt(scale, pos.x) - d.kt
-    const dv = vAt(scale, { min: d.min, max: d.max }, pos.y) - d.kv
+    let dt = tAt(scale, pos.x) - d.kt
+    let dv = vAt(scale, { min: d.min, max: d.max }, pos.y) - d.kv
+    if (axisLock) {
+      // Shift: lock the handle to the knot's dominant pixel axis — flat
+      // (horizontal) or straight up/down (vertical).
+      const dxPx = pos.x - xAt(scale, d.kt)
+      const dyPx = pos.y - yAt(scale, { min: d.min, max: d.max }, d.kv)
+      if (Math.abs(dxPx) >= Math.abs(dyPx)) dv = 0
+      else dt = 0
+    }
     d.last = {
       file: d.pc.clip.file,
       curveIndex: d.pc.curveIndex,
@@ -1286,7 +1294,7 @@ export function CurvePanel({
     const pos = svgPos(e)
     updateHover(pos)
     if (handleDrag.current) {
-      onHandleMove(pos)
+      onHandleMove(pos, e.shiftKey)
       return
     }
     if (drag.current) {

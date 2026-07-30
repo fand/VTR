@@ -126,6 +126,20 @@ test('bezier knots: drag, handles, transform box, delete', async () => {
       savedKnots[cornerIdx + 1].t - savedKnots[cornerIdx].t
     )
 
+    // Shift+drag locks the handle to the knot's dominant axis: ending the
+    // drag clearly to the knot's right lands the handle exactly flat (dv = 0).
+    const knotNow = (await curveKnots(page))[cornerIdx]
+    const out2 = (await page.locator('.curve-handle.out').boundingBox())!
+    await page.mouse.move(out2.x + out2.width / 2, out2.y + out2.height / 2)
+    await page.mouse.down()
+    await page.keyboard.down('Shift')
+    await page.mouse.move(knotNow.x + 80, knotNow.y - 8, { steps: 5 })
+    await page.mouse.up()
+    await page.keyboard.up('Shift')
+    await page.keyboard.press('ControlOrMeta+s')
+    await expect.poll(() => readKnots()[cornerIdx]?.o?.[1]).toBe(0)
+    expect(readKnots()[cornerIdx].o![0]).toBeGreaterThan(0)
+
     // Marquee all knots: the transform box wraps them; dragging its body
     // moves the whole curve rigidly.
     const editor = (await page.locator('.curve-editor').boundingBox())!
