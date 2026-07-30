@@ -32,6 +32,17 @@ test('unsaved tail is never compacted away', () => {
   expect(seqs(dir).length).toBe(2050)
 })
 
+test('compaction skipped while unsaved fires again once savedSeq moves', () => {
+  const dir = tmp()
+  // Unsaved: nothing droppable, the attempt is marked stale and skipped.
+  for (let i = 1; i <= 2050; i++) appendUndo(dir, entry(i), 0)
+  expect(seqs(dir).length).toBe(2050)
+  // A save moves savedSeq: the next append compacts the saved prefix.
+  appendUndo(dir, entry(2051), 2000)
+  // Kept: saved 1001..2000 (UNDO_CAP) + unsaved tail 2001..2051.
+  expect(seqs(dir)).toEqual(Array.from({ length: 1051 }, (_, i) => i + 1001))
+})
+
 test('truncateUndoAfter drops the redo branch', () => {
   const dir = tmp()
   for (let i = 1; i <= 5; i++) appendUndo(dir, entry(i), 0)
