@@ -619,6 +619,7 @@ impl Tap {
                 write_errors: 0,
                 parse_log: RateLimitedLog::new(),
                 arg_log: RateLimitedLog::new(),
+                write_log: RateLimitedLog::new(),
             };
             thread::Builder::new()
                 .name("writer".into())
@@ -670,6 +671,7 @@ struct Writer {
     /// and writes serialize across threads.
     parse_log: RateLimitedLog,
     arg_log: RateLimitedLog,
+    write_log: RateLimitedLog,
 }
 
 impl Writer {
@@ -679,6 +681,7 @@ impl Writer {
         match write_line(file, value) {
             Ok(()) => {}
             Err(e) => {
+                self.write_log.log(&format!("write error: {e}"));
                 self.write_errors += 1;
                 if self.write_error.is_none() {
                     self.write_error = Some(e);
@@ -906,16 +909,14 @@ fn start_recording(
     })
 }
 
-/// Write one JSON line and flush so a crash loses nothing.
+/// Write one JSON line and flush so a crash loses nothing. Callers log;
+/// at 120 Hz an unthrottled per-packet eprintln would flood the editor pipe.
 fn write_line(file: &mut File, value: &Value) -> Result<(), String> {
     let mut line = value.to_string();
     line.push('\n');
     file.write_all(line.as_bytes())
         .and_then(|_| file.flush())
-        .map_err(|e| {
-            eprintln!("vtr-tap: write error: {e}");
-            e.to_string()
-        })
+        .map_err(|e| e.to_string())
 }
 
 /// A `/vtr/*` datagram bound for the control thread, with its origin for
@@ -1053,6 +1054,7 @@ mod tests {
             write_errors: 0,
             parse_log: RateLimitedLog::new(),
             arg_log: RateLimitedLog::new(),
+            write_log: RateLimitedLog::new(),
         }
     }
 
