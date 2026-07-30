@@ -1216,6 +1216,13 @@ function App(): React.JSX.Element {
       const apply = (d: Doc): void => {
         for (const patch of patches) {
           const clipEdits = (d.edits[patch.file] ??= {})
+          if ('curveIndex' in patch) {
+            // Whole-array knot replacement; a vanished curve (undone mid-drag)
+            // is skipped rather than resurrected.
+            const curve = clipEdits.curves?.[patch.curveIndex]
+            if (curve) curve.knots = patch.knots
+            continue
+          }
           const set = (clipEdits.set ??= {})
           const entry = (set[patch.eventIndex] ??= {})
           if (patch.t != null) entry.t = patch.t
@@ -1251,10 +1258,7 @@ function App(): React.JSX.Element {
   // Replace with Curve: one undo entry deletes the covered events and
   // appends the fitted curves to the clips' overlays.
   const onCurveReplace = useCallback(
-    (
-      dels: { file: string; eventIndex: number }[],
-      adds: { file: string; curve: ClipCurve }[]
-    ) => {
+    (dels: { file: string; eventIndex: number }[], adds: { file: string; curve: ClipCurve }[]) => {
       if (adds.length === 0) return
       commit(`${count(dels.length, 'point')} replaced with curve`, (d) => {
         for (const { file, eventIndex } of dels) {
@@ -1274,9 +1278,35 @@ function App(): React.JSX.Element {
   const deleteSelectedPoints = useCallback(() => {
     if (selectedPoints.length === 0) return
     commit(`${count(selectedPoints.length, 'point')} deleted`, (d) => {
+      // Knot deletes group per curve: the knots come out in one pass, and a
+      // curve left with fewer than 2 knots is dropped entirely (curveDel).
+      const knotDels = new Map<string, { file: string; curveIndex: number; idx: Set<number> }>()
       for (const pt of selectedPoints) {
+        if ('curveIndex' in pt) {
+          const key = `${pt.file}:${pt.curveIndex}`
+          let g = knotDels.get(key)
+          if (!g)
+            knotDels.set(key, (g = { file: pt.file, curveIndex: pt.curveIndex, idx: new Set() }))
+          g.idx.add(pt.knotIndex)
+          continue
+        }
         const clipEdits = (d.edits[pt.file] ??= {})
         ;(clipEdits.del ??= {})[pt.eventIndex] = true
+      }
+      for (const { file, curveIndex, idx } of knotDels.values()) {
+        const clipEdits = d.edits[file]
+        const curve = clipEdits?.curves?.[curveIndex]
+        if (!curve || clipEdits.curveDel?.[curveIndex]) continue
+        const keep = curve.knots.filter((_, i) => !idx.has(i))
+        if (keep.length < 2) {
+          ;(clipEdits.curveDel ??= {})[curveIndex] = true
+        } else {
+          // New boundary knots keep only their inward handles.
+          const knots = keep.map((k) => ({ ...k }))
+          delete knots[0].i
+          delete knots[knots.length - 1].o
+          curve.knots = knots
+        }
       }
     })
     setSelectedPoints([])

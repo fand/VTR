@@ -1,6 +1,8 @@
 /** Pure screen-space geometry for the curve editor: point/curve hit-testing
  *  and coordinate mapping, shared by the canvas painter and the pointer
  *  handlers. No DOM here so it unit-tests with vitest. */
+import { segmentCtrl } from '../../../shared/curve'
+import type { CurveKnot } from '../../../shared/types'
 
 export const PAD = 10
 
@@ -11,11 +13,17 @@ export interface Scale {
   innerH: number
 }
 
+/** One element of a property's merged curve, in timeline space: a discrete
+ *  point or a bezier span (`curve` indexes the prop's own curve list). */
+export type GeomEl = { t: number; v: number } | { t: number; knots: CurveKnot[]; curve: number }
+
 /** The subset of a property the geometry needs (value scale + points). */
 export interface GeomProp {
   min: number
   max: number
   points: { t: number; v: number }[]
+  /** Points + curve spans merged, sorted by t. Absent = points only. */
+  els?: GeomEl[]
 }
 
 export const xAt = (s: Scale, t: number): number =>
@@ -100,8 +108,93 @@ function segDist2(px: number, py: number, x1: number, y1: number, x2: number, y2
   return cx * cx + cy * cy
 }
 
-/** Nearest step-after curve line within `radius` px; returns the prop index.
- *  Ties go to the later (topmost-drawn) property. */
+export interface PathSink {
+  moveTo(x: number, y: number): void
+  lineTo(x: number, y: number): void
+  bezierTo(x1: number, y1: number, x2: number, y2: number, x3: number, y3: number): void
+}
+
+/**
+ * Walk one property's merged path — step-after between discrete values,
+ * cubic beziers across curve spans, a hold + jump connecting the two — so a
+ * property always draws as a single curve. Culled to elements starting in
+ * [t0, t1], widened by one so entering/leaving lines continue offscreen (a
+ * curve span reaching into the window from further left is caught too).
+ */
+export function walkMerged(p: GeomProp, s: Scale, t0: number, t1: number, sink: PathSink): void {
+  const els: readonly GeomEl[] = p.els ?? p.points
+  const n = els.length
+  if (n === 0) return
+  // Nothing extends right of the last element or left of the first.
+  const lastEl = els[n - 1]
+  const lastEnd = 'knots' in lastEl ? lastEl.knots[lastEl.knots.length - 1].t : lastEl.t
+  if (lastEnd < t0 || els[0].t > t1) return
+  // lo: one before the first element starting at/after t0.
+  let a = 0
+  let b = n
+  while (a < b) {
+    const m = (a + b) >> 1
+    if (els[m].t < t0) a = m + 1
+    else b = m
+  }
+  let lo = Math.max(0, a - 1)
+  // A curve span can start left of lo yet reach into the window; walk from
+  // the earliest such curve (linear, but only on props that have curves).
+  if (p.els) {
+    for (let i = 0; i < lo; i++) {
+      const el = els[i]
+      if ('knots' in el && el.knots[el.knots.length - 1].t >= t0) {
+        lo = i
+        break
+      }
+    }
+  }
+  // hi: one past the last element starting at/before t1.
+  b = n
+  while (a < b) {
+    const m = (a + b) >> 1
+    if (els[m].t <= t1) a = m + 1
+    else b = m
+  }
+  const hi = Math.min(n - 1, a)
+  let prevY: number | null = null
+  const step = (px: number, py: number): void => {
+    if (prevY == null) sink.moveTo(px, py)
+    else {
+      sink.lineTo(px, prevY)
+      sink.lineTo(px, py)
+    }
+    prevY = py
+  }
+  for (let i = lo; i <= hi; i++) {
+    const el = els[i]
+    if ('knots' in el) {
+      const kn = el.knots
+      step(xAt(s, kn[0].t), yAt(s, p, kn[0].v))
+      for (let j = 1; j < kn.length; j++) {
+        const [, p1, p2, p3] = segmentCtrl(kn[j - 1], kn[j])
+        sink.bezierTo(
+          xAt(s, p1.x),
+          yAt(s, p, p1.y),
+          xAt(s, p2.x),
+          yAt(s, p, p2.y),
+          xAt(s, p3.x),
+          yAt(s, p, p3.y)
+        )
+      }
+      prevY = yAt(s, p, kn[kn.length - 1].v)
+    } else {
+      step(xAt(s, el.t), yAt(s, p, el.v))
+    }
+  }
+}
+
+/** Samples per bezier segment when flattening for hit-testing. */
+const HIT_SAMPLES = 12
+
+/** Nearest merged curve line (step lines + flattened beziers) within
+ *  `radius` px; returns the prop index. Ties go to the later
+ *  (topmost-drawn) property. */
 export function hitCurve(
   props: GeomProp[],
   s: Scale,
@@ -110,22 +203,66 @@ export function hitCurve(
 ): number | null {
   let best: number | null = null
   let bestD = radius * radius
+  const t0 = tAt(s, pos.x - radius)
+  const t1 = tAt(s, pos.x + radius)
   props.forEach((p, pi) => {
-    for (let i = 1; i < p.points.length; i++) {
-      const x0 = xAt(s, p.points[i - 1].t)
-      const y0 = yAt(s, p, p.points[i - 1].v)
-      const x1 = xAt(s, p.points[i].t)
-      const y1 = yAt(s, p, p.points[i].v)
-      // Step-after: horizontal run at the previous value, then a vertical jump.
-      const d = Math.min(
-        segDist2(pos.x, pos.y, x0, y0, x1, y0),
-        segDist2(pos.x, pos.y, x1, y0, x1, y1)
-      )
+    let lx = 0
+    let ly = 0
+    const seg = (x2: number, y2: number): void => {
+      const d = segDist2(pos.x, pos.y, lx, ly, x2, y2)
       if (d <= bestD) {
         bestD = d
         best = pi
       }
+      lx = x2
+      ly = y2
     }
+    walkMerged(p, s, t0, t1, {
+      moveTo(x, y) {
+        lx = x
+        ly = y
+      },
+      lineTo: seg,
+      bezierTo(x1, y1, x2, y2, x3, y3) {
+        const p0x = lx
+        const p0y = ly
+        for (let k = 1; k <= HIT_SAMPLES; k++) {
+          const u = k / HIT_SAMPLES
+          const w = 1 - u
+          const b0 = w * w * w
+          const b1 = 3 * u * w * w
+          const b2 = 3 * u * u * w
+          const b3 = u * u * u
+          seg(b0 * p0x + b1 * x1 + b2 * x2 + b3 * x3, b0 * p0y + b1 * y1 + b2 * y2 + b3 * y3)
+        }
+      }
+    })
+  })
+  return best
+}
+
+/** Nearest bezier knot within `radius` px. `curve` indexes the prop's curve
+ *  list, `knot` the knot within it. Ties go to the later drawn. */
+export function hitKnot(
+  props: { min: number; max: number; curves: { knots: { t: number; v: number }[] }[] }[],
+  s: Scale,
+  pos: { x: number; y: number },
+  radius: number
+): { prop: number; curve: number; knot: number } | null {
+  let best: { prop: number; curve: number; knot: number } | null = null
+  let bestD = radius * radius
+  props.forEach((p, pi) => {
+    p.curves.forEach((c, ci) => {
+      c.knots.forEach((k, ki) => {
+        const dx = xAt(s, k.t) - pos.x
+        const dy = yAt(s, p, k.v) - pos.y
+        const d = dx * dx + dy * dy
+        if (d <= bestD) {
+          bestD = d
+          best = { prop: pi, curve: ci, knot: ki }
+        }
+      })
+    })
   })
   return best
 }

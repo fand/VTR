@@ -31,6 +31,7 @@ export interface CurveKnotHook {
   y: number
   t: number
   v: number
+  selected: boolean
 }
 
 export const curvePoints = (page: Page): Promise<CurvePointHook[]> =>

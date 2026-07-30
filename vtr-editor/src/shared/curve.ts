@@ -142,6 +142,27 @@ export function clipCurve(knots: CurveKnot[], t0: number, t1: number): CurveKnot
   return out
 }
 
+/**
+ * Clamp every handle's dt into its segment, scaling dv to keep the handle
+ * direction: keeps x(u) monotone after knots move or fitting overshoots.
+ * Mutates (handle tuples are replaced, never edited in place).
+ */
+export function clampHandleTimes(knots: CurveKnot[]): void {
+  for (let k = 0; k < knots.length; k++) {
+    const kn = knots[k]
+    if (kn.o && k + 1 < knots.length) {
+      const span = knots[k + 1].t - kn.t
+      if (kn.o[0] < 0) kn.o = [0, 0]
+      else if (kn.o[0] > span) kn.o = [span, (kn.o[1] * span) / kn.o[0]]
+    }
+    if (kn.i && k > 0) {
+      const span = kn.t - knots[k - 1].t
+      if (kn.i[0] > 0) kn.i = [0, 0]
+      else if (kn.i[0] < -span) kn.i = [-span, (kn.i[1] * -span) / kn.i[0]]
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Schneider least-squares fit.
 
@@ -331,21 +352,8 @@ export function fitCurve(points: { t: number; v: number }[], maxError: number): 
     left.o = [h1.t - k0.t, h1.v - k0.v]
     knots.push({ t: k3.t, v: k3.v, i: [h2.t - k3.t, h2.v - k3.v] })
   }
-  // Monotone time: scale each handle down (preserving direction) until its
-  // dt fits within the segment. Fitted tangents can overshoot horizontally.
-  for (let k = 0; k < knots.length; k++) {
-    const kn = knots[k]
-    if (kn.o) {
-      const span = knots[k + 1].t - kn.t
-      if (kn.o[0] < 0) kn.o = [0, 0]
-      else if (kn.o[0] > span) kn.o = [span, (kn.o[1] * span) / kn.o[0]]
-    }
-    if (kn.i) {
-      const span = kn.t - knots[k - 1].t
-      if (kn.i[0] > 0) kn.i = [0, 0]
-      else if (kn.i[0] < -span) kn.i = [-span, (kn.i[1] * -span) / kn.i[0]]
-    }
-  }
+  // Monotone time: fitted tangents can overshoot horizontally.
+  clampHandleTimes(knots)
   delete knots[0].i
   delete knots[knots.length - 1].o
   return knots
