@@ -311,7 +311,7 @@ body {
 
 /* An IP does not fit the numeric field width, and reads better left-aligned. */
 .port-field.text-field input {
-  width: 104px;
+  width: 80px;
   text-align: left;
 }
 
@@ -330,9 +330,9 @@ body {
   touch-action: none;
 }
 
-/* Header status area, two rows:
-   in    [10010]   out [10011]   | tap:  on   recv: 120/s
-   ctrl  [10012]                 | sync: on   drop:     0 */
+/* Header status area, two rows of exactly 6 grid cells each:
+   in    [10010]   out [10011]   | tap:    on   recv: 120/s
+   echo  [10020]   to  [auto  ]  | player: on   drop:     0 */
 .status-grid {
   display: grid;
   grid-template-columns: repeat(6, auto);

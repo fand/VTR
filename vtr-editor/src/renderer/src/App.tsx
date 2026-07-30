@@ -1602,7 +1602,6 @@ function App(): React.JSX.Element {
               valid={isValidEchoHost}
               onCommit={(echoHost) => changePorts({ ...ports, echoHost })}
             />
-            <span />
             <span
               className="stat divider"
               data-tip={
