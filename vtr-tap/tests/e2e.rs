@@ -54,6 +54,37 @@ fn encode_bundle(msgs: Vec<(&str, Vec<OscType>)>) -> Vec<u8> {
     .unwrap()
 }
 
+/// Split a relay frame into its `"v1 <origin>"` header and raw payload.
+fn split_relay(frame: &[u8]) -> (String, Vec<u8>) {
+    let nl = frame.iter().position(|&b| b == b'\n').expect("header");
+    (
+        std::str::from_utf8(&frame[..nl]).unwrap().to_string(),
+        frame[nl + 1..].to_vec(),
+    )
+}
+
+fn relay_addr_of(payload: &[u8]) -> String {
+    let (_, packet) = rosc::decoder::decode_udp(payload).unwrap();
+    match packet {
+        OscPacket::Message(m) => m.addr,
+        OscPacket::Bundle(_) => String::new(),
+    }
+}
+
+/// Next relay frame that isn't a `/vtr/origin` announcement — those are
+/// emitted for any new source IP and would race ahead of the frame a test
+/// actually cares about.
+fn recv_relay(player: &UdpSocket) -> (String, Vec<u8>) {
+    let mut buf = [0u8; 1024];
+    loop {
+        let n = player.recv(&mut buf).unwrap();
+        let (header, payload) = split_relay(&buf[..n]);
+        if relay_addr_of(&payload) != "/vtr/origin" {
+            return (header, payload);
+        }
+    }
+}
+
 fn wait_events(handle: &Handle, n: u64) {
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
@@ -628,12 +659,33 @@ fn relay_carries_origin_and_payload() {
     let sent = encode_msg("/vtr/seek", vec![OscType::Float(3.5)]);
     tx.send_to(&sent, tap.listen_addr).unwrap();
 
+    let (header, payload) = recv_relay(&player);
+    assert_eq!(header, format!("v1 {}", tx.local_addr().unwrap()));
+    assert_eq!(payload, sent, "payload must be the raw datagram");
+}
+
+#[test]
+fn plain_app_traffic_announces_its_origin_once() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (tap, _td, player) = start_tap(tmp.path());
+    let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
+
+    // Plain app OSC — no /vtr in it — still tells the player who sent it,
+    // so playback can be mirrored back to a controller with no /vtr button.
+    let fader = encode_msg("/fader", vec![OscType::Float(0.5)]);
+    tx.send_to(&fader, tap.listen_addr).unwrap();
     let mut buf = [0u8; 1024];
     let n = player.recv(&mut buf).unwrap();
-    let nl = buf[..n].iter().position(|&b| b == b'\n').expect("header");
-    let header = std::str::from_utf8(&buf[..nl]).unwrap();
+    let (header, payload) = split_relay(&buf[..n]);
     assert_eq!(header, format!("v1 {}", tx.local_addr().unwrap()));
-    assert_eq!(&buf[nl + 1..n], &sent[..], "payload must be the raw datagram");
+    assert_eq!(relay_addr_of(&payload), "/vtr/origin");
+
+    // Same IP again inside the refresh window: nothing more.
+    tx.send_to(&fader, tap.listen_addr).unwrap();
+    player
+        .set_read_timeout(Some(Duration::from_millis(200)))
+        .unwrap();
+    assert!(player.recv(&mut buf).is_err(), "origin must not repeat");
 }
 
 #[test]

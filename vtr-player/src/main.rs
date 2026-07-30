@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 
 use clap::Parser;
@@ -19,6 +19,11 @@ struct Cli {
     /// Port controller feedback is sent to (source IP : echo port)
     #[arg(long, default_value_t = 9000)]
     echo_port: u16,
+
+    /// Always feed this host back, on top of the origins seen on the relay
+    /// (a controller pinned this way never ages out of the registry)
+    #[arg(long)]
+    echo_host: Option<IpAddr>,
 
     /// vtr-tap control socket, followed for rec-state echo
     #[arg(long)]
@@ -50,12 +55,13 @@ fn main() -> anyhow::Result<()> {
     let player = vtr_player::start(vtr_player::PlayerConfig {
         relay: cli.relay,
         echo_port: cli.echo_port,
+        echo_host: cli.echo_host,
         tap_control: cli.tap_control.clone(),
         emit_host: "127.0.0.1".parse().unwrap(),
     })?;
     eprintln!(
-        "vtr-player: relay {}, echo port {}, tap control {:?}, control {:?}",
-        player.relay_addr, cli.echo_port, cli.tap_control, cli.control
+        "vtr-player: relay {}, echo {:?}:{}, tap control {:?}, control {:?}",
+        player.relay_addr, cli.echo_host, cli.echo_port, cli.tap_control, cli.control
     );
     vtr_player::control::serve(&cli.control, player.ctx)
 }

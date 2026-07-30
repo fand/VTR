@@ -4,6 +4,7 @@ import {
   DEFAULT_DURATION,
   DEFAULT_PORTS,
   normalizePorts,
+  isValidEchoHost,
   type LoadedProject,
   type PlayerStatus,
   type PortConfig,
@@ -163,6 +164,51 @@ function NumField({
           if (e.key === 'Enter') e.currentTarget.blur()
         }}
         {...dragProps}
+      />
+    </label>
+  )
+}
+
+/** Same shell as NumField, for free text. No drag handle. */
+function TextField({
+  label,
+  ariaLabel,
+  value,
+  placeholder,
+  disabled,
+  valid,
+  onCommit
+}: {
+  label: string
+  ariaLabel: string
+  value: string
+  placeholder?: string
+  disabled?: boolean
+  /** Rejects the draft on commit, restoring the last good value. */
+  valid: (draft: string) => boolean
+  onCommit: (v: string) => void
+}): React.JSX.Element {
+  const [draft, setDraft] = useState(value)
+  useEffect(() => setDraft(value), [value])
+  const commit = (): void => {
+    const next = draft.trim()
+    if (valid(next) && next !== value) onCommit(next)
+    else setDraft(value)
+  }
+  return (
+    <label className="port-field text-field">
+      <span className="port-field-label">{label}</span>
+      <input
+        value={draft}
+        disabled={disabled ?? false}
+        placeholder={placeholder}
+        aria-label={ariaLabel}
+        spellCheck={false}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur()
+        }}
       />
     </label>
   )
@@ -564,18 +610,27 @@ function App(): React.JSX.Element {
     return () => clearTimeout(t)
   }, [bootDone, projectFile, tracks, markers, ports, duration, edits, history.seq])
 
-  const saveTo = useCallback(
-    async (path: string): Promise<void> => {
-      await window.api.project.save(
-        path,
-        serializeProject(tracks, markers, ports, duration, edits, history.seq)
-      )
-      setProjectFile(path)
-      setSavedState({ seq: history.seq, ports })
-      setLog(`Saved ${path.split(/[\\/]/).pop()}`)
-    },
-    [tracks, markers, ports, duration, edits, history.seq]
-  )
+  // Menu/keydown listeners resubscribe in a passive effect, so a save fired
+  // right after a commit (record stop → immediate Cmd+S) can run against a
+  // stale closure and silently drop the newest change from project.json.
+  // Saves read the latest state through this ref instead; the layout effect
+  // updates it synchronously with the DOM commit, so it is current as soon
+  // as the change is visible — not one passive-effect flush later.
+  const saveState = useRef({ tracks, markers, ports, duration, edits, seq: history.seq })
+  useLayoutEffect(() => {
+    saveState.current = { tracks, markers, ports, duration, edits, seq: history.seq }
+  })
+
+  const saveTo = useCallback(async (path: string): Promise<void> => {
+    const s = saveState.current
+    await window.api.project.save(
+      path,
+      serializeProject(s.tracks, s.markers, s.ports, s.duration, s.edits, s.seq)
+    )
+    setProjectFile(path)
+    setSavedState({ seq: s.seq, ports: s.ports })
+    setLog(`Saved ${path.split(/[\\/]/).pop()}`)
+  }, [])
 
   /** Resolves true only when the project actually saved (dialog not cancelled). */
   const saveProjectAs = useCallback(async (): Promise<boolean> => {
@@ -1547,8 +1602,15 @@ function App(): React.JSX.Element {
               parse={parsePort}
               onCommit={(echo) => changePorts({ ...ports, echo })}
             />
-            <span />
-            <span />
+            <TextField
+              label="to"
+              ariaLabel="echo host"
+              value={ports.echoHost}
+              placeholder="auto"
+              disabled={!!recording || !!playing}
+              valid={isValidEchoHost}
+              onCommit={(echoHost) => changePorts({ ...ports, echoHost })}
+            />
             <span
               className="stat divider"
               data-tip={

@@ -78,11 +78,31 @@ export interface PortConfig {
   listen: number
   /** TD port raw datagrams (and preview) are sent to. */
   forward: number
-  /** Port controller feedback (/vtr/rec echo) is sent to (source IP : echo). */
+  /** Port controller feedback (rec state + playback mirror) is sent to. */
   echo: number
+  /**
+   * Host always fed on the echo port, on top of the senders vtr-player picks
+   * up by itself. Empty = auto only, which drops a controller that has been
+   * quiet for 3 minutes.
+   */
+  echoHost: string
 }
 
-export const DEFAULT_PORTS: PortConfig = { listen: 10010, forward: 10011, echo: 9000 }
+export const DEFAULT_PORTS: PortConfig = {
+  listen: 10010,
+  forward: 10011,
+  echo: 9000,
+  echoHost: ''
+}
+
+/** IPv4/IPv6 literal, or empty for "auto". Hostnames are not resolved. */
+export function isValidEchoHost(host: string): boolean {
+  if (host === '') return true
+  if (/^(\d{1,3}\.){3}\d{1,3}$/.test(host)) {
+    return host.split('.').every((o) => Number(o) <= 255)
+  }
+  return /^[0-9a-fA-F:]+$/.test(host) && host.includes(':')
+}
 
 /** Loopback port the tap relays /vtr/* control datagrams to (vtr-player). */
 export const RELAY_PORT = 10013
@@ -95,8 +115,8 @@ export const TD_NOTIFY_PORT = 10014
  * from older project files.
  */
 export function normalizePorts(ports?: Partial<PortConfig>): PortConfig {
-  const { listen, forward, echo } = { ...DEFAULT_PORTS, ...ports }
-  return { listen, forward, echo }
+  const { listen, forward, echo, echoHost } = { ...DEFAULT_PORTS, ...ports }
+  return { listen, forward, echo, echoHost: isValidEchoHost(echoHost) ? echoHost : '' }
 }
 
 /** Status reported by vtr-player's control API. */

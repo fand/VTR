@@ -111,6 +111,17 @@ impl Resolver {
         set.into_iter().collect()
     }
 
+    /// Full catch-up at `pos` without touching the playhead state: one
+    /// message per address with its value at pos (triggers suppressed, like
+    /// any seek). For mirror resyncs — the position tracking is untouched.
+    pub fn snapshot_at(&self, pos: f64) -> Vec<Emit> {
+        if self.session.is_empty() {
+            return Vec::new();
+        }
+        let all: Vec<usize> = (0..self.session.addrs.len()).collect();
+        self.catchup(pos, &all)
+    }
+
     fn catchup(&self, pos: f64, addr_ids: &[usize]) -> Vec<Emit> {
         let mut chosen: Vec<usize> = Vec::new();
         for &k in addr_ids {
@@ -162,6 +173,13 @@ impl DedupResolver {
     pub fn reset(&mut self) {
         self.inner.reset();
         self.last.clear();
+    }
+
+    /// Full-state snapshot at `pos`, bypassing dedup and leaving the
+    /// last-emitted map alone: the caller mirrors it to a side channel, so
+    /// the app's stream must not count these as already sent.
+    pub fn snapshot_at(&self, pos: f64) -> Vec<Emit> {
+        self.inner.snapshot_at(pos)
     }
 
     pub fn step(&mut self, pos: f64) -> (Mode, Vec<Emit>) {
@@ -301,6 +319,27 @@ mod tests {
         assert_eq!(r.step(11.0).1, vec![]);
         assert_eq!(r.step(2.0).1, vec![]);
         assert_eq!(r.step(1.0).1, vec![]);
+    }
+
+    #[test]
+    fn snapshot_at_returns_every_address_and_leaves_state_alone() {
+        let s = load(&[
+            ev(1.0, "/a", vec![1.0]),
+            ev(2.0, "/b", vec![2.0]),
+            ev(3.0, "/a", vec![3.0]),
+        ]);
+        let mut r = dedup(&s);
+        assert_eq!(r.step(10.0).1.len(), 2);
+        // Everything is up to date: a plain re-seek stays quiet...
+        assert_eq!(r.step(9.0).1.len(), 0);
+        // ...but a snapshot returns the full state anyway.
+        let snap = r.snapshot_at(9.0);
+        assert_eq!(snap.len(), 2);
+        assert_eq!(snap[0].1, "/b");
+        assert_eq!(snap[1].1, "/a");
+        assert_eq!(snap[1].2[0].as_f64().unwrap(), 3.0);
+        // And it disturbs neither dedup nor position tracking.
+        assert_eq!(r.step(8.0).1.len(), 0);
     }
 
     #[test]

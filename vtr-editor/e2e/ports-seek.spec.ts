@@ -99,7 +99,7 @@ test('seek: ruler click, lane click, scrub', async () => {
   }
 })
 
-test('echo port editable; player runs and persists it on save', async () => {
+test('echo target editable; player runs and persists it on save', async () => {
   const { app, page, workdir } = await launchApp()
   try {
     // vtr-player is spawned next to the tap.
@@ -115,10 +115,27 @@ test('echo port editable; player runs and persists it on save', async () => {
       timeout: 15_000
     })
 
+    // A garbage host is rejected on commit and the field snaps back to auto.
+    await page.getByLabel('echo host').fill('nope')
+    await page.getByLabel('echo host').press('Enter')
+    await expect(page.getByLabel('echo host')).toHaveValue('')
+
+    await page.getByLabel('echo host').fill('127.0.0.1')
+    await page.getByLabel('echo host').press('Enter')
+    await sleep(2500)
+    await expect(page.locator('.stat', { hasText: 'player:' })).toHaveText(/on/, {
+      timeout: 15_000
+    })
+
     await page.keyboard.press('ControlOrMeta+s')
     await expect
       .poll(() => JSON.parse(readFileSync(join(workdir, 'project.json'), 'utf8')).ports)
-      .toEqual({ listen: LISTEN_PORT, forward: FORWARD_PORT, echo: 12000 })
+      .toEqual({
+        listen: LISTEN_PORT,
+        forward: FORWARD_PORT,
+        echo: 12000,
+        echoHost: '127.0.0.1'
+      })
   } finally {
     await app.close()
   }
@@ -232,7 +249,7 @@ test('ports editable in header; tap restarts on new ports', async () => {
     await page.keyboard.press('ControlOrMeta+s')
     await expect
       .poll(() => JSON.parse(readFileSync(join(workdir, 'project.json'), 'utf8')).ports)
-      .toEqual({ listen: 11010, forward: 11011, echo: 9000 })
+      .toEqual({ listen: 11010, forward: 11011, echo: 9000, echoHost: '' })
   } finally {
     td.close()
     sock.close()

@@ -7,7 +7,7 @@ VJs' Timeline Recorder. Record, edit, and replay OSC for VJ performance archival
 ## Components
 
 - **vtr-tap** (Rust): UDP proxy that forwards OSC unchanged to TD and logs parsed copies as JSONL. Control messages arrive on the listen port under the `/vtr` prefix: `/vtr/clock` stamps TD-timeline time (`tl`), `/vtr/rec*` starts/stops clips, and every `/vtr/*` datagram is relayed to vtr-player. Default ports: listen 10010, forward 127.0.0.1:10011, relay 127.0.0.1:10013.
-- **vtr-player** (Rust, `vtr-player/`): resolver server. Replays a `session.jsonl` to the VJ app (push transport driven by relayed `/vtr/play|stop|seek`), answers per-frame sync queries over a unix socket (for TD), primes punch-in state, and echoes rec state to controllers (`source IP : echo port`). Protocol: "OSC control" below.
+- **vtr-player** (Rust, `vtr-player/`): resolver server. Replays a `session.jsonl` to the VJ app (push transport driven by relayed `/vtr/play|stop|seek`), answers per-frame sync queries over a unix socket (for TD), primes punch-in state, and feeds controllers back at `target IP : echo port` — rec state plus the playback values themselves, so faders follow the timeline. Protocol: "OSC control" below.
 - **vtr-editor** (Electron): DAW-style editor. Records clips via vtr-tap, arranges them on tracks, exports a merged `session.jsonl`. Spawns and monitors both vtr-tap and vtr-player, and delegates preview playback to the player (inline session load with routes + transport writes) — the player's resolver emits all preview OSC, so preview and replay behave identically, and sync clients follow the same transport.
 - **vtr.tox** (TouchDesigner, `td/`): mode-switched sync client. `record` follows VTR — the tap's rec notifications (`--td-notify`, default 127.0.0.1:10014) seek TD's timeline and start playback, while the tox beacons `/vtr/clock` back. `player` blocks each frame on a `resolve` query to vtr-player and applies the delta before the cook; position source is the TD timeline (deterministic offline rendering), the player transport (`follow` — tracks the editor preview live, no export needed), or bidirectional `sync` (seeking in TD or the editor propagates both ways). Build & docs: `td/README.md`.
 
@@ -62,10 +62,45 @@ its non-`/vtr` siblings are dropped, so don't mix them in one bundle.
 | `/vtr/rec/stop` | — | tap | Stop the clip. |
 | `/vtr/play` / `/vtr/stop` | — | player | Push-transport run/pause (origin `osc`). |
 | `/vtr/seek` | `t` | player | Jump the push transport to `t` (origin `osc`). |
+| `/vtr/echo` | `0\|1` | player | Pause/resume the playback-value mirror (global). `1` also mirrors every address's value at the playhead once — a full sync, like a seek's catch-up — even when the mirror was already on. Control feedback — `/vtr/rec` and the `/vtr/echo` confirmation itself — keeps flowing, so toggle buttons stay in sync. Back on after a player restart. |
+| `/vtr/origin` | — | player | Internal to the tap→player relay: tells the player a host is talking to us, so it can feed that host back. Never sent by a controller. |
 
 All rec commands are idempotent: start-while-recording and stop-while-idle
 are no-ops. Non-numeric or non-finite args are ignored (the command still
 runs). Unknown `/vtr/*` addresses are dropped with a rate-limited log.
+
+## Controller feedback (echo port)
+
+Everything the player sends back goes to `target IP : echo port` (default
+9000). Targets are found two ways, and the editor header sets both:
+
+- **auto** — a host becomes a target as soon as it sends anything: `/vtr/*`
+  registers it directly, and for plain app traffic the tap announces the
+  source IP as `/vtr/origin` (once per IP per minute), so a controller with
+  no `/vtr` button still gets feedback. Targets live until vtr-player
+  restarts (the editor restarts it on relaunch and on echo settings
+  changes); a host quiet for 3 minutes is re-greeted with the current state
+  on its next contact, in case it restarted meanwhile.
+- **pinned** — the `to` field (`--echo-host`) names one host that is always
+  a target, even across player restarts before it says anything. Leave it
+  empty for auto only. IP literals only; hostnames are not resolved.
+
+Two kinds of message go out:
+
+- control state — `/vtr/rec 0|1` and `/vtr/echo 0|1` on every change, and
+  once on first contact from a target, so REC and echo-toggle buttons show
+  the truth however the state changed.
+- the resolved playback values, mirrored as they are emitted, so faders
+  and XY pads follow the timeline during preview and replay. Coalesced per
+  address and flushed at 50Hz. Silent while recording (the mirror would
+  come back in through the tap and land in the clip) and while toggled off
+  with `/vtr/echo 0`. `/vtr/echo 1` mirrors the full state once (every
+  address at the playhead), so a controller that sat out catches up — or
+  can request a sync any time by re-sending `1`.
+
+TouchOSC note: leave each control's own `Feedback` flag off (the default).
+It makes TouchOSC re-send values it receives, which turns the mirror into
+a loop.
 
 The push transport is the single authoritative playhead: the editor and
 the TD tox (`Positionmode` = `sync`) both read and write it, so a seek or

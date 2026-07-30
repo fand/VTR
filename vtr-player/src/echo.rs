@@ -1,8 +1,18 @@
-//! Controller feedback: `/vtr/rec <0|1>` to every recent `/vtr/*` origin
-//! at `source IP : echo port`, on rec-state change and once immediately on
-//! first contact from a new origin (initial sync for late-started
-//! controllers). Rec state comes from a client thread long-polling the tap
-//! control socket's `wait`.
+//! Controller feedback at `target IP : echo port`. Targets are every origin
+//! the relay has ever seen (a `/vtr/*` datagram, or a `/vtr/origin` the tap
+//! sends for plain app traffic), plus the pinned `--echo-host` if one is
+//! configured. Targets never expire — the registry lives and dies with the
+//! process, and a stale entry only costs discarded UDP. Two things go out:
+//!
+//! - `/vtr/rec <0|1>` on rec-state change, and once immediately on first
+//!   contact from a new origin (initial sync for late-started controllers).
+//!   Rec state comes from a client thread long-polling the tap control
+//!   socket's `wait`.
+//! - `/vtr/echo <0|1>` on mirror-toggle change, greeted the same way.
+//! - the resolved playback values, mirrored by the transport so a
+//!   controller's faders follow the timeline (`mirror`). `/vtr/echo 0`
+//!   pauses this — and only this: control feedback keeps flowing, which is
+//!   what lets the toggle button itself stay in sync.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write as _};
@@ -17,14 +27,24 @@ use anyhow::{Context, Result};
 use rosc::{OscMessage, OscPacket, OscType};
 use serde_json::{json, Value};
 
-/// Origin entries expire after 3 minutes of `/vtr/*` silence.
-const EXPIRY: Duration = Duration::from_secs(180);
+/// An origin quiet for this long gets the state re-greeted on its next
+/// contact, like a fresh one — it may have restarted meanwhile and lost the
+/// rec/echo display. Targets never expire: liveness is the tap's business
+/// (it re-announces active source IPs), and a dead target only costs
+/// discarded UDP.
+const REGREET: Duration = Duration::from_secs(180);
 const RECONNECT_BACKOFF: Duration = Duration::from_secs(1);
 
 struct Inner {
     origins: Mutex<HashMap<IpAddr, Instant>>,
+    /// Configured target, always live. Origins have to keep talking to stay
+    /// in the registry; a pinned host does not.
+    pinned: Option<IpAddr>,
     /// None until the tap reported a baseline.
     rec: Mutex<Option<bool>>,
+    /// Playback-value mirroring, toggled by `/vtr/echo`. On by default;
+    /// player-local, so a restart turns it back on.
+    mirror_on: Mutex<bool>,
     sock: UdpSocket,
     echo_port: u16,
 }
@@ -35,37 +55,41 @@ pub struct Echo {
 }
 
 impl Echo {
-    pub fn new(echo_port: u16) -> Result<Echo> {
+    pub fn new(echo_port: u16, pinned: Option<IpAddr>) -> Result<Echo> {
         let sock = UdpSocket::bind("0.0.0.0:0").context("bind echo socket")?;
         Ok(Echo {
             inner: Arc::new(Inner {
                 origins: Mutex::new(HashMap::new()),
+                pinned,
                 rec: Mutex::new(None),
+                mirror_on: Mutex::new(true),
                 sock,
                 echo_port,
             }),
         })
     }
 
-    /// Called by the relay for every `/vtr/*` datagram. A new (or expired)
-    /// origin gets the current rec state echoed once immediately.
+    /// Called by the relay for every `/vtr/*` datagram. A new origin — or
+    /// one quiet long enough that it may have restarted — gets the current
+    /// state echoed once immediately.
     pub fn register(&self, ip: IpAddr) {
         let now = Instant::now();
         let fresh_contact = {
             let mut origins = self.inner.origins.lock().unwrap();
             let fresh = origins
                 .insert(ip, now)
-                .is_none_or(|last| now.duration_since(last) > EXPIRY);
+                .is_none_or(|last| now.duration_since(last) > REGREET);
             fresh
         };
         if fresh_contact {
             if let Some(rec) = *self.inner.rec.lock().unwrap() {
-                self.send(ip, rec);
+                self.send(ip, "/vtr/rec", rec);
             }
+            self.send(ip, "/vtr/echo", *self.inner.mirror_on.lock().unwrap());
         }
     }
 
-    /// Update rec state; on change, echo to every live origin.
+    /// Update rec state; on change, echo to every target.
     pub fn set_rec(&self, rec: bool) {
         let changed = {
             let mut cur = self.inner.rec.lock().unwrap();
@@ -76,25 +100,78 @@ impl Echo {
         if !changed {
             return;
         }
-        let now = Instant::now();
-        let live: Vec<IpAddr> = self
-            .inner
-            .origins
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|&(_, &last)| now.duration_since(last) <= EXPIRY)
-            .map(|(&ip, _)| ip)
-            .collect();
-        for ip in live {
-            self.send(ip, rec);
+        for ip in self.live() {
+            self.send(ip, "/vtr/rec", rec);
         }
     }
 
-    fn send(&self, ip: IpAddr, rec: bool) {
+    /// `/vtr/echo`: toggle the playback-value mirror. On change, confirm the
+    /// new state to every target — the sender included, which is what flips
+    /// the toggle button on a controller that came in stale.
+    pub fn set_mirror_on(&self, on: bool) {
+        let changed = {
+            let mut cur = self.inner.mirror_on.lock().unwrap();
+            let changed = *cur != on;
+            *cur = on;
+            changed
+        };
+        if !changed {
+            return;
+        }
+        for ip in self.live() {
+            self.send(ip, "/vtr/echo", on);
+        }
+    }
+
+    /// Mirror resolved playback values back to every target, so a
+    /// controller's faders follow the timeline. Silent while recording: the
+    /// values would come straight back in through the tap and land in the
+    /// clip.
+    pub fn mirror(&self, msgs: &[OscMessage]) {
+        if !*self.inner.mirror_on.lock().unwrap() {
+            return;
+        }
+        if *self.inner.rec.lock().unwrap() == Some(true) {
+            return;
+        }
+        let live = self.live();
+        if live.is_empty() {
+            return;
+        }
+        for m in msgs {
+            let Ok(buf) = rosc::encoder::encode(&OscPacket::Message(m.clone())) else {
+                continue;
+            };
+            for &ip in &live {
+                let _ = self.inner.sock.send_to(&buf, (ip, self.inner.echo_port));
+            }
+        }
+    }
+
+    /// Every current target: the pinned host plus all registered origins,
+    /// with the pinned host deduped out of the registry so it is never fed
+    /// twice.
+    fn live(&self) -> Vec<IpAddr> {
+        self.inner
+            .pinned
+            .into_iter()
+            .chain(
+                self.inner
+                    .origins
+                    .lock()
+                    .unwrap()
+                    .keys()
+                    .copied()
+                    .filter(|ip| Some(*ip) != self.inner.pinned),
+            )
+            .collect()
+    }
+
+    /// One control-feedback message: a bool state as 0.0/1.0.
+    fn send(&self, ip: IpAddr, addr: &str, on: bool) {
         let Ok(buf) = rosc::encoder::encode(&OscPacket::Message(OscMessage {
-            addr: "/vtr/rec".into(),
-            args: vec![OscType::Float(if rec { 1.0 } else { 0.0 })],
+            addr: addr.into(),
+            args: vec![OscType::Float(if on { 1.0 } else { 0.0 })],
         })) else {
             return;
         };

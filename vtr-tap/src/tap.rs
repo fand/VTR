@@ -1,7 +1,7 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::io::Write as _;
-use std::net::{SocketAddr, UdpSocket};
+use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender, SyncSender, TrySendError};
@@ -26,6 +26,10 @@ const CHANNEL_CAP: usize = 65_536;
 /// Control (`/vtr/*`) messages are low-rate (~10 Hz clock + rare rec/transport);
 /// a small bound keeps a stalled control thread from hoarding memory.
 const CTL_CHANNEL_CAP: usize = 256;
+/// How often a still-active source IP is re-reported to the player. Must stay
+/// well under the player's own origin expiry (3 min) so a live controller
+/// never falls out of its registry.
+const ORIGIN_REFRESH: Duration = Duration::from_secs(60);
 
 /// Logs at most once per second; counts what it swallowed in between.
 struct RateLimitedLog {
@@ -98,6 +102,63 @@ impl Notify {
                 }
             }
             Err(e) => self.log.log(&format!("td-notify encode error: {e}")),
+        }
+    }
+}
+
+/// Tells the player which hosts talk to us, so it can mirror playback back
+/// to them (`origin IP : echo port`). The player only ever learns an origin
+/// from a relayed `/vtr/*` datagram, so a controller with no `/vtr` button
+/// would never get anything; this reports plain app senders too, as a
+/// relay-framed `/vtr/origin`. Internal to the tap->player hop — controllers
+/// never send it, and the player's relay drops the unknown address after
+/// registering the origin.
+struct OriginNotifier {
+    seen: HashMap<IpAddr, Instant>,
+    sock: UdpSocket,
+    relay: SocketAddr,
+    log: RateLimitedLog,
+}
+
+impl OriginNotifier {
+    fn new(relay: SocketAddr) -> Result<Self> {
+        Ok(Self {
+            seen: HashMap::new(),
+            sock: UdpSocket::bind("0.0.0.0:0").context("bind origin-notify socket")?,
+            relay,
+            log: RateLimitedLog::new(),
+        })
+    }
+
+    /// Called for every inbound datagram: one lookup on the hot path, a
+    /// send only when the IP is new or its last report aged out.
+    fn note(&mut self, origin: SocketAddr, now: Instant) {
+        let ip = origin.ip();
+        if self
+            .seen
+            .get(&ip)
+            .is_some_and(|last| now.duration_since(*last) < ORIGIN_REFRESH)
+        {
+            return;
+        }
+        self.seen.insert(ip, now);
+        self.seen
+            .retain(|_, last| now.duration_since(*last) < ORIGIN_REFRESH);
+        self.send(origin);
+    }
+
+    fn send(&mut self, origin: SocketAddr) {
+        let packet = OscPacket::Message(OscMessage {
+            addr: "/vtr/origin".into(),
+            args: vec![],
+        });
+        let Ok(payload) = rosc::encoder::encode(&packet) else {
+            return;
+        };
+        let mut frame = format!("v1 {origin}\n").into_bytes();
+        frame.extend_from_slice(&payload);
+        if let Err(e) = self.sock.send_to(&frame, self.relay) {
+            self.log.log(&format!("origin-notify send error: {e}"));
         }
     }
 }
@@ -354,6 +415,7 @@ impl Tap {
             let tx = tx.clone();
             let dropped = dropped.clone();
             let received = received.clone();
+            let mut origins = OriginNotifier::new(config.relay)?;
             thread::Builder::new().name("recv".into()).spawn(move || {
                 let mut buf = [0u8; MAX_DATAGRAM];
                 // TD down turns every forward into an error (~120/s); throttle.
@@ -370,6 +432,10 @@ impl Tap {
                     };
                     let t = Instant::now();
                     received.fetch_add(1, Ordering::Relaxed);
+                    // Before the /vtr split: control datagrams register the
+                    // origin on their own, but going through the same path
+                    // costs one lookup a minute and keeps the branch out.
+                    origins.note(origin, t);
                     if contains_vtr(&buf[..n]) {
                         if let Some(msgs) = decode_control(&buf[..n]) {
                             match ctl_tx.try_send(CtlPacket {
@@ -514,10 +580,13 @@ impl Tap {
                                 // Idempotent: not recording is a no-op.
                                 Err(e) => rec_log.log(&format!("/vtr/rec/stop ignored: {e}")),
                             },
-                            // Player-handled addresses (/vtr/play, /vtr/stop,
-                            // /vtr/seek) and unknowns: relay already happened.
+                            // Player-handled addresses and unknowns: relay
+                            // already happened.
                             a if a.starts_with("/vtr/") => {
-                                if !matches!(a, "/vtr/play" | "/vtr/stop" | "/vtr/seek") {
+                                if !matches!(
+                                    a,
+                                    "/vtr/play" | "/vtr/stop" | "/vtr/seek" | "/vtr/echo"
+                                ) {
                                     unknown_log.log(&format!("warn: unknown {a} dropped"));
                                 }
                             }

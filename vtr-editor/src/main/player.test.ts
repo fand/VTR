@@ -44,6 +44,7 @@ function setup(
     '/nonexistent/vtr-player',
     dir,
     9000,
+    '',
     join(dir, 'vtr-tap.sock'),
     150
   )
@@ -80,20 +81,24 @@ test('concurrent requests during initial connect share one socket', async () => 
   expect(connections()).toBe(1)
 })
 
-test('echo port change drops the connection; same port is a no-op', async () => {
+test('echo target change drops the connection; same target is a no-op', async () => {
   const { player, connections } = await setup((_req, reply) => {
     reply({ ok: true, status: fakeStatus })
   })
   await player.status()
   expect(connections()).toBe(1)
 
-  player.setEchoPort(9000) // unchanged: keep the connection
+  player.setEcho(9000, '') // unchanged: keep the connection
   await player.status()
   expect(connections()).toBe(1)
 
-  player.setEchoPort(9001) // restart: reconnects on the next request
+  player.setEcho(9001, '') // restart: reconnects on the next request
   await player.status()
   expect(connections()).toBe(2)
+
+  player.setEcho(9001, '10.0.1.5') // host alone is enough to restart
+  await player.status()
+  expect(connections()).toBe(3)
 })
 
 test('preview sync methods send the control cmds', async () => {
