@@ -11,7 +11,9 @@ pick_latest_or_earliest（vtr-player/src/pick.rs。resolve_at と curve_group_ar
 editor main の分割（register*Ipc + AppContext）、ダイアログの seam
 （dialogs.ts / nativeDialogs.ts）、shared/jsonl.ts + session_lines.jsonl
 ゴールデンフィクスチャ、App.tsx の分解（useShortcuts / useSelection /
-useProjectFile / useTransport / useTapStatus + components/、1729→858行）。
+useProjectFile / useTransport / useTapStatus + components/、1729→858行）、
+vtr-tap/src/tap.rs の分割（tap/ 以下に beacon / notify / eventlog / jsonl /
+recv / ctl / writer。1455行 → mod.rs 147行）。
 
 ## 既知の問題（このブランチ以前から。2026-07-30 に確認）
 
@@ -35,12 +37,10 @@ curve-edit.spec.ts のノットドラッグ、curve.spec.ts のトランスフ�
   （stale socket の削除、id のエコー、不正 JSON への応答、別スレッド応答の仕組み）。
   切り替える前に、editor の player クライアントが順不同の応答を許容するか確認する
   （tap クライアントは許容する）。
-- **vtr-tap/src/tap.rs の分割（約1500行）** — `Tap::start` の中にインラインで書かれた
-  3つのスレッド本体を外に出す（既存の `writer_loop` の隣に `recv_loop` /
-  `control_loop`）。さらにモジュール分割（beacon/eventlog/notify/jsonl/writer）も可。
 - **ControlError enum（Rust）** — 現状エラーの書き方が3種類ある: 境界での anyhow、
-  tap のアクターハンドルを通る `Result<T, String>`（"writer thread gone" のリテラルが5箇所）、
-  両方の制御レイヤーにある自由形式の `json!({"ok":false,...})`。
+  tap のアクターハンドルを通る `Result<T, String>`、両方の制御レイヤーにある
+  自由形式の `json!({"ok":false,...})`。
+  （"writer thread gone" のリテラルは `Handle::ask` に集約済み。）
 - **Timeline/CurvePanel のピンチ + マーキー/ドラッグのジェスチャーフック** —
   uiScale の作業から先送りしたもの。ピンチのアンカー処理のタイミングは意図的に違う
   （Timeline は親でクランプ、CurvePanel はローカル）。pointercancel の扱いも意図的に違う
