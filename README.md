@@ -134,12 +134,17 @@ Clip and `session.jsonl` event lines share one schema:
 - `types` is the OSC type tag string without the leading `,`: one char per
   `args` element (`f` f32, `d` f64, `i` int32, `h` int64, `s` string,
   `r` color `"#rrggbbaa"`, `I` impulse `"<impulse>"`, `T`/`F` bool, `N` nil).
-  Replay scripts should encode by these tags, not by guessing from the JSON
-  value. Blob args are dropped at record time (no tag, no value).
+  Replay scripts must encode by these tags, not by guessing from the JSON
+  value: `r`, `I` and out-of-range `h` args are all recorded as JSON strings
+  and would otherwise go back out as OSC strings. Blob args are dropped at
+  record time (no tag, no value). Both directions live in one place,
+  `vtr_core::osc_json`.
 - An `h` arg beyond ±2^53 is written as a decimal **string** so JSON parsers
   with f64 numbers can't round it; parse it back via the tag.
-- `types` is absent in clips recorded before the field existed and in
-  editor-added events; fall back to guessing (`i` if integral, else `f`).
+- `types` is absent in clips recorded before the field existed. Editor-added
+  events copy their template's tags, so they carry it whenever the template
+  did. When it's missing or its length doesn't match `args`, fall back to
+  guessing (`i` if integral, else `f`).
 
 Sessions may also carry bezier **curve lines** (editor-made; recordings are
 always discrete events):

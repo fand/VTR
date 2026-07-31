@@ -14,7 +14,9 @@ editor main の分割（register*Ipc + AppContext）、ダイアログの seam
 useProjectFile / useTransport / useTapStatus + components/、1729→858行）、
 vtr-tap/src/tap.rs の分割（tap/ 以下に beacon / notify / eventlog / jsonl /
 recv / ctl / writer。1455行 → mod.rs 147行）、グリッド/目盛りのステップ計算の統合
-（timeline/model.ts の pickStep + TIME_TICK_MIN_PX）。
+（timeline/model.ts の pickStep + TIME_TICK_MIN_PX）、
+OSC↔JSON コーデックのラウンドトリップ（vtr-core/src/osc_json.rs が両方向を所有。
+Emit が types を運ぶ。conformance_osc_encode.rs）。
 
 ## 既知の問題（このブランチ以前から。2026-07-30 に確認）
 
@@ -25,13 +27,6 @@ curve-edit.spec.ts のノットドラッグ、curve.spec.ts のトランスフ�
 
 ## バックログ（調査で出たもの。未合意）
 
-- **OSC↔JSON コーデックがラウンドトリップしない** — tap は `Color` を
-  `('r', "#rrggbbaa")`、`Inf` を `('I', "<impulse>")`、2^53 を超える `Long` を
-  10進文字列で記録する（`vtr-tap/src/tap.rs` の `arg_to_json_tagged`）。一方
-  player の `to_osc_args`（`transport.rs:378-402`）はこれらを全部文字列のまま
-  再送出し、`types` タグを一度も読まない。対応: vtr-core に両方向を所有する
-  `osc_json` モジュール + ラウンドトリップの property test。
-  注意: 該当タグの再生バイト列が変わる。修正なのか仕様変更なのかを先に確認すること。
 - **Rust の unix socket JSONL 制御サーバを統一** — tap はロングポーリングの
   `wait` を別スレッドで返すが、player の `watch` は接続全体を約1秒ブロックする
   （head-of-line）。vtr-core に共有の `jsonl_server::serve(path, handler)` を置く

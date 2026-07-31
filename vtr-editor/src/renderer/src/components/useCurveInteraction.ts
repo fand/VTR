@@ -549,12 +549,20 @@ export function useCurveInteraction(ctx: CurveInteractionCtx): CurveInteraction 
     for (const pt of p.points) {
       if (!tpl || Math.abs(pt.t - t) < Math.abs(tpl.t - t)) tpl = pt
     }
-    let src: { clip: ClipInst; port: number; a: string; args: unknown[]; argIndex: number }
+    let src: {
+      clip: ClipInst
+      port: number
+      a: string
+      types?: string
+      args: unknown[]
+      argIndex: number
+    }
     if (tpl) {
       src = {
         clip: tpl.clip,
         port: tpl.ev.port,
         a: tpl.ev.a,
+        types: tpl.ev.types,
         args: tpl.ev.args,
         argIndex: tpl.argIndex
       }
@@ -569,6 +577,7 @@ export function useCurveInteraction(ctx: CurveInteractionCtx): CurveInteraction 
         clip: pc.clip,
         port: pc.src.port,
         a: pc.src.a,
+        types: pc.src.types,
         args: pc.src.args,
         argIndex: pc.src.arg
       }
@@ -585,7 +594,9 @@ export function useCurveInteraction(ctx: CurveInteractionCtx): CurveInteraction 
         eventIndex: events.length + addCount(c.file),
         argIndex: src.argIndex
       },
-      ev: { t: c.trimIn + (tl - c.offset), port: src.port, a: src.a, args }
+      // Same arg count as the template, so its type tags still apply. Without
+      // them the player guesses, and an `i`-tagged arg would replay as f32.
+      ev: { t: c.trimIn + (tl - c.offset), port: src.port, a: src.a, types: src.types, args }
     }
   }
 

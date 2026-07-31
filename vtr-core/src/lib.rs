@@ -1,10 +1,13 @@
 //! Helpers shared by vtr-tap and vtr-player: rate-limited stderr logging,
-//! OSC packet/arg utilities, and the tap→player relay frame codec.
+//! OSC packet/arg utilities, the OSC↔JSON codec, and the tap→player relay
+//! frame codec.
 
 use std::net::SocketAddr;
 use std::time::Instant;
 
 use rosc::{OscMessage, OscPacket, OscType};
+
+pub mod osc_json;
 
 /// Largest UDP datagram either binary sends or receives.
 pub const MAX_DATAGRAM: usize = 65_507;

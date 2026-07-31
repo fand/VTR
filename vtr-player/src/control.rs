@@ -261,7 +261,9 @@ fn resolve(request: &Value, ctx: &Ctx, conn: &mut ConnState) -> Value {
     let (mode, emits) = conn.resolver.as_mut().unwrap().step(t);
     let events: Vec<Value> = emits
         .into_iter()
-        .map(|(port, addr, args)| json!([port, addr, args]))
+        // Tagless on purpose: TD reads these as plain JSON. Only the OSC
+        // encoder needs `types`.
+        .map(|e| json!([e.port, e.addr, e.args]))
         .collect();
     json!({
         "ok": true,

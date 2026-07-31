@@ -45,8 +45,9 @@ export interface OscEvent {
   args: unknown[]
   /**
    * OSC type tag string, one char per args element (e.g. "ff").
-   * Absent in clips recorded before the field existed and in
-   * editor-added events; consumers then fall back to guessing.
+   * Absent in clips recorded before the field existed; editor-added
+   * events copy their template's. Consumers fall back to guessing when
+   * it is missing or its length doesn't match args.
    * An `h` tag may carry its arg as a decimal string (int64 > 2^53).
    */
   types?: string

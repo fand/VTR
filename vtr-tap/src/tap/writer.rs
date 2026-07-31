@@ -11,13 +11,13 @@ use rosc::OscType;
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use vtr_core::{flatten, RateLimitedLog};
+use vtr_core::{flatten, osc_json, RateLimitedLog};
 
 use crate::config::Config;
 
 use super::beacon::{signed_secs_since, Beacon, BeaconState};
 use super::eventlog::{Event, EventLog};
-use super::jsonl::{arg_to_json_tagged, round6, write_line};
+use super::jsonl::{round6, write_line};
 use super::notify::Notify;
 
 /// Max packets queued to the writer before we drop (and count) instead of
@@ -200,7 +200,7 @@ impl Writer {
                     for (tag, v) in m
                         .args
                         .iter()
-                        .filter_map(|a| arg_to_json_tagged(a, &mut self.arg_log))
+                        .filter_map(|a| osc_json::to_json(a, &mut self.arg_log))
                     {
                         types.push(tag);
                         args.push(v);

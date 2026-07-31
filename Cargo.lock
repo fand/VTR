@@ -597,6 +597,7 @@ name = "vtr-core"
 version = "0.1.0"
 dependencies = [
  "rosc",
+ "serde_json",
 ]
 
 [[package]]

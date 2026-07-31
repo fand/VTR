@@ -88,6 +88,11 @@ impl Session {
         &self.addrs[self.addr_id[i] as usize]
     }
 
+    /// OSC type tags of event i, empty when its line had none.
+    pub fn event_types(&self, i: usize) -> &str {
+        &self.types_tbl[self.types_id[i] as usize]
+    }
+
     /// Args of event i, ints restored per the OSC type tags.
     pub fn event_args(&self, i: usize) -> Vec<Value> {
         if let Some(raw) = self.raw_args.get(&i) {
@@ -107,6 +112,12 @@ impl Session {
                 }
             })
             .collect()
+    }
+
+    /// OSC type tags for curve group g — from the same member whose
+    /// template `curve_group_args` starts from, so tags and args agree.
+    pub fn curve_group_types(&self, g: usize) -> &str {
+        &self.curves[self.curve_groups[g].members[0]].types
     }
 
     /// Merged message for curve group g at time t: the first member's
