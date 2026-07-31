@@ -22,14 +22,17 @@ unix socket JSONL 制御サーバの統一（vtr-core/src/jsonl_server.rs。
 editor の watch 専用接続を廃止）、`ControlError`（vtr-core/src/jsonl_server.rs。
 ハンドラは `ControlResult` を返し、`ok` / `error` / `id` の封筒は
 `jsonl_server::response` だけが組む。文言は `Display` に集約。
-`From<String>` でアクターハンドルの結果に `?` が使える）。
+`From<String>` でアクターハンドルの結果に `?` が使える）、
+curve 系 e2e 5本の修正（`useCurveInteraction` の TDZ。レンダー中に走る `selBox` が
+`interactiveProps` を初期化前に呼んでいた。選択が2点以上になった瞬間に
+レンダーが throw して React がツリーごと落ちるため、
+トランスフォームボックス / スナップ / ペンシル / マーキー / ノットドラッグが全滅していた）。
 
-## 既知の問題（このブランチ以前から。2026-07-30 に確認）
+## e2e を回すときの注意
 
-curve 系の e2e 5本が `main` でも落ちる（ピクセル操作系:
-curve-edit.spec.ts のノットドラッグ、curve.spec.ts のトランスフォームボックス /
-スナップ / ペンシル / マーキー。いずれも `toHaveCount` の不一致）。
-このブランチが原因ではない。別途調査が必要。
+デフォルトポート（10010 / 10013）を使うテストは、`./run` の開発インスタンスが
+上がっていると tap:off / player:off で落ちる（bundle, export-preview, open-file,
+ports-seek, single-instance の計7本）。フルスイートの前に開発アプリを終了する。
 
 ## バックログ（調査で出たもの。未合意）
 

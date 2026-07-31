@@ -149,6 +149,11 @@ export function useCurveInteraction(ctx: CurveInteractionCtx): CurveInteraction 
   const x = (t: number): number => xAt(scale, t)
   const y = (p: Property, v: number): number => yAt(scale, p, v)
 
+  /** Curves that take pointer hits. Declared here because selBox reads it
+   *  during render, before the handlers below are defined. */
+  const interactiveProps = (): Property[] =>
+    shown.filter((p) => !hidden.has(p.key) && !dimmed(p.key))
+
   /** A target's frozen timeline position + value scale. */
   const targetPos = (target: DragTarget): { t: number; v: number; min: number; max: number } =>
     'pt' in target ? { t: target.pt.t, v: target.pt.v, min: target.min, max: target.max } : target
@@ -650,8 +655,6 @@ export function useCurveInteraction(ctx: CurveInteractionCtx): CurveInteraction 
   // Curves/points live on the canvas, so the editor div owns every pointer
   // interaction. Priority mirrors the old SVG stacking: xform edges (still
   // SVG, stopPropagation) > points > curve lines > pencil > box body > marquee.
-  const interactiveProps = (): Property[] =>
-    shown.filter((p) => !hidden.has(p.key) && !dimmed(p.key))
 
   /** The selected curve, if visible: pencil and cmd+click target it. */
   const selectedCurve = (): Property | undefined =>
