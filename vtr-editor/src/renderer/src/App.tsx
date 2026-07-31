@@ -13,7 +13,7 @@ import {
   type TransportState,
   type UndoEntry
 } from '../../shared/types'
-import { CurvePanel, PointAdd, PointPatch, PointSel } from './components/CurvePanel'
+import { CurvePanel, PointAdd, PointPatch } from './components/CurvePanel'
 import { addPoints, applyPointPatches, deletePoints, replaceWithCurves } from '../../shared/edits'
 import { clearEventsCache } from './components/eventsCache'
 import {
@@ -29,9 +29,10 @@ import { FileMenu } from './components/FileMenu'
 import { StatusBar } from './components/StatusBar'
 import { Timecode } from './components/Timecode'
 import { TooltipLayer } from './components/TooltipLayer'
-import { NumField, TextField, parsePort } from './components/fields'
-import { parseDuration } from './expr'
+import { NumField, TextField } from './components/fields'
+import { parseDuration, parsePort } from './expr'
 import { Doc, useHistory } from './history'
+import { useSelection } from './useSelection'
 import { useShortcuts } from './useShortcuts'
 import {
   ClipInst,
@@ -54,9 +55,19 @@ function count(n: number, noun: string): string {
 
 function App(): React.JSX.Element {
   const [recording, setRecording] = useState<{ path: string; startedAt: number } | null>(null)
-  const [selectedIds, setSelectedIds] = useState<number[]>([])
-  const [selectedTrackIds, setSelectedTrackIds] = useState<number[]>([])
-  const [selectedPoints, setSelectedPoints] = useState<PointSel[]>([])
+  const {
+    clipIds: selectedIds,
+    trackIds: selectedTrackIds,
+    points: selectedPoints,
+    setClipIds: setSelectedIds,
+    setPoints: setSelectedPoints,
+    selectClip,
+    selectClips,
+    selectTrack,
+    clearAll: clearSelection,
+    pruneToDoc: pruneSelection,
+    trackDeleted: onTrackDeleted
+  } = useSelection()
   const [pxPerSec, setPxPerSec] = useState(20)
   const [curveHeight, setCurveHeight] = useState(220)
   const splitDrag = useRef<{ y: number; h: number } | null>(null)
@@ -86,20 +97,19 @@ function App(): React.JSX.Element {
 
   // Undo/redo can reinstall ids from an earlier session; keep the counter
   // ahead of them and drop selections that no longer resolve.
-  const onRestore = useCallback((doc: Doc): void => {
-    let max = 0
-    for (const t of doc.tracks) {
-      max = Math.max(max, t.id)
-      for (const c of t.clips) max = Math.max(max, c.id)
-    }
-    for (const m of doc.markers) max = Math.max(max, m.id)
-    nextId.current = Math.max(nextId.current, max + 1)
-    setSelectedIds((ids) =>
-      ids.filter((id) => doc.tracks.some((t) => t.clips.some((c) => c.id === id)))
-    )
-    setSelectedTrackIds((ids) => ids.filter((id) => doc.tracks.some((t) => t.id === id)))
-    setSelectedPoints([])
-  }, [])
+  const onRestore = useCallback(
+    (doc: Doc): void => {
+      let max = 0
+      for (const t of doc.tracks) {
+        max = Math.max(max, t.id)
+        for (const c of t.clips) max = Math.max(max, c.id)
+      }
+      for (const m of doc.markers) max = Math.max(max, m.id)
+      nextId.current = Math.max(nextId.current, max + 1)
+      pruneSelection(doc)
+    },
+    [pruneSelection]
+  )
 
   const onHistoryLog = useCallback((kind: 'commit' | 'undo' | 'redo', label: string): void => {
     setLog(kind === 'commit' ? label : `${kind === 'undo' ? 'Undo' : 'Redo'}: ${label}`)
@@ -156,15 +166,13 @@ function App(): React.JSX.Element {
         seq: pastLog[pastLog.length - 1]?.seq ?? 0,
         ports: loadedPorts ?? s.ports
       }))
-      setSelectedIds([])
-      setSelectedTrackIds([])
-      setSelectedPoints([])
+      clearSelection()
       // Clipboard clips reference files in the previous bundle; drop them.
       clipClipboard.current = []
       setCanPaste(false)
       clearEventsCache()
     },
-    [newId, reset]
+    [newId, reset, clearSelection]
   )
 
   // Boot: open the CLI-arg project if one was given, otherwise an empty
@@ -583,11 +591,9 @@ function App(): React.JSX.Element {
       commit('Track deleted', (d) => {
         d.tracks = d.tracks.filter((t) => t.id !== trackId)
       })
-      setSelectedIds([])
-      setSelectedTrackIds((ids) => ids.filter((id) => id !== trackId))
-      setSelectedPoints([])
+      onTrackDeleted(trackId)
     },
-    [commit]
+    [commit, onTrackDeleted]
   )
 
   const renameTrack = useCallback(
@@ -741,38 +747,6 @@ function App(): React.JSX.Element {
   const duplicateSelected = useCallback(() => {
     if (selectedIds.length > 0) duplicateClips(selectedIds)
   }, [selectedIds, duplicateClips])
-
-  // A curve point only makes sense within the clip it belongs to.
-  // Additive select (shift/cmd-click) toggles membership.
-  // Clip and track selections are mutually exclusive.
-  const selectClip = useCallback((id: number | null, additive = false) => {
-    setSelectedPoints([])
-    setSelectedTrackIds([])
-    if (id == null) {
-      setSelectedIds([])
-      return
-    }
-    setSelectedIds((ids) => {
-      if (!additive) return [id]
-      return ids.includes(id) ? ids.filter((i) => i !== id) : [...ids, id]
-    })
-  }, [])
-
-  // Marquee select: replaces the clip selection with the given set.
-  const selectClips = useCallback((ids: number[]) => {
-    setSelectedPoints([])
-    setSelectedTrackIds([])
-    setSelectedIds(ids)
-  }, [])
-
-  const selectTrack = useCallback((id: number, additive: boolean) => {
-    setSelectedPoints([])
-    setSelectedIds([])
-    setSelectedTrackIds((ids) => {
-      if (!additive) return [id]
-      return ids.includes(id) ? ids.filter((i) => i !== id) : [...ids, id]
-    })
-  }, [])
 
   // The curve panel shows every selected clip's events; with no clip
   // selected, the selected tracks' clips. Deselecting doesn't clear it:
