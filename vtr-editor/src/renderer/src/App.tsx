@@ -1,27 +1,19 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Circle, Pause, Play, Square } from 'lucide-react'
 import {
   DEFAULT_DURATION,
   DEFAULT_PORTS,
-  normalizePorts,
   isValidEchoHost,
   type ClipCurve,
-  type LoadedProject,
-  type PlayerStatus,
-  type PortConfig,
-  type TapStatus,
-  type TransportState,
-  type UndoEntry
+  type PortConfig
 } from '../../shared/types'
 import { CurvePanel, PointAdd, PointPatch } from './components/CurvePanel'
 import { addPoints, applyPointPatches, deletePoints, replaceWithCurves } from '../../shared/edits'
-import { clearEventsCache } from './components/eventsCache'
 import {
   ClipAction,
   LABEL_W,
   MAX_PX_PER_SEC,
   MIN_PX_PER_SEC,
-  PlayingState,
   TAIL_PAD,
   Timeline
 } from './components/Timeline'
@@ -32,7 +24,10 @@ import { TooltipLayer } from './components/TooltipLayer'
 import { NumField, TextField } from './components/fields'
 import { parseDuration, parsePort } from './expr'
 import { Doc, useHistory } from './history'
+import { useProjectFile } from './useProjectFile'
 import { useSelection } from './useSelection'
+import { useTapStatus } from './useTapStatus'
+import { useTransport } from './useTransport'
 import { useShortcuts } from './useShortcuts'
 import {
   ClipInst,
@@ -43,9 +38,7 @@ import {
   recordingWarning,
   clipLen,
   contentEnd,
-  markersFromProject,
-  serializeProject,
-  tracksFromProject
+  serializeProject
 } from './timeline/model'
 
 /** "3 clips", "1 point" — count + pluralized noun for log lines. */
@@ -54,7 +47,6 @@ function count(n: number, noun: string): string {
 }
 
 function App(): React.JSX.Element {
-  const [recording, setRecording] = useState<{ path: string; startedAt: number } | null>(null)
   const {
     clipIds: selectedIds,
     trackIds: selectedTrackIds,
@@ -71,29 +63,12 @@ function App(): React.JSX.Element {
   const [pxPerSec, setPxPerSec] = useState(20)
   const [curveHeight, setCurveHeight] = useState(220)
   const splitDrag = useRef<{ y: number; h: number } | null>(null)
-  const [status, setStatus] = useState<TapStatus | null>(null)
-  const [statusError, setStatusError] = useState<string | null>(null)
-  const [playerStatus, setPlayerStatus] = useState<PlayerStatus | null>(null)
-  /** Incoming packets/s, from received deltas between polls. */
-  const [rxRate, setRxRate] = useState<number | null>(null)
-  const lastRx = useRef<{ received: number; at: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
   /** Latest event log line, shown at the right end of the status bar. */
   const [log, setLog] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [playhead, setPlayhead] = useState(0)
-  const [playing, setPlaying] = useState<PlayingState | null>(null)
   const [ports, setPorts] = useState<PortConfig>(DEFAULT_PORTS)
   const nextId = useRef(1)
   const newId = useCallback((): number => nextId.current++, [])
-
-  // Current project file (null = untitled) and the last-saved snapshot.
-  // Dirty = the doc's undo seq or the ports moved off that snapshot.
-  const [projectFile, setProjectFile] = useState<string | null>(null)
-  const [savedState, setSavedState] = useState<{ seq: number; ports: PortConfig }>({
-    seq: 0,
-    ports: DEFAULT_PORTS
-  })
 
   // Undo/redo can reinstall ids from an earlier session; keep the counter
   // ahead of them and drop selections that no longer resolve.
@@ -130,115 +105,47 @@ function App(): React.JSX.Element {
   const clipClipboard = useRef<{ clip: ClipInst; trackId: number }[]>([])
   const [canPaste, setCanPaste] = useState(false)
 
-  // Install a loaded project (boot or File > Open) into the editor.
-  const applyLoaded = useCallback(
-    (path: string | null, project: LoadedProject | null, log: UndoEntry[]): void => {
-      let doc: Doc = { tracks: [], markers: [], duration: DEFAULT_DURATION, edits: {} }
-      let loadedPorts: PortConfig | null = null
-      if (project) {
-        doc = {
-          tracks: tracksFromProject(project, newId),
-          markers: markersFromProject(project, newId),
-          duration: project.duration ?? DEFAULT_DURATION,
-          edits: project.edits
-        }
-        if (project.ports) {
-          // Back-fill echo and drop the legacy beacon key on older files.
-          loadedPorts = normalizePorts(project.ports)
-          setPorts(loadedPorts)
-          window.api.tap.setPorts(loadedPorts).catch((e: Error) => setError(e.message))
-        }
-        if (project.missing.length > 0) {
-          setError(`missing clip files: ${project.missing.join(', ')}`)
-        }
-      }
-      // undoSeq is the cursor: entries at or below it are undoable from the
-      // saved state, later ones are redo (incl. crash-recovery tails).
-      const cursor = project?.undoSeq ?? Math.max(0, ...log.map((e) => e.seq))
-      const pastLog = log.filter((e) => e.seq <= cursor)
-      reset(
-        doc,
-        pastLog,
-        log.filter((e) => e.seq > cursor)
-      )
-      setProjectFile(path)
-      setSavedState((s) => ({
-        seq: pastLog[pastLog.length - 1]?.seq ?? 0,
-        ports: loadedPorts ?? s.ports
-      }))
-      clearSelection()
-      // Clipboard clips reference files in the previous bundle; drop them.
-      clipClipboard.current = []
-      setCanPaste(false)
-      clearEventsCache()
-    },
-    [newId, reset, clearSelection]
+  // Project switched: clipboard clips reference files in the previous
+  // bundle; drop them.
+  const onProjectSwitched = useCallback(() => {
+    clipClipboard.current = []
+    setCanPaste(false)
+  }, [])
+
+  const {
+    projectFile,
+    fileName,
+    dirty,
+    bootDone,
+    saveProject,
+    saveProjectAs,
+    openProject,
+    doExport
+  } = useProjectFile({
+    reset,
+    doc: history.doc,
+    seq: history.seq,
+    ports,
+    setPorts,
+    newId,
+    clearSelection,
+    onProjectSwitched,
+    setError,
+    setLog
+  })
+
+  const serialize = useCallback(
+    () => serializeProject(tracks, markers, ports, duration, edits, history.seq),
+    [tracks, markers, ports, duration, edits, history.seq]
   )
 
-  // Boot: open the CLI-arg project if one was given, otherwise an empty
-  // project. A broken project file reports the error and falls back to empty.
-  // The undo log only applies to the loaded project.
-  const booted = useRef(false)
-  const [bootDone, setBootDone] = useState(false)
-  useEffect(() => {
-    if (booted.current) return
-    booted.current = true
-    const boot = async (): Promise<void> => {
-      let loaded: { path: string; project: LoadedProject } | null = null
-      try {
-        loaded = await window.api.project.load()
-      } catch (e) {
-        setError(`failed to open project: ${(e as Error).message}`)
-      }
-      const log = loaded ? await window.api.undo.load() : []
-      applyLoaded(loaded?.path ?? null, loaded?.project ?? null, log)
-    }
-    boot()
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setBootDone(true))
-  }, [applyLoaded])
-
-  // Follow the shared transport: a seek or play/stop from TD or a controller
-  // (never the editor's own writes — those are suppressed in main). The
-  // player emits the OSC for every transport move, so all the renderer does
-  // is roll its local playhead clock to match.
-  const playingRef = useRef(playing)
-  useEffect(() => {
-    playingRef.current = playing
-  }, [playing])
-  // Set once anything foreign has been applied: the boot seed below must
-  // never overwrite a live update that beat it.
-  const transportSeededRef = useRef(false)
-  useEffect(() => {
-    const apply = (s: TransportState): void => {
-      transportSeededRef.current = true
-      const p = playingRef.current
-      setPlayhead(s.playhead)
-      if (s.playing) {
-        if (p && !p.remote) {
-          // Foreign seek during editor playback: keep it editor-owned so
-          // the end-of-project auto-pause still applies.
-          setPlaying({ ...p, startPos: s.playhead, startedAt: performance.now() })
-        } else {
-          setPlaying({ startPos: s.playhead, startedAt: performance.now(), duration, remote: true })
-        }
-      } else {
-        setPlaying(null)
-      }
-    }
-    const unsub = window.api.preview.onTransport(apply)
-    // Seed a fresh renderer from the last foreign state main saw — without
-    // this the playhead assumes 0 until the next transport change (e.g. a
-    // TD scrub that landed while the window was still loading).
-    if (!transportSeededRef.current)
-      window.api.preview
-        .lastTransport()
-        .then((s) => {
-          if (s && !transportSeededRef.current) apply(s)
-        })
-        .catch(() => {})
-    return unsub
-  }, [duration])
+  const { playhead, playing, togglePlay, onSeek } = useTransport({
+    duration,
+    hasTracks: tracks.length > 0,
+    serialize,
+    setError,
+    setLog
+  })
 
   // Session residency: keep the player holding the current merged project so
   // a TD-side scrub always resolves against something. Debounced after edits;
@@ -248,97 +155,10 @@ function App(): React.JSX.Element {
   useEffect(() => {
     if (!bootDone || (!projectFile && tracks.length === 0)) return
     const t = setTimeout(() => {
-      window.api.player
-        .loadInline(serializeProject(tracks, markers, ports, duration, edits, history.seq))
-        .catch(() => {})
+      window.api.player.loadInline(serialize()).catch(() => {})
     }, 300)
     return () => clearTimeout(t)
-  }, [bootDone, projectFile, tracks, markers, ports, duration, edits, history.seq])
-
-  // Menu/keydown listeners resubscribe in a passive effect, so a save fired
-  // right after a commit (record stop → immediate Cmd+S) can run against a
-  // stale closure and silently drop the newest change from project.json.
-  // Saves read the latest state through this ref instead; the layout effect
-  // updates it synchronously with the DOM commit, so it is current as soon
-  // as the change is visible — not one passive-effect flush later.
-  const saveState = useRef({ tracks, markers, ports, duration, edits, seq: history.seq })
-  useLayoutEffect(() => {
-    saveState.current = { tracks, markers, ports, duration, edits, seq: history.seq }
-  })
-
-  const saveTo = useCallback(async (path: string): Promise<void> => {
-    const s = saveState.current
-    await window.api.project.save(
-      path,
-      serializeProject(s.tracks, s.markers, s.ports, s.duration, s.edits, s.seq)
-    )
-    setProjectFile(path)
-    setSavedState({ seq: s.seq, ports: s.ports })
-    setLog(`Saved ${path.split(/[\\/]/).pop()}`)
-  }, [])
-
-  /** Resolves true only when the project actually saved (dialog not cancelled). */
-  const saveProjectAs = useCallback(async (): Promise<boolean> => {
-    try {
-      const path = await window.api.project.saveDialog(projectFile ?? undefined)
-      if (!path) return false
-      await saveTo(path)
-      return true
-    } catch (e) {
-      setError((e as Error).message)
-      return false
-    }
-  }, [projectFile, saveTo])
-
-  const saveProject = useCallback(async (): Promise<boolean> => {
-    if (!projectFile) return saveProjectAs()
-    try {
-      await saveTo(projectFile)
-      return true
-    } catch (e) {
-      setError((e as Error).message)
-      return false
-    }
-  }, [projectFile, saveTo, saveProjectAs])
-
-  const openPath = useCallback(
-    async (path: string): Promise<void> => {
-      try {
-        const res = await window.api.project.loadPath(path)
-        // The bundle carries its own undo log; restore it like boot does.
-        const undoLog = await window.api.undo.load()
-        applyLoaded(res.path, res.project, undoLog)
-        setLog(`Opened ${res.path.split(/[\\/]/).pop()}`)
-      } catch (e) {
-        setError((e as Error).message)
-      }
-    },
-    [applyLoaded]
-  )
-
-  const openProject = useCallback(async (): Promise<void> => {
-    try {
-      const path = await window.api.project.openDialog()
-      if (path) await openPath(path)
-    } catch (e) {
-      setError((e as Error).message)
-    }
-  }, [openPath])
-
-  // Finder open of a .oscproj while the app is running (main prompts for
-  // unsaved changes before sending this).
-  useEffect(() => window.api.project.onOpenPath(openPath), [openPath])
-
-  // Window title: "VTR - <file> (edited)"; parts drop off when there is
-  // no open file / no unsaved change. macOS hides the native bar (custom
-  // title bar) but the title still names the window in Mission Control;
-  // setFile keeps the edited dot on the close button.
-  const dirty = history.seq !== savedState.seq || ports !== savedState.ports
-  const fileName = projectFile?.split(/[\\/]/).pop()
-  useEffect(() => {
-    document.title = `VTR${fileName ? ` - ${fileName}` : ''}${dirty ? ' (edited)' : ''}`
-    window.api.window.setFile(projectFile ?? null, dirty)
-  }, [projectFile, fileName, dirty])
+  }, [bootDone, projectFile, tracks, serialize])
 
   // macOS layout: the header is the drag region and clears the traffic lights.
   useEffect(() => {
@@ -349,44 +169,6 @@ function App(): React.JSX.Element {
     setPorts(next)
     window.api.tap.setPorts(next).catch((e: Error) => setError(e.message))
   }, [])
-
-  useEffect(() => {
-    const poll = (): void => {
-      window.api.tap
-        .status()
-        .then((s) => {
-          setStatus(s)
-          setStatusError(null)
-          // A stale launchd tap may predate the received field.
-          if (typeof s.received === 'number') {
-            const now = performance.now()
-            const prev = lastRx.current
-            lastRx.current = { received: s.received, at: now }
-            // A negative delta means vtr-tap restarted; skip that sample.
-            if (prev && now > prev.at && s.received >= prev.received) {
-              setRxRate(((s.received - prev.received) * 1000) / (now - prev.at))
-            }
-          }
-          // Disk full mid-performance must not fail silently: the latch
-          // keeps this banner up until the next recording starts.
-          if (s.write_error) {
-            setError(`recording write error (${s.write_errors} failed): ${s.write_error}`)
-          }
-        })
-        .catch((e: Error) => setStatusError(e.message))
-      window.api.player
-        .status()
-        .then(setPlayerStatus)
-        .catch(() => setPlayerStatus(null))
-    }
-    poll()
-    const iv = setInterval(poll, 1000)
-    return () => clearInterval(iv)
-  }, [])
-
-  // Recording state is event-driven: local and remote (OSC /rec) start/stops
-  // flow through the same tap:event channel. Local commands only fire and
-  // report errors.
 
   // Latest tracks for the import guard, without resubscribing per edit.
   const tracksRef = useRef(tracks)
@@ -437,86 +219,10 @@ function App(): React.JSX.Element {
     [commit, newId]
   )
 
-  // Apply a status snapshot (startup baseline / tap reset), idempotently.
-  const applySnapshot = useCallback(
-    (s: TapStatus): void => {
-      if (s.recording && s.clip) {
-        const clip = s.clip
-        const recT = s.rec_t ?? 0
-        setRecording((prev) =>
-          prev && prev.path === clip
-            ? prev
-            : { path: clip, startedAt: performance.now() - recT * 1000 }
-        )
-      } else {
-        // Tap crashed or stopped while we weren't looking: clear stale REC.
-        setRecording(null)
-      }
-      if (s.last_clip) void maybeImportClip(s.last_clip)
-    },
-    [maybeImportClip]
+  const importClip = useCallback((p: string) => void maybeImportClip(p), [maybeImportClip])
+  const { status, statusError, playerStatus, rxRate, recording, busy, toggleRecord } = useTapStatus(
+    { bootDone, importClip, setError, setLog }
   )
-
-  useEffect(() => {
-    return window.api.tap.onEvent((msg) => {
-      if (msg.type === 'reset') {
-        applySnapshot(msg.status)
-        return
-      }
-      const e = msg.event
-      if (e.ev === 'rec_started') {
-        // A snapshot may already have applied this; keep startedAt then.
-        setRecording((prev) =>
-          prev && prev.path === e.clip ? prev : { path: e.clip, startedAt: performance.now() }
-        )
-        setLog('Record started')
-      } else {
-        setRecording(null)
-        setLog('Record stopped')
-        void maybeImportClip(e.clip)
-      }
-    })
-  }, [applySnapshot, maybeImportClip])
-
-  // Startup baseline: events forwarded before this window existed are gone; a
-  // status snapshot recovers the state. After boot, so a lingering last_clip
-  // dedupes against the loaded project instead of racing it.
-  useEffect(() => {
-    if (!bootDone) return
-    let stop = false
-    let timer: number | undefined
-    const baseline = (): void => {
-      window.api.tap
-        .status()
-        .then((s) => {
-          if (!stop) applySnapshot(s)
-        })
-        .catch(() => {
-          if (!stop) timer = window.setTimeout(baseline, 1000)
-        })
-    }
-    baseline()
-    return () => {
-      stop = true
-      window.clearTimeout(timer)
-    }
-  }, [bootDone, applySnapshot])
-
-  const toggleRecord = useCallback(async () => {
-    if (busy) return
-    setBusy(true)
-    try {
-      if (recording) await window.api.tap.stop()
-      else await window.api.tap.start()
-      setError(null)
-    } catch (e) {
-      const msg = (e as Error).message
-      // A remote stop won the race; its event already handled it.
-      if (!msg.includes('not recording')) setError(msg)
-    } finally {
-      setBusy(false)
-    }
-  }, [recording, busy])
 
   // Tracks live independently of clips: emptying one no longer removes it.
   // Drags stream transient docs and commit once on release (one undo entry).
@@ -816,101 +522,6 @@ function App(): React.JSX.Element {
     )
     setSelectedPoints([])
   }, [selectedPoints, commit])
-
-  // Pause freezes the playhead where playback stopped; Play resumes from it.
-  // The local clock is the immediate estimate; the stop reply carries the
-  // player transport's exact position and wins when it arrives.
-  const pausePreview = useCallback(async () => {
-    if (playing) {
-      setPlayhead(
-        Math.min(
-          playing.startPos + (performance.now() - playing.startedAt) / 1000,
-          playing.duration
-        )
-      )
-    }
-    try {
-      const res = await window.api.preview.stop()
-      setPlayhead(playing ? Math.min(res.position, playing.duration) : res.position)
-    } catch (e) {
-      setError((e as Error).message)
-    }
-    if (playing) setLog('Playback paused')
-    setPlaying(null)
-  }, [playing])
-
-  // In-flight guard: two fast Space presses would both see playing === null
-  // and both call preview.play; the second's startedAt then skews the playhead.
-  const playFlight = useRef(false)
-  const togglePlay = useCallback(async () => {
-    if (playFlight.current) return
-    playFlight.current = true
-    try {
-      if (playing) {
-        await pausePreview()
-        return
-      }
-      if (tracks.length === 0) return
-      const res = await window.api.preview.play(
-        serializeProject(tracks, markers, ports, duration, edits, history.seq),
-        playhead
-      )
-      // The reply snapshot is the truth: the hold rule can reject our
-      // writes while a foreign controller is still driving the transport.
-      if (!res.transport.playing || res.transport.origin !== 'editor') {
-        setLog('Transport busy — another controller is driving it')
-        return
-      }
-      setPlaying({
-        startPos: res.transport.playhead,
-        startedAt: performance.now(),
-        duration: res.duration
-      })
-      setLog('Playback started')
-      setError(null)
-    } catch (e) {
-      setError((e as Error).message)
-    } finally {
-      playFlight.current = false
-    }
-  }, [playing, tracks, markers, ports, duration, edits, playhead, pausePreview])
-
-  // Auto-pause when the playhead reaches the end. Remote-driven playback is
-  // exempt: pausing would stop the shared transport someone else is driving.
-  useEffect(() => {
-    if (!playing || playing.remote) return
-    const remaining =
-      (playing.duration - playing.startPos) * 1000 - (performance.now() - playing.startedAt)
-    const timer = setTimeout(() => pausePreview(), Math.max(remaining, 0) + 100)
-    return () => clearTimeout(timer)
-  }, [playing, pausePreview])
-
-  // Every user seek writes the shared transport — idle included, so a TD
-  // sync client follows the seekbar while the editor is stopped, and the
-  // player pushes the resolved frame to TD (deduped). The visible playhead
-  // is driven by `playing`, so we roll its origin forward to match the jump.
-  const onSeek = useCallback(
-    (sec: number) => {
-      setPlayhead(sec)
-      window.api.preview.seek(sec).catch((e) => setError((e as Error).message))
-      if (!playing) return
-      setPlaying((p) => (p ? { ...p, startPos: sec, startedAt: performance.now() } : p))
-    },
-    [playing]
-  )
-
-  const doExport = useCallback(async () => {
-    try {
-      const result = await window.api.session.export(
-        serializeProject(tracks, markers, ports, duration, edits, history.seq)
-      )
-      if (!result) return // save dialog cancelled
-      setLog(`Exported ${result.path} (${result.events} events, ${result.duration.toFixed(1)}s)`)
-      setError(null)
-    } catch (e) {
-      setError((e as Error).message)
-    }
-  }, [tracks, markers, ports, duration, edits])
 
   const alignAll = useCallback(() => {
     commit('Clips aligned with clock', (d) => {
