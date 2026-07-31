@@ -29,15 +29,12 @@ function toTransportState(r: Record<string, unknown>): TransportState {
 /**
  * Spawns vtr-player via ChildSupervisor (no launchd mode — recording never
  * depends on it) and talks to its unix socket control API. Modeled on
- * TapManager. Commands and the watch long-poll ride separate connections:
- * the server handles each connection's lines strictly in order, so a
- * blocking long-poll would head-of-line-delay every other request on the
- * same socket.
+ * TapManager: commands and the watch long-poll share one connection, since
+ * the server answers a long poll off-thread.
  */
 export class PlayerManager {
   readonly sockPath: string
-  private cmds: ControlChannel
-  private poll: ControlChannel
+  private chan: ControlChannel
   private child: ChildSupervisor
   private stopping = false
 
@@ -53,8 +50,7 @@ export class PlayerManager {
     private requestTimeoutMs = REQUEST_TIMEOUT_MS
   ) {
     this.sockPath = join(dataDir, 'vtr-player.sock')
-    this.cmds = new ControlChannel(this.sockPath, 'vtr-player')
-    this.poll = new ControlChannel(this.sockPath, 'vtr-player')
+    this.chan = new ControlChannel(this.sockPath, 'vtr-player')
     this.child = new ChildSupervisor({
       label: 'vtr-player',
       bin: this.bin,
@@ -164,21 +160,19 @@ export class PlayerManager {
   /**
    * Long-poll the transport: resolves when its generation differs from
    * `gen`, or vtr-player's server-side timeout fires (same gen returned).
-   * The follow loop re-issues on every resolution. Rides its own
-   * connection: the server blocks the whole connection while a watch is
-   * pending, and the change that would wake it could be a command queued
-   * on the same socket.
+   * The follow loop re-issues on every resolution. Shares the command
+   * connection: the server answers a pending watch from its own thread, so
+   * a command that would wake it is never stuck behind it.
    */
   async watch(gen: number): Promise<TransportState> {
-    return toTransportState(await this.poll.request('watch', { gen }, WATCH_TIMEOUT_MS))
+    return toTransportState(await this.chan.request('watch', { gen }, WATCH_TIMEOUT_MS))
   }
 
   private request(cmd: string, extra?: Record<string, unknown>): Promise<Record<string, unknown>> {
-    return this.cmds.request(cmd, extra, this.requestTimeoutMs)
+    return this.chan.request(cmd, extra, this.requestTimeoutMs)
   }
 
   private dropConnection(err: Error): void {
-    this.cmds.drop(err)
-    this.poll.drop(err)
+    this.chan.drop(err)
   }
 }

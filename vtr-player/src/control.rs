@@ -1,6 +1,7 @@
-//! Unix-socket JSON Lines control API, same framing/id-echo style as the
-//! tap's, but **stateful per connection**: each connection owns a
-//! dedup-wrapped resolver, so per-frame `resolve` calls return deltas.
+//! Unix-socket JSON Lines control API (framing in
+//! `vtr_core::jsonl_server`), **stateful per connection**: each connection
+//! owns a dedup-wrapped resolver, so per-frame `resolve` calls return
+//! deltas.
 //!
 //! Requests:  {"cmd":"load","path":"…"|"events":[…],"name"?:"…","duration"?:D,
 //!             "triggers"?:[…],"routes"?:{"10010":9000},
@@ -24,16 +25,14 @@
 //! snapshot — the transport-axis analogue of the tap's `wait`.
 
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::thread;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde_json::{Map, Value, json};
+use vtr_core::jsonl_server::{self, Reply};
 
 use crate::pattern::TriggerPatterns;
 use crate::resolver::{DedupResolver, Mode, Resolver};
@@ -53,10 +52,28 @@ const WATCH_TIMEOUT: Duration = Duration::from_millis(1000);
 
 /// Per-connection resolver, rebuilt when the session epoch moves (a `load`
 /// anywhere resets every connection: the next `resolve` is a full
-/// catch-up).
+/// catch-up). Doubles as the live-connection count's RAII guard.
 struct ConnState {
+    ctx: Arc<Ctx>,
     epoch: u64,
     resolver: Option<DedupResolver>,
+}
+
+impl ConnState {
+    fn new(ctx: Arc<Ctx>) -> Self {
+        ctx.connections.fetch_add(1, Ordering::Relaxed);
+        Self {
+            ctx,
+            epoch: 0,
+            resolver: None,
+        }
+    }
+}
+
+impl Drop for ConnState {
+    fn drop(&mut self) {
+        self.ctx.connections.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 fn origin_of(request: &Value) -> &str {
@@ -65,52 +82,22 @@ fn origin_of(request: &Value) -> &str {
 
 /// Serve the control API. Blocks forever.
 pub fn serve(path: &Path, ctx: Arc<Ctx>) -> Result<()> {
-    if path.exists() {
-        std::fs::remove_file(path).with_context(|| format!("remove stale socket {path:?}"))?;
-    }
-    let listener = UnixListener::bind(path).with_context(|| format!("bind {path:?}"))?;
-    for stream in listener.incoming() {
-        let Ok(stream) = stream else { continue };
-        let ctx = ctx.clone();
-        thread::spawn(move || {
-            ctx.connections.fetch_add(1, Ordering::Relaxed);
-            let result = (|| -> std::io::Result<()> {
-                let mut writer = stream.try_clone()?;
-                let reader = BufReader::new(stream);
-                let mut conn = ConnState {
-                    epoch: 0,
-                    resolver: None,
-                };
-                for line in reader.lines() {
-                    let line = line?;
-                    if line.trim().is_empty() {
-                        continue;
-                    }
-                    let resp = dispatch_line(&line, &ctx, &mut conn);
-                    writer.write_all(resp.to_string().as_bytes())?;
-                    writer.write_all(b"\n")?;
-                }
-                Ok(())
-            })();
-            ctx.connections.fetch_sub(1, Ordering::Relaxed);
-            if let Err(e) = result {
-                eprintln!("vtr-player: control conn error: {e}");
+    let conn_ctx = ctx.clone();
+    jsonl_server::serve(
+        path,
+        "vtr-player",
+        move || ConnState::new(conn_ctx.clone()),
+        move |request, conn| {
+            // `watch` blocks for up to WATCH_TIMEOUT, so it answers
+            // off-thread: a follower's long poll must not delay the
+            // `resolve` calls TD makes on the same connection.
+            if request["cmd"].as_str() == Some("watch") {
+                let ctx = ctx.clone();
+                return Reply::defer(move |request| watch(request, &ctx));
             }
-        });
-    }
-    Ok(())
-}
-
-fn dispatch_line(line: &str, ctx: &Ctx, conn: &mut ConnState) -> Value {
-    let request: Value = match serde_json::from_str(line) {
-        Ok(v) => v,
-        Err(e) => return json!({"ok": false, "error": format!("bad json: {e}")}),
-    };
-    let mut response = dispatch(&request, ctx, conn);
-    if let Some(id) = request.get("id") {
-        response["id"] = id.clone();
-    }
-    response
+            Reply::Now(dispatch(request, &ctx, conn))
+        },
+    )
 }
 
 fn dispatch(request: &Value, ctx: &Ctx, conn: &mut ConnState) -> Value {
@@ -132,7 +119,6 @@ fn dispatch(request: &Value, ctx: &Ctx, conn: &mut ConnState) -> Value {
             ctx.transport.request_seek(t, origin_of(request));
             transport_reply(ctx)
         }
-        Some("watch") => watch(request, ctx),
         Some("status") => status(ctx),
         _ => json!({"ok": false, "error": "unknown cmd"}),
     }

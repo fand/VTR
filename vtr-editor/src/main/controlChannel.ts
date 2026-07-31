@@ -11,9 +11,8 @@ interface Pending {
 /**
  * One unix-socket control connection with id-matched request/reply framing
  * (JSON Lines, one response per request line), shared by the tap and player
- * managers. The servers handle each connection's lines strictly in order, so
- * a blocking long-poll head-of-line-delays every other request on the same
- * socket — callers that long-poll keep a dedicated channel for it.
+ * managers. Replies may arrive out of order — both servers answer long polls
+ * off-thread — so every reply is matched by id, never by position.
  */
 export class ControlChannel {
   private sock: net.Socket | null = null

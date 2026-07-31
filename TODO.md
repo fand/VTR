@@ -16,7 +16,10 @@ vtr-tap/src/tap.rs の分割（tap/ 以下に beacon / notify / eventlog / jsonl
 recv / ctl / writer。1455行 → mod.rs 147行）、グリッド/目盛りのステップ計算の統合
 （timeline/model.ts の pickStep + TIME_TICK_MIN_PX）、
 OSC↔JSON コーデックのラウンドトリップ（vtr-core/src/osc_json.rs が両方向を所有。
-Emit が types を運ぶ。conformance_osc_encode.rs）。
+Emit が types を運ぶ。conformance_osc_encode.rs）、
+unix socket JSONL 制御サーバの統一（vtr-core/src/jsonl_server.rs。
+長ポーリングは `Reply::Defer` で別スレッドに逃がす。player の head-of-line を解消し、
+editor の watch 専用接続を廃止）。
 
 ## 既知の問題（このブランチ以前から。2026-07-30 に確認）
 
@@ -27,12 +30,6 @@ curve-edit.spec.ts のノットドラッグ、curve.spec.ts のトランスフ�
 
 ## バックログ（調査で出たもの。未合意）
 
-- **Rust の unix socket JSONL 制御サーバを統一** — tap はロングポーリングの
-  `wait` を別スレッドで返すが、player の `watch` は接続全体を約1秒ブロックする
-  （head-of-line）。vtr-core に共有の `jsonl_server::serve(path, handler)` を置く
-  （stale socket の削除、id のエコー、不正 JSON への応答、別スレッド応答の仕組み）。
-  切り替える前に、editor の player クライアントが順不同の応答を許容するか確認する
-  （tap クライアントは許容する）。
 - **ControlError enum（Rust）** — 現状エラーの書き方が3種類ある: 境界での anyhow、
   tap のアクターハンドルを通る `Result<T, String>`、両方の制御レイヤーにある
   自由形式の `json!({"ok":false,...})`。
