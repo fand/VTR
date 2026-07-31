@@ -32,6 +32,7 @@ import { TooltipLayer } from './components/TooltipLayer'
 import { NumField, TextField, parsePort } from './components/fields'
 import { parseDuration } from './expr'
 import { Doc, useHistory } from './history'
+import { useShortcuts } from './useShortcuts'
 import {
   ClipInst,
   MIN_CLIP_LEN,
@@ -49,12 +50,6 @@ import {
 /** "3 clips", "1 point" — count + pluralized noun for log lines. */
 function count(n: number, noun: string): string {
   return `${n} ${noun}${n === 1 ? '' : 's'}`
-}
-
-/** True when a keyboard event comes from a text field; global shortcuts must ignore it. */
-function isTextInput(target: EventTarget | null): boolean {
-  const el = target as HTMLElement | null
-  return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
 }
 
 function App(): React.JSX.Element {
@@ -341,39 +336,6 @@ function App(): React.JSX.Element {
   useEffect(() => {
     document.body.classList.toggle('mac', window.api.platform === 'darwin')
   }, [])
-
-  // File menu actions + a keydown fallback for synthetic input (e2e), same
-  // pattern as undo/redo below.
-  useEffect(() => {
-    const offOpen = window.api.menu.on('open', openProject)
-    const offSave = window.api.menu.on('save', saveProject)
-    const offSaveAs = window.api.menu.on('saveAs', saveProjectAs)
-    // Quit prompt chose Save: close only after a successful save, so a
-    // cancelled Save As leaves the app open.
-    const offSaveClose = window.api.menu.on('saveAndClose', async () => {
-      if (await saveProject()) window.api.window.confirmClose()
-    })
-    const onKey = (e: KeyboardEvent): void => {
-      if (!(e.metaKey || e.ctrlKey)) return
-      const k = e.key.toLowerCase()
-      if (k === 'o') {
-        e.preventDefault()
-        openProject()
-      } else if (k === 's') {
-        e.preventDefault()
-        if (e.shiftKey) saveProjectAs()
-        else saveProject()
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => {
-      offOpen()
-      offSave()
-      offSaveAs()
-      offSaveClose()
-      window.removeEventListener('keydown', onKey)
-    }
-  }, [openProject, saveProject, saveProjectAs])
 
   const changePorts = useCallback((next: PortConfig) => {
     setPorts(next)
@@ -776,30 +738,9 @@ function App(): React.JSX.Element {
     pasteClips(tracks.find((t) => t.clips.some((c) => c.id === selectedIds[0]))?.id)
   }, [tracks, selectedIds, pasteClips])
 
-  useEffect(() => {
-    const offCopy = window.api.menu.on('copy', () => {
-      if (!isTextInput(document.activeElement)) copySelected()
-    })
-    const offPaste = window.api.menu.on('paste', () => {
-      if (!isTextInput(document.activeElement)) pasteAtPlayhead()
-    })
-    const onKey = (e: KeyboardEvent): void => {
-      if (!(e.metaKey || e.ctrlKey) || isTextInput(e.target)) return
-      const k = e.key.toLowerCase()
-      if (k === 'c') copySelected()
-      else if (k === 'v') pasteAtPlayhead()
-      else if (k === 'd') {
-        e.preventDefault()
-        if (selectedIds.length > 0) duplicateClips(selectedIds)
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => {
-      offCopy()
-      offPaste()
-      window.removeEventListener('keydown', onKey)
-    }
-  }, [copySelected, pasteAtPlayhead, selectedIds, duplicateClips])
+  const duplicateSelected = useCallback(() => {
+    if (selectedIds.length > 0) duplicateClips(selectedIds)
+  }, [selectedIds, duplicateClips])
 
   // A curve point only makes sense within the clip it belongs to.
   // Additive select (shift/cmd-click) toggles membership.
@@ -997,28 +938,6 @@ function App(): React.JSX.Element {
     }
   }, [tracks, markers, ports, duration, edits])
 
-  // Space toggles preview unless recording or typing in a field.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.code !== 'Space' || recording || isTextInput(e.target)) return
-      e.preventDefault()
-      togglePlay()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [togglePlay, recording])
-
-  // M adds a marker at the playhead.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key.toLowerCase() !== 'm' || e.metaKey || e.ctrlKey || e.altKey) return
-      if (isTextInput(e.target)) return
-      addMarker()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [addMarker])
-
   const alignAll = useCallback(() => {
     commit('Clips aligned with clock', (d) => {
       for (const t of d.tracks) {
@@ -1027,50 +946,33 @@ function App(): React.JSX.Element {
     })
   }, [commit])
 
-  // Delete selected curve point, else selected clip (not while typing in a field).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Delete' && e.key !== 'Backspace') return
-      if (isTextInput(e.target)) return
-      if (selectedPoints.length > 0) {
-        deleteSelectedPoints()
-        return
-      }
-      if (selectedIds.length === 0) return
-      commit(`${count(selectedIds.length, 'clip')} deleted`, (d) => {
-        for (const t of d.tracks) t.clips = t.clips.filter((c) => !selectedIds.includes(c.id))
-      })
-      setSelectedIds([])
+  // Delete selected curve points, else selected clips.
+  const deleteSelected = useCallback(() => {
+    if (selectedPoints.length > 0) {
+      deleteSelectedPoints()
+      return
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    if (selectedIds.length === 0) return
+    commit(`${count(selectedIds.length, 'clip')} deleted`, (d) => {
+      for (const t of d.tracks) t.clips = t.clips.filter((c) => !selectedIds.includes(c.id))
+    })
+    setSelectedIds([])
   }, [selectedIds, selectedPoints, deleteSelectedPoints, commit])
 
-  // Undo/redo arrives two ways: the Edit menu (real usage — its accelerator
-  // swallows the native Cmd+Z) and a keydown fallback (synthetic input, e.g.
-  // e2e, never reaches menu accelerators). Exactly one path fires per press.
-  useEffect(() => {
-    const offUndo = window.api.menu.on('undo', () => {
-      if (isTextInput(document.activeElement)) document.execCommand('undo')
-      else undo()
-    })
-    const offRedo = window.api.menu.on('redo', () => {
-      if (isTextInput(document.activeElement)) document.execCommand('redo')
-      else redo()
-    })
-    const onKey = (e: KeyboardEvent): void => {
-      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z' || isTextInput(e.target)) return
-      e.preventDefault()
-      if (e.shiftKey) redo()
-      else undo()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => {
-      offUndo()
-      offRedo()
-      window.removeEventListener('keydown', onKey)
-    }
-  }, [undo, redo])
+  useShortcuts({
+    openProject,
+    saveProject,
+    saveProjectAs,
+    copySelected,
+    pasteAtPlayhead,
+    duplicateSelected,
+    togglePlay,
+    addMarker,
+    deleteSelected,
+    undo,
+    redo,
+    recording: !!recording
+  })
 
   // The zoom floor drops below MIN_PX_PER_SEC when the timeline is too long
   // to fit the window at 2px/s, so zooming all the way out always shows it all.
