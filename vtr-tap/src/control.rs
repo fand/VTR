@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use serde_json::{Value, json};
-use vtr_core::jsonl_server::{self, Reply};
+use vtr_core::jsonl_server::{self, ControlError, ControlResult, Reply};
 
 use crate::tap::Handle;
 
@@ -40,7 +40,7 @@ pub fn serve(path: &Path, handle: Handle) -> Result<()> {
     )
 }
 
-fn wait_response(request: &Value, handle: &Handle) -> Value {
+fn wait_response(request: &Value, handle: &Handle) -> ControlResult {
     let log = handle.event_log();
     let (seq, events, reset) = match request.get("since").and_then(Value::as_u64) {
         Some(n) => {
@@ -50,51 +50,47 @@ fn wait_response(request: &Value, handle: &Handle) -> Value {
         // No cursor = baseline request: current seq + snapshot, no events.
         None => (log.newest(), Vec::new(), true),
     };
-    let mut resp = json!({"ok": true, "seq": seq, "events": events});
+    let mut resp = json!({"seq": seq, "events": events});
     if reset {
         // seq was read BEFORE this snapshot: an event landing in between is
         // > seq and gets delivered on the next wait; the snapshot may just
         // be newer than seq, which the editor's idempotent apply tolerates.
         // The reverse order would swallow transitions.
-        match handle.status() {
-            Ok(status) => {
-                resp["reset"] = json!(true);
-                resp["status"] = serde_json::to_value(status).unwrap_or(Value::Null);
-            }
-            Err(e) => return json!({"ok": false, "error": e}),
-        }
+        let status = handle.status()?;
+        resp["reset"] = json!(true);
+        resp["status"] = serde_json::to_value(status).unwrap_or(Value::Null);
     }
-    resp
+    Ok(resp)
 }
 
 /// Answer one request line without a socket, for tests.
 pub fn dispatch(line: &str, handle: &Handle) -> Value {
-    let request: Value = match serde_json::from_str(line) {
-        Ok(v) => v,
-        Err(e) => return json!({"ok": false, "error": format!("bad json: {e}")}),
-    };
-    jsonl_server::with_id(&request, dispatch_value(&request, handle))
+    match serde_json::from_str::<Value>(line) {
+        Ok(request) => {
+            let result = dispatch_value(&request, handle);
+            jsonl_server::response(&request, result)
+        }
+        // No id to echo: the request never parsed.
+        Err(e) => jsonl_server::response(&Value::Null, Err(ControlError::BadJson(e.to_string()))),
+    }
 }
 
-fn dispatch_value(request: &Value, handle: &Handle) -> Value {
+fn dispatch_value(request: &Value, handle: &Handle) -> ControlResult {
     match request["cmd"].as_str() {
-        Some("start") => match handle.start_clip(
-            request["dir"].as_str().map(Into::into),
-            request["tl"].as_f64(),
-            request["rate"].as_f64(),
-        ) {
-            Ok(path) => json!({"ok": true, "clip": path}),
-            Err(e) => json!({"ok": false, "error": e}),
-        },
-        Some("stop") => match handle.stop_clip() {
-            Ok(()) => json!({"ok": true}),
-            Err(e) => json!({"ok": false, "error": e}),
-        },
-        Some("status") => match handle.status() {
-            Ok(status) => json!({"ok": true, "status": status}),
-            Err(e) => json!({"ok": false, "error": e}),
-        },
-        Some("wait") => json!({"ok": false, "error": "wait not supported here"}),
-        _ => json!({"ok": false, "error": "unknown cmd"}),
+        Some("start") => {
+            let clip = handle.start_clip(
+                request["dir"].as_str().map(Into::into),
+                request["tl"].as_f64(),
+                request["rate"].as_f64(),
+            )?;
+            Ok(json!({ "clip": clip }))
+        }
+        Some("stop") => {
+            handle.stop_clip()?;
+            Ok(json!({}))
+        }
+        Some("status") => Ok(json!({"status": handle.status()?})),
+        Some("wait") => Err("wait not supported here".into()),
+        _ => Err(ControlError::UnknownCmd),
     }
 }

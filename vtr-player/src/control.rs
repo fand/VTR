@@ -32,7 +32,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use serde_json::{Map, Value, json};
-use vtr_core::jsonl_server::{self, Reply};
+use vtr_core::jsonl_server::{self, ControlError, ControlResult, Reply};
 
 use crate::pattern::TriggerPatterns;
 use crate::resolver::{DedupResolver, Mode, Resolver};
@@ -100,33 +100,39 @@ pub fn serve(path: &Path, ctx: Arc<Ctx>) -> Result<()> {
     )
 }
 
-fn dispatch(request: &Value, ctx: &Ctx, conn: &mut ConnState) -> Value {
+fn dispatch(request: &Value, ctx: &Ctx, conn: &mut ConnState) -> ControlResult {
     match request["cmd"].as_str() {
         Some("load") => load(request, ctx),
         Some("resolve") => resolve(request, ctx, conn),
         Some("play") => {
             ctx.transport.play(origin_of(request));
-            transport_reply(ctx)
+            Ok(transport_reply(ctx))
         }
         Some("stop") => {
             ctx.transport.stop(origin_of(request));
-            transport_reply(ctx)
+            Ok(transport_reply(ctx))
         }
         Some("seek") => {
-            let Some(t) = request["t"].as_f64().filter(|v| v.is_finite()) else {
-                return json!({"ok": false, "error": "missing t"});
-            };
+            let t = require_t(request)?;
             ctx.transport.request_seek(t, origin_of(request));
-            transport_reply(ctx)
+            Ok(transport_reply(ctx))
         }
-        Some("status") => status(ctx),
-        _ => json!({"ok": false, "error": "unknown cmd"}),
+        Some("status") => Ok(status(ctx)),
+        _ => Err(ControlError::UnknownCmd),
     }
+}
+
+/// The playhead a `seek`/`resolve` asks for; every caller rejects a missing
+/// or non-finite `t` the same way.
+fn require_t(request: &Value) -> Result<f64, ControlError> {
+    request["t"]
+        .as_f64()
+        .filter(|v| v.is_finite())
+        .ok_or(ControlError::Missing("t"))
 }
 
 fn transport_json(s: &crate::transport::TransportSnap) -> Value {
     json!({
-        "ok": true,
         "playing": s.playing,
         "playhead": s.t,
         "gen": s.generation,
@@ -140,9 +146,9 @@ fn transport_reply(ctx: &Ctx) -> Value {
 
 /// Long-poll the transport: block until `gen` moves (or a timeout), then
 /// reply with the current snapshot. A timeout replies with the same gen.
-fn watch(request: &Value, ctx: &Ctx) -> Value {
+fn watch(request: &Value, ctx: &Ctx) -> ControlResult {
     let since = request["gen"].as_u64().unwrap_or(0);
-    transport_json(&ctx.transport.watch(since, WATCH_TIMEOUT))
+    Ok(transport_json(&ctx.transport.watch(since, WATCH_TIMEOUT)))
 }
 
 fn parse_route_overrides(v: Option<&Value>) -> HashMap<u16, u16> {
@@ -161,7 +167,7 @@ fn parse_route_overrides(v: Option<&Value>) -> HashMap<u16, u16> {
     out
 }
 
-fn load(request: &Value, ctx: &Ctx) -> Value {
+fn load(request: &Value, ctx: &Ctx) -> ControlResult {
     let triggers: Vec<String> = request["triggers"]
         .as_array()
         .into_iter()
@@ -169,15 +175,14 @@ fn load(request: &Value, ctx: &Ctx) -> Value {
         .filter_map(|v| v.as_str().map(String::from))
         .collect();
     let (mut s, label) = if let Some(path) = request["path"].as_str() {
-        match session::load(Path::new(path)) {
-            Ok(s) => (s, path.to_string()),
-            Err(e) => return json!({"ok": false, "error": format!("load failed: {e}")}),
-        }
+        let s = session::load(Path::new(path))
+            .map_err(|e| ControlError::Failed(format!("load failed: {e}")))?;
+        (s, path.to_string())
     } else if let Some(events) = request["events"].as_array() {
         let label = request["name"].as_str().unwrap_or("(inline)").to_string();
         (session::from_values(events.clone()), label)
     } else {
-        return json!({"ok": false, "error": "missing path or events"});
+        return Err(ControlError::Missing("path or events"));
     };
     // Inline sessions have no session_end marker; let the caller state the
     // project duration instead of falling back to the last event's t.
@@ -192,7 +197,6 @@ fn load(request: &Value, ctx: &Ctx) -> Value {
         .map(|(src, dst)| (src.to_string(), json!(dst)))
         .collect();
     let reply = json!({
-        "ok": true,
         "duration": s.duration,
         "routes": routes_json,
         "events": s.len(),
@@ -217,24 +221,21 @@ fn load(request: &Value, ctx: &Ctx) -> Value {
     if request["keep"].as_bool() != Some(true) {
         ctx.transport.on_load(origin_of(request));
     }
-    reply
+    Ok(reply)
 }
 
-fn resolve(request: &Value, ctx: &Ctx, conn: &mut ConnState) -> Value {
+fn resolve(request: &Value, ctx: &Ctx, conn: &mut ConnState) -> ControlResult {
     // One transport snapshot for the whole reply: follow resolves at its
     // playhead, and gen/origin let the client suppress its own echo.
     let tr = ctx.transport.snapshot();
     let t = if request["follow"].as_bool() == Some(true) {
         tr.t
     } else {
-        let Some(t) = request["t"].as_f64().filter(|v| v.is_finite()) else {
-            return json!({"ok": false, "error": "missing t"});
-        };
-        t
+        require_t(request)?
     };
     let (epoch, loaded) = ctx.shared.snapshot();
     let Some(loaded) = loaded else {
-        return json!({"ok": false, "error": "no session loaded"});
+        return Err("no session loaded".into());
     };
     if conn.resolver.is_none() || conn.epoch != epoch {
         conn.epoch = epoch;
@@ -251,22 +252,20 @@ fn resolve(request: &Value, ctx: &Ctx, conn: &mut ConnState) -> Value {
         // encoder needs `types`.
         .map(|e| json!([e.port, e.addr, e.args]))
         .collect();
-    json!({
-        "ok": true,
+    Ok(json!({
         "mode": match mode { Mode::Pump => "pump", Mode::Seek => "seek" },
         "t": t,
         "playing": tr.playing,
         "gen": tr.generation,
         "origin": tr.origin,
         "events": events,
-    })
+    }))
 }
 
 fn status(ctx: &Ctx) -> Value {
     let (_, loaded) = ctx.shared.snapshot();
     let s = ctx.transport.snapshot();
     json!({
-        "ok": true,
         "status": {
             "loaded": loaded.map(|l| l.path.clone()),
             "playing": s.playing,

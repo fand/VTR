@@ -19,7 +19,10 @@ OSC↔JSON コーデックのラウンドトリップ（vtr-core/src/osc_json.rs
 Emit が types を運ぶ。conformance_osc_encode.rs）、
 unix socket JSONL 制御サーバの統一（vtr-core/src/jsonl_server.rs。
 長ポーリングは `Reply::Defer` で別スレッドに逃がす。player の head-of-line を解消し、
-editor の watch 専用接続を廃止）。
+editor の watch 専用接続を廃止）、`ControlError`（vtr-core/src/jsonl_server.rs。
+ハンドラは `ControlResult` を返し、`ok` / `error` / `id` の封筒は
+`jsonl_server::response` だけが組む。文言は `Display` に集約。
+`From<String>` でアクターハンドルの結果に `?` が使える）。
 
 ## 既知の問題（このブランチ以前から。2026-07-30 に確認）
 
@@ -30,10 +33,6 @@ curve-edit.spec.ts のノットドラッグ、curve.spec.ts のトランスフ�
 
 ## バックログ（調査で出たもの。未合意）
 
-- **ControlError enum（Rust）** — 現状エラーの書き方が3種類ある: 境界での anyhow、
-  tap のアクターハンドルを通る `Result<T, String>`、両方の制御レイヤーにある
-  自由形式の `json!({"ok":false,...})`。
-  （"writer thread gone" のリテラルは `Handle::ask` に集約済み。）
 - **Timeline/CurvePanel のピンチ + マーキー/ドラッグのジェスチャーフック** —
   uiScale の作業から先送りしたもの。ピンチのアンカー処理のタイミングは意図的に違う
   （Timeline は親でクランプ、CurvePanel はローカル）。pointercancel の扱いも意図的に違う
