@@ -1,53 +1,51 @@
 # TODO
 
-Refactor backlog. Branch: `refactor/cleanup` (based on `fix/curve-resolution-diff`).
-Done so far: dead code, write_line throttle, playhead key unification,
-curve golden fixture (+ serde_json float_roundtrip fix), vtr-core crate,
-ControlChannel/ChildSupervisor, CurvePanel decomposition, uiScale
-(zoomSlider + useElementSize), overlay transforms in shared/edits.ts,
-pick_latest_or_earliest (vtr-player/src/pick.rs; resolve_at +
-curve_group_args now share it, new conformance cases pin the clamp/ties),
-editor main split (register*Ipc + AppContext), dialog seam
-(dialogs.ts/nativeDialogs.ts), shared/jsonl.ts + session_lines.jsonl
-golden fixture, App.tsx decomposition (useShortcuts/useSelection/
-useProjectFile/useTransport/useTapStatus + components/, 1729→858 lines).
+リファクタのバックログ。ブランチ: `refactor/cleanup`（`fix/curve-resolution-diff` ベース）。
 
-## Known issue (pre-existing, found 2026-07-30)
+完了済み: デッドコード削除、write_line のスロットル、playhead キーの統一、
+curve のゴールデンフィクスチャ（+ serde_json float_roundtrip 修正）、vtr-core crate、
+ControlChannel/ChildSupervisor、CurvePanel の分解、uiScale
+（zoomSlider + useElementSize）、オーバーレイ変換を shared/edits.ts へ、
+pick_latest_or_earliest（vtr-player/src/pick.rs。resolve_at と curve_group_args が
+共有。clamp と tie を conformance ケースで固定）、
+editor main の分割（register*Ipc + AppContext）、ダイアログの seam
+（dialogs.ts / nativeDialogs.ts）、shared/jsonl.ts + session_lines.jsonl
+ゴールデンフィクスチャ、App.tsx の分解（useShortcuts / useSelection /
+useProjectFile / useTransport / useTapStatus + components/、1729→858行）。
 
-5 curve e2e specs fail on `main` too (pixel-interaction tests:
-curve-edit.spec.ts knot drag, curve.spec.ts transform box / snap /
-pencil / marquee — all `toHaveCount` misses). Not caused by this branch;
-needs its own investigation.
+## 既知の問題（このブランチ以前から。2026-07-30 に確認）
 
-## Backlog (from the survey, not yet agreed)
+curve 系の e2e 5本が `main` でも落ちる（ピクセル操作系:
+curve-edit.spec.ts のノットドラッグ、curve.spec.ts のトランスフォームボックス /
+スナップ / ペンシル / マーキー。いずれも `toHaveCount` の不一致）。
+このブランチが原因ではない。別途調査が必要。
 
-- **OSC↔JSON codec doesn't round-trip** — tap records `Color` as
-  `('r', "#rrggbbaa")`, `Inf` as `('I', "<impulse>")`, >2^53 `Long` as a
-  decimal string (`vtr-tap/src/tap.rs` `arg_to_json_tagged`); the player's
-  `to_osc_args` (`transport.rs:378-402`) re-emits them all as strings and
-  never reads the `types` tag. Fix: `osc_json` module in vtr-core owning
-  both directions + a round-trip property test. NOTE: changes replayed
-  wire bytes for those tag types — confirm it's a fix, not a spec change.
-- **Unify the Rust unix-socket JSONL control servers** — tap answers
-  long-poll `wait` off-thread; player's `watch` blocks the whole
-  connection ~1s (head-of-line). Shared `jsonl_server::serve(path,
-  handler)` in vtr-core (stale-socket removal, id echo, bad-json reply,
-  off-thread reply affordance). Confirm the editor's player client
-  tolerates out-of-order replies before switching (the tap client does).
-- **Split vtr-tap/src/tap.rs (~1500 lines)** — hoist the 3 inline thread
-  bodies out of `Tap::start` (`recv_loop`/`control_loop` next to the
-  existing `writer_loop`); optional module split (beacon/eventlog/notify/
-  jsonl/writer).
-- **ControlError enum (Rust)** — three error styles today: anyhow at the
-  boundaries, `Result<T, String>` through the tap actor handle (5x
-  "writer thread gone" literals), free-form `json!({"ok":false,...})` in
-  both control layers.
-- **Timeline/CurvePanel pinch + marquee/drag-gesture hooks** — deferred
-  from the uiScale step. The pinch anchor timing differs on purpose
-  (Timeline clamps in the parent, CurvePanel locally); pointercancel
-  semantics differ on purpose (Timeline aborts, CurvePanel commits).
-  Only worth it with a design that keeps those differences explicit.
-- **grid/tick step logic** — CurvePanel's GRID_STEPS/gridStep (now in
-  curveModel.ts) vs Timeline's RULER_STEPS/rulerStep, both hardcoding the
-  same 90px label width; could live beside formatRulerLabel in
-  timeline/model.ts.
+## バックログ（調査で出たもの。未合意）
+
+- **OSC↔JSON コーデックがラウンドトリップしない** — tap は `Color` を
+  `('r', "#rrggbbaa")`、`Inf` を `('I', "<impulse>")`、2^53 を超える `Long` を
+  10進文字列で記録する（`vtr-tap/src/tap.rs` の `arg_to_json_tagged`）。一方
+  player の `to_osc_args`（`transport.rs:378-402`）はこれらを全部文字列のまま
+  再送出し、`types` タグを一度も読まない。対応: vtr-core に両方向を所有する
+  `osc_json` モジュール + ラウンドトリップの property test。
+  注意: 該当タグの再生バイト列が変わる。修正なのか仕様変更なのかを先に確認すること。
+- **Rust の unix socket JSONL 制御サーバを統一** — tap はロングポーリングの
+  `wait` を別スレッドで返すが、player の `watch` は接続全体を約1秒ブロックする
+  （head-of-line）。vtr-core に共有の `jsonl_server::serve(path, handler)` を置く
+  （stale socket の削除、id のエコー、不正 JSON への応答、別スレッド応答の仕組み）。
+  切り替える前に、editor の player クライアントが順不同の応答を許容するか確認する
+  （tap クライアントは許容する）。
+- **vtr-tap/src/tap.rs の分割（約1500行）** — `Tap::start` の中にインラインで書かれた
+  3つのスレッド本体を外に出す（既存の `writer_loop` の隣に `recv_loop` /
+  `control_loop`）。さらにモジュール分割（beacon/eventlog/notify/jsonl/writer）も可。
+- **ControlError enum（Rust）** — 現状エラーの書き方が3種類ある: 境界での anyhow、
+  tap のアクターハンドルを通る `Result<T, String>`（"writer thread gone" のリテラルが5箇所）、
+  両方の制御レイヤーにある自由形式の `json!({"ok":false,...})`。
+- **Timeline/CurvePanel のピンチ + マーキー/ドラッグのジェスチャーフック** —
+  uiScale の作業から先送りしたもの。ピンチのアンカー処理のタイミングは意図的に違う
+  （Timeline は親でクランプ、CurvePanel はローカル）。pointercancel の扱いも意図的に違う
+  （Timeline は中断、CurvePanel はコミット）。この違いを明示できる設計になって初めて着手する価値がある。
+- **グリッド/目盛りのステップ計算** — CurvePanel の GRID_STEPS/gridStep（今は
+  curveModel.ts）と Timeline の RULER_STEPS/rulerStep。どちらも同じ 90px の
+  ラベル幅をハードコードしている。timeline/model.ts の formatRulerLabel の隣に
+  置けるはず。
