@@ -158,3 +158,44 @@ export function formatRulerLabel(s: number, step: number): string {
   const tc = formatTimecode(s)
   return step >= 1 ? tc.slice(0, 8) : tc
 }
+
+/**
+ * Smallest step from `steps` (ascending) that keeps ticks at least minPx
+ * apart across `range` drawn over `pixels`; the coarsest step if none does.
+ * Backs both rulers and the curve panel's grid.
+ */
+export function pickStep(
+  steps: readonly number[],
+  range: number,
+  pixels: number,
+  minPx: number
+): number {
+  for (const s of steps) {
+    if ((s / range) * pixels >= minPx) return s
+  }
+  return steps[steps.length - 1]
+}
+
+/** Min px between time ticks; fits a `formatRulerLabel` HH:MM:SS.mmm label. */
+export const TIME_TICK_MIN_PX = 90
+
+const RULER_STEPS = [0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300]
+
+/** Timeline ruler tick interval, in seconds. */
+export function rulerStep(pxPerSec: number): number {
+  return pickStep(RULER_STEPS, 1, pxPerSec, TIME_TICK_MIN_PX)
+}
+
+/** Curve-panel grid intervals; finer than the ruler's, since it zooms deeper
+ *  and the same ladder also scales the value axis. */
+const GRID_STEPS = [0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 30, 60, 120]
+
+/** Curve-panel grid interval, for either axis (`minPx` sets which). */
+export function gridStep(range: number, pixels: number, minPx: number): number {
+  return pickStep(GRID_STEPS, range, pixels, minPx)
+}
+
+/** Decimal places needed to print multiples of step exactly. */
+export function stepDecimals(step: number): number {
+  return Math.max(0, -Math.floor(Math.log10(step)))
+}

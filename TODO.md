@@ -13,7 +13,8 @@ editor main の分割（register*Ipc + AppContext）、ダイアログの seam
 ゴールデンフィクスチャ、App.tsx の分解（useShortcuts / useSelection /
 useProjectFile / useTransport / useTapStatus + components/、1729→858行）、
 vtr-tap/src/tap.rs の分割（tap/ 以下に beacon / notify / eventlog / jsonl /
-recv / ctl / writer。1455行 → mod.rs 147行）。
+recv / ctl / writer。1455行 → mod.rs 147行）、グリッド/目盛りのステップ計算の統合
+（timeline/model.ts の pickStep + TIME_TICK_MIN_PX）。
 
 ## 既知の問題（このブランチ以前から。2026-07-30 に確認）
 
@@ -45,7 +46,3 @@ curve-edit.spec.ts のノットドラッグ、curve.spec.ts のトランスフ�
   uiScale の作業から先送りしたもの。ピンチのアンカー処理のタイミングは意図的に違う
   （Timeline は親でクランプ、CurvePanel はローカル）。pointercancel の扱いも意図的に違う
   （Timeline は中断、CurvePanel はコミット）。この違いを明示できる設計になって初めて着手する価値がある。
-- **グリッド/目盛りのステップ計算** — CurvePanel の GRID_STEPS/gridStep（今は
-  curveModel.ts）と Timeline の RULER_STEPS/rulerStep。どちらも同じ 90px の
-  ラベル幅をハードコードしている。timeline/model.ts の formatRulerLabel の隣に
-  置けるはず。

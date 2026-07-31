@@ -1,19 +1,23 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Magnet, Maximize2, Pencil, Spline, SquareDashed } from 'lucide-react'
 import type { ClipCurve, ClipEdits, OscEvent } from '../../../shared/types'
-import { ClipInst, clipLen, formatRulerLabel } from '../timeline/model'
+import {
+  ClipInst,
+  clipLen,
+  formatRulerLabel,
+  gridStep,
+  stepDecimals,
+  TIME_TICK_MIN_PX
+} from '../timeline/model'
 import { MIN_FIT_POINTS, buildCurveReplace } from './curveReplace'
 import { PAD, fitZoomX, tAt, xAt, yAt, type Scale } from './curveGeom'
 import {
-  TIME_GRID_MIN_PX,
   buildProperties,
   fmt,
   forEachEl,
-  gridStep,
   MAX_ZOOM,
   ptSel,
   selKey,
-  stepDecimals,
   type CurvePoint,
   type PointAdd,
   type PointPatch,
@@ -268,7 +272,7 @@ export function CurvePanel({
   // Snap on: dragged times/values lock onto the same grid the editor draws.
   const snapTime = (t: number): number => {
     if (!snap) return t
-    const step = gridStep(tRange, innerW - 2 * PAD, TIME_GRID_MIN_PX)
+    const step = gridStep(tRange, innerW - 2 * PAD, TIME_TICK_MIN_PX)
     return Math.round(t / step) * step
   }
   const snapValue = (v: number, min: number, max: number): number => {
@@ -389,7 +393,7 @@ export function CurvePanel({
   const renderGrid = (): React.JSX.Element | null => {
     if (clips.length === 0) return null
     const lines: React.JSX.Element[] = []
-    const tStep = gridStep(tRange, innerW - 2 * PAD, TIME_GRID_MIN_PX)
+    const tStep = gridStep(tRange, innerW - 2 * PAD, TIME_TICK_MIN_PX)
     for (let i = Math.ceil(tMin / tStep - 1e-6); i * tStep <= tMax + 1e-6; i++) {
       const px = x(i * tStep)
       lines.push(
@@ -410,7 +414,7 @@ export function CurvePanel({
   // or drag seeks, clamped to the shown clips' span. Reads scrollLeft from
   // the DOM so a scrub mid-scroll never uses a stale offset.
   const rulerMarks = (): React.JSX.Element[] => {
-    const tStep = gridStep(tRange, innerW - 2 * PAD, TIME_GRID_MIN_PX)
+    const tStep = gridStep(tRange, innerW - 2 * PAD, TIME_TICK_MIN_PX)
     const out: React.JSX.Element[] = []
     for (let i = Math.ceil(tMin / tStep - 1e-6); i * tStep <= tMax + 1e-6; i++) {
       const t = i * tStep

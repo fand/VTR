@@ -16,25 +16,6 @@ export function propColor(i: number): string {
   return `hsl(${hue.toFixed(1)}, 75%, ${light}%)`
 }
 
-/** Candidate grid intervals; 0.1 for values, 1s for time at typical scales. */
-const GRID_STEPS = [0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 30, 60, 120]
-
-/** Min px between time grid lines; fits a HH:MM:SS.mmm label. */
-export const TIME_GRID_MIN_PX = 90
-
-/** Smallest step that keeps grid lines at least minPx apart. */
-export function gridStep(range: number, pixels: number, minPx: number): number {
-  for (const s of GRID_STEPS) {
-    if ((s / range) * pixels >= minPx) return s
-  }
-  return GRID_STEPS[GRID_STEPS.length - 1]
-}
-
-/** Decimal places needed to print multiples of step exactly. */
-export function stepDecimals(step: number): number {
-  return Math.max(0, -Math.floor(Math.log10(step)))
-}
-
 /** Short number for the hover tooltip: ≤3 decimals, no trailing zeros. */
 export function fmt(n: number): string {
   return String(Number(n.toFixed(3)))

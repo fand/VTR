@@ -8,7 +8,8 @@ import {
   clipLen,
   contentEnd,
   formatRulerLabel,
-  recordingWarning
+  recordingWarning,
+  rulerStep
 } from '../timeline/model'
 import { useElementSize, zoomSlider } from './uiScale'
 
@@ -32,7 +33,6 @@ const RULER_H = 22
 export const MIN_PX_PER_SEC = 2
 export const MAX_PX_PER_SEC = 400
 const TRIM_HANDLE_PX = 8
-const RULER_STEPS = [0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300]
 
 type DragMode = 'move' | 'trim-in' | 'trim-out'
 
@@ -196,13 +196,6 @@ function PlayheadLine({
       <div className="playhead-head" />
     </div>
   )
-}
-
-function rulerStep(pxPerSec: number): number {
-  for (const s of RULER_STEPS) {
-    if (s * pxPerSec >= 90) return s
-  }
-  return RULER_STEPS[RULER_STEPS.length - 1]
 }
 
 export function Timeline({
