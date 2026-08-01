@@ -1,19 +1,18 @@
-import {
-  appendFileSync,
-  copyFileSync,
-  existsSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync
-} from 'fs'
+import { appendFileSync, copyFileSync, existsSync, readFileSync, rmSync } from 'fs'
 import { join } from 'path'
 import { UNDO_CAP, type UndoEntry } from '../shared/types'
+import { writeAtomic } from './atomic'
 
 const UNDO_FILE = 'undo.jsonl'
 
 /** Line counts per log path, so append doesn't re-read the file. */
 const counts = new Map<string, number>()
+
+/** savedSeq of the last compaction attempt that dropped nothing. Only the
+ *  saved prefix (seq <= savedSeq) may compact, and it only grows when a
+ *  save moves savedSeq — retrying before then would re-read and re-parse
+ *  the whole log on every edit of a long unsaved session for nothing. */
+const compactStale = new Map<string, number>()
 
 function logPath(dir: string): string {
   return join(dir, UNDO_FILE)
@@ -38,8 +37,7 @@ export function loadUndoLog(dir: string): UndoEntry[] {
 
 function rewrite(dir: string, entries: UndoEntry[]): void {
   const path = logPath(dir)
-  writeFileSync(path + '.tmp', entries.map((e) => JSON.stringify(e)).join('\n') + '\n')
-  renameSync(path + '.tmp', path)
+  writeAtomic(path, entries.map((e) => JSON.stringify(e)).join('\n') + '\n')
   counts.set(path, entries.length)
 }
 
@@ -51,12 +49,13 @@ export function appendUndo(dir: string, entry: UndoEntry, savedSeq: number): voi
   // Compact once the file holds twice what anyone can undo through. Only
   // saved-doc history (seq <= savedSeq) may go: everything past savedSeq is
   // boot's redo/crash-recovery tail and must stay contiguous from savedSeq.
-  if (count > 2 * UNDO_CAP) {
+  if (count > 2 * UNDO_CAP && compactStale.get(path) !== savedSeq) {
     const entries = loadUndoLog(dir)
     const saved = entries.filter((e) => e.seq <= savedSeq)
     const tail = entries.filter((e) => e.seq > savedSeq)
     const kept = [...saved.slice(-UNDO_CAP), ...tail]
     if (kept.length < entries.length) rewrite(dir, kept)
+    else compactStale.set(path, savedSeq)
   }
 }
 
@@ -72,6 +71,7 @@ export function truncateUndoAfter(dir: string, seq: number): void {
 export function clearUndoLog(dir: string): void {
   rmSync(logPath(dir), { force: true })
   counts.delete(logPath(dir))
+  compactStale.delete(logPath(dir))
 }
 
 /**
@@ -82,5 +82,6 @@ export function transferUndoLog(fromDir: string, toDir: string, move: boolean): 
   if (fromDir === toDir || !existsSync(logPath(fromDir))) return
   copyFileSync(logPath(fromDir), logPath(toDir))
   counts.delete(logPath(toDir))
+  compactStale.delete(logPath(toDir))
   if (move) clearUndoLog(fromDir)
 }

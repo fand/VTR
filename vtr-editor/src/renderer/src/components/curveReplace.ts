@@ -54,6 +54,9 @@ export function buildCurveReplace(inputs: ReplaceInput[]): CurveReplace | null {
     list.sort((a, b) => a.ev.t - b.ev.t)
     const argCount = Math.max(...list.map((i) => i.ev.args.length))
     const fittedArgs = new Set<number>()
+    // The template whose non-curve args the player replays (its first
+    // member's, i.e. the lowest fitted arg's).
+    let groupTpl: OscEvent | null = null
     for (let arg = 0; arg < argCount; arg++) {
       const carriers = list.filter((i) => typeof i.ev.args[arg] === 'number')
       const points = carriers.map((i) => ({ t: i.ev.t, v: i.ev.args[arg] as number }))
@@ -63,6 +66,7 @@ export function buildCurveReplace(inputs: ReplaceInput[]): CurveReplace | null {
       // Template from an event that actually has this arg: the earliest
       // one's args can be shorter than `arg` when arg counts vary.
       const tpl = carriers[0].ev
+      groupTpl ??= tpl
       adds.push({
         file: list[0].file,
         curve: {
@@ -76,11 +80,14 @@ export function buildCurveReplace(inputs: ReplaceInput[]): CurveReplace | null {
       })
       fittedArgs.add(arg)
     }
-    // Delete only events whose every numeric arg is carried by a curve;
-    // a lone extra arg (too few points to fit) keeps its event visible
-    // instead of silently dropping the value.
+    // Delete only events whose every numeric arg is carried by a curve and
+    // whose non-numeric args match the template the curve will replay; a
+    // lone extra arg (too few points to fit) or a differing string keeps
+    // its event visible instead of silently rewriting the value.
     for (const i of list) {
-      const covered = i.ev.args.every((a, ai) => typeof a !== 'number' || fittedArgs.has(ai))
+      const covered = i.ev.args.every((a, ai) =>
+        typeof a === 'number' ? fittedArgs.has(ai) : a === groupTpl?.args[ai]
+      )
       if (covered && fittedArgs.size > 0) fitted.add(`${i.file}:${i.eventIndex}`)
     }
   }

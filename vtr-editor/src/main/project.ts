@@ -1,18 +1,8 @@
-import {
-  closeSync,
-  copyFileSync,
-  existsSync,
-  fsyncSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeSync
-} from 'fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'fs'
 import { basename, dirname, join } from 'path'
 import { editsEmpty } from '../shared/edits'
 import type { ClipEdits, LoadedProject, PortConfig, ProjectFile } from '../shared/types'
+import { writeAtomic } from './atomic'
 import { clipSummary } from './clips'
 import { isSafeClipFile } from './paths'
 
@@ -46,23 +36,6 @@ export function resolveClipPath(projectDir: string, stagingDir: string, file: st
 /** Sidecar path for a clip's edit overlay: next to the clip file. */
 function editsPath(clipPath: string): string {
   return `${clipPath}.edits.json`
-}
-
-let tmpSeq = 0
-
-function writeAtomic(path: string, content: string): void {
-  // Unique tmp name: a fixed suffix would let two instances clobber each
-  // other's in-flight write. fsync before rename so a crash never publishes
-  // an empty or truncated file.
-  const tmp = `${path}.${process.pid}.${tmpSeq++}.tmp`
-  const fd = openSync(tmp, 'w')
-  try {
-    writeSync(fd, content)
-    fsyncSync(fd)
-  } finally {
-    closeSync(fd)
-  }
-  renameSync(tmp, path)
 }
 
 /** Light read of just the ports, for starting vtr-tap before the renderer is up. */

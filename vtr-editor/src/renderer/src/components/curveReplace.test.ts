@@ -41,6 +41,20 @@ describe('buildCurveReplace', () => {
     expect(out.dels).toHaveLength(20)
   })
 
+  it('keeps events whose string args differ from the replayed template', () => {
+    // The curve replays "a" (the template's string) for every sample, so
+    // deleting the "b"/"c" events would silently rewrite their values.
+    const inputs = Array.from({ length: 10 }, (_, i) => {
+      const t = i / 9
+      return input('a.jsonl', i, { a: '/mix', t, args: ['abc'[i % 3], t], types: 'sf' })
+    })
+    const out = buildCurveReplace(inputs)!
+    expect(out.adds).toHaveLength(1)
+    expect(out.adds[0].curve.args[0]).toBe('a')
+    // Only the events matching the template ("a" at indices 0, 3, 6, 9) go.
+    expect(out.dels.map((d) => d.eventIndex)).toEqual([0, 3, 6, 9])
+  })
+
   it('skips non-numeric args and keeps the template intact', () => {
     const inputs = Array.from({ length: 10 }, (_, i) => {
       const t = i / 9

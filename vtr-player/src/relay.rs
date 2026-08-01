@@ -8,6 +8,7 @@
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::Arc;
 use std::thread;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use rosc::{OscMessage, OscPacket, OscType};
@@ -17,6 +18,37 @@ use crate::state::SharedState;
 use crate::transport::Transport;
 
 const MAX_DATAGRAM: usize = 65_507;
+
+/// Logs at most once per second; counts what it swallowed in between.
+/// Anything reaching the relay port can repeat at packet rate.
+struct RateLimitedLog {
+    last: Option<Instant>,
+    suppressed: u64,
+}
+
+impl RateLimitedLog {
+    fn new() -> Self {
+        Self {
+            last: None,
+            suppressed: 0,
+        }
+    }
+
+    fn log(&mut self, msg: &str) {
+        let now = Instant::now();
+        if self.last.is_none_or(|l| (now - l).as_secs_f64() >= 1.0) {
+            if self.suppressed > 0 {
+                eprintln!("vtr-player: {msg} ({} similar suppressed)", self.suppressed);
+            } else {
+                eprintln!("vtr-player: {msg}");
+            }
+            self.suppressed = 0;
+            self.last = Some(now);
+        } else {
+            self.suppressed += 1;
+        }
+    }
+}
 
 fn parse_frame(buf: &[u8]) -> Option<(SocketAddr, &[u8])> {
     let nl = buf.iter().position(|&b| b == b'\n')?;
@@ -54,12 +86,21 @@ pub fn spawn(
 ) -> Result<()> {
     thread::Builder::new().name("relay".into()).spawn(move || {
         let mut buf = [0u8; MAX_DATAGRAM];
+        let mut recv_log = RateLimitedLog::new();
+        let mut frame_log = RateLimitedLog::new();
         loop {
-            let Ok(n) = sock.recv(&mut buf) else {
-                continue;
+            let n = match sock.recv(&mut buf) {
+                Ok(n) => n,
+                Err(e) => {
+                    // A persistent socket error would otherwise spin this
+                    // thread silently at 100% CPU for the rest of the show.
+                    recv_log.log(&format!("warn: relay recv failed: {e}"));
+                    thread::sleep(Duration::from_millis(10));
+                    continue;
+                }
             };
             let Some((origin, payload)) = parse_frame(&buf[..n]) else {
-                eprintln!("vtr-player: warn: bad relay frame ({n} bytes) dropped");
+                frame_log.log(&format!("warn: bad relay frame ({n} bytes) dropped"));
                 continue;
             };
             let Ok((_, packet)) = rosc::decoder::decode_udp(payload) else {

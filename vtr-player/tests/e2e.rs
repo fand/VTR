@@ -427,6 +427,43 @@ fn mirror_is_silent_while_recording() {
 }
 
 #[test]
+fn mirror_waits_for_the_tap_baseline() {
+    let tmp = tempfile::tempdir().unwrap();
+    let tap_sock = tmp.path().join("vtr-tap.sock");
+    // Tap not up yet: rec state is unknown — a recording could already be
+    // running, so the mirror must stay silent until the baseline arrives.
+    let h = start_player(tmp.path(), Some(tap_sock.clone()));
+    let path = write_session(
+        tmp.path(),
+        h.app_port,
+        &[ev(1.0, "/fader", &[0.75]), ev(2.5, "/fader", &[0.25])],
+    );
+    let mut c = h.connect();
+    assert_eq!(c.request(json!({"cmd": "load", "path": path}))["ok"], true);
+    h.relay("127.0.0.1:9001", "/vtr/origin", vec![]);
+    // Greeting carries /vtr/echo only: there is no rec baseline to send.
+    let (addr, _) = h.recv_controller();
+    assert_eq!(addr, "/vtr/echo");
+    assert_eq!(c.request(json!({"cmd": "seek", "t": 2.0}))["ok"], true);
+    // The app still gets the values; the controller does not.
+    assert_eq!(h.recv_app().0, "/fader");
+    h.controller
+        .set_read_timeout(Some(Duration::from_millis(200)))
+        .unwrap();
+    let mut buf = [0u8; 1024];
+    assert!(h.controller.recv(&mut buf).is_err(), "mirrored before baseline");
+
+    // The tap comes up and reports recording=false: the mirror opens.
+    let _tap = fake_tap(&tap_sock);
+    h.controller
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    assert_eq!(float_of(&h.recv_controller_msg("/vtr/rec")), 0.0);
+    assert_eq!(c.request(json!({"cmd": "seek", "t": 3.0}))["ok"], true);
+    assert_eq!(float_of(&h.recv_controller_msg("/fader")), 0.25);
+}
+
+#[test]
 fn vtr_echo_toggles_the_mirror_and_confirms_to_targets() {
     let tmp = tempfile::tempdir().unwrap();
     let h = start_player(tmp.path(), None);

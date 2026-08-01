@@ -371,7 +371,10 @@ fn drain_mirror(pending: &mut Pending) -> Vec<OscMessage> {
 
 /// JSON args back to OSC. The columnar model does not keep f32-vs-f64
 /// apart post-resolve, so numbers encode as Float (the dominant recorded
-/// tag) or Int/Long.
+/// tag) or Int/Long — except values Float can't round-trip, which keep
+/// their d-tagged precision as Double (long timestamps, fine positions):
+/// the resolve-over-socket path replays them at full precision, and push
+/// playback must not disagree with it.
 fn to_osc_args(args: &[Value]) -> Vec<OscType> {
     args.iter()
         .map(|v| match v {
@@ -382,7 +385,14 @@ fn to_osc_args(args: &[Value]) -> Vec<OscType> {
                     Err(_) => OscType::Long(i),
                 }
             }
-            Value::Number(n) => OscType::Float(n.as_f64().unwrap_or(0.0) as f32),
+            Value::Number(n) => {
+                let f = n.as_f64().unwrap_or(0.0);
+                if (f as f32) as f64 == f {
+                    OscType::Float(f as f32)
+                } else {
+                    OscType::Double(f)
+                }
+            }
             Value::String(s) => OscType::String(s.clone()),
             Value::Bool(b) => OscType::Bool(*b),
             Value::Null => OscType::Nil,
@@ -394,6 +404,19 @@ fn to_osc_args(args: &[Value]) -> Vec<OscType> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn to_osc_args_keeps_double_precision() {
+        let args = vec![
+            serde_json::json!(0.5),                  // f32-exact: stays Float
+            serde_json::json!(1_753_776_000.123_45), // needs f64: Double
+            serde_json::json!(7),
+        ];
+        let out = to_osc_args(&args);
+        assert_eq!(out[0], OscType::Float(0.5));
+        assert_eq!(out[1], OscType::Double(1_753_776_000.123_45));
+        assert_eq!(out[2], OscType::Int(7));
+    }
 
     #[test]
     fn accepts_arbitration() {

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Magnet, Maximize2, Pencil, Spline, SquareDashed } from 'lucide-react'
-import { clipCurve } from '../../../shared/curve'
+import { clipCurve, unshadowedPoints } from '../../../shared/curve'
 import { applyEditsIndexed } from '../../../shared/edits'
 import type { ClipCurve, ClipEdits, CurveKnot, OscEvent } from '../../../shared/types'
 import { ClipInst, clipLen, formatRulerLabel } from '../timeline/model'
@@ -220,8 +220,15 @@ function buildProperties(
         }
       }
     }
+    // Points inside a span never play (the curve outranks them for good —
+    // unshadowedPoints), so the merged path skips them; the dots still draw
+    // from `points` so they stay visible and editable.
+    const spans = curves.map((pc) => ({
+      start: pc.knots[0].t,
+      end: pc.knots[pc.knots.length - 1].t
+    }))
     const els: GeomEl[] = [
-      ...points.map((pt) => ({ t: pt.t, v: pt.v })),
+      ...unshadowedPoints(points, spans).map((pt) => ({ t: pt.t, v: pt.v })),
       ...curves.map((pc, ci) => ({ t: pc.knots[0].t, knots: pc.knots, curve: ci }))
     ].sort((a, b) => a.t - b.t)
     return { key, label, color: propColor(i), points, curves, els, min, max }
@@ -418,6 +425,14 @@ export function CurvePanel({
   // Normalized time position under the cursor at pinch start; scroll is
   // restored after the zoomed width renders so that point stays put.
   const pinchAnchor = useRef<{ norm: number; viewX: number } | null>(null)
+  // zoomX for the wheel handler (subscribed once): lets it detect a clamped
+  // pinch, which must not arm the anchor — no render would consume it, and
+  // the layout effect (also keyed on `w`) would apply it minutes later on a
+  // zoom button press or window resize, jumping the scroll.
+  const zoomXRef = useRef(zoomX)
+  useLayoutEffect(() => {
+    zoomXRef.current = zoomX
+  }, [zoomX])
   // scrollLeft to apply after a fit-zoom re-render, same timing as the pinch.
   const fitScroll = useRef<number | null>(null)
 
@@ -428,6 +443,9 @@ export function CurvePanel({
       const scroll = scrollRef.current
       if (!e.ctrlKey || !scroll) return
       e.preventDefault()
+      const next = Math.min(Math.max(zoomXRef.current * Math.exp(-e.deltaY * 0.01), 1), MAX_ZOOM)
+      if (next === zoomXRef.current) return // clamped: nothing will re-render
+      zoomXRef.current = next
       // Anchor from the DOM, not React state: pinch events outrun re-renders,
       // and scrollLeft/scrollWidth are always consistent with each other.
       const viewX = e.clientX - el.getBoundingClientRect().left
@@ -435,7 +453,7 @@ export function CurvePanel({
         norm: (scroll.scrollLeft + viewX - PAD) / Math.max(scroll.scrollWidth - 2 * PAD, 1),
         viewX
       }
-      setZoomX((z) => Math.min(Math.max(z * Math.exp(-e.deltaY * 0.01), 1), MAX_ZOOM))
+      setZoomX(next)
     }
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
@@ -848,14 +866,21 @@ export function CurvePanel({
     d.moved = true
     const b = d.box0
     // Edges scale toward the opposite (anchored) edge; zero extent is a noop.
+    // The time scale clamps at zero width: dragging past the anchor would
+    // reverse knot order, which applyKnotMoves resolves by piling the knots
+    // at the anchor (its order invariant), not mirroring — destructive.
+    // Value flips stay allowed; values carry no order invariant.
     const map = (px: number, py: number): { nx: number; ny: number } => {
       switch (d.mode) {
         case 'move':
           return { nx: px + dx, ny: py + dy }
         case 'left':
-          return { nx: b.w > 0 ? b.x + b.w - ((b.x + b.w - px) * (b.w - dx)) / b.w : px, ny: py }
+          return {
+            nx: b.w > 0 ? b.x + b.w - ((b.x + b.w - px) * Math.max(b.w - dx, 0)) / b.w : px,
+            ny: py
+          }
         case 'right':
-          return { nx: b.w > 0 ? b.x + ((px - b.x) * (b.w + dx)) / b.w : px, ny: py }
+          return { nx: b.w > 0 ? b.x + ((px - b.x) * Math.max(b.w + dx, 0)) / b.w : px, ny: py }
         case 'top':
           return { nx: px, ny: b.h > 0 ? b.y + b.h - ((b.y + b.h - py) * (b.h - dy)) / b.h : py }
         case 'bottom':

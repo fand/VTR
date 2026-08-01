@@ -19,6 +19,7 @@ use std::io::{BufRead, BufReader, Write as _};
 use std::net::{IpAddr, UdpSocket};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -42,6 +43,9 @@ struct Inner {
     pinned: Option<IpAddr>,
     /// None until the tap reported a baseline.
     rec: Mutex<Option<bool>>,
+    /// A tap client was spawned: rec state is knowable, so `None` means
+    /// "not yet known", not "not recording".
+    follows_tap: AtomicBool,
     /// Playback-value mirroring, toggled by `/vtr/echo`. On by default;
     /// player-local, so a restart turns it back on.
     mirror_on: Mutex<bool>,
@@ -62,6 +66,7 @@ impl Echo {
                 origins: Mutex::new(HashMap::new()),
                 pinned,
                 rec: Mutex::new(None),
+                follows_tap: AtomicBool::new(false),
                 mirror_on: Mutex::new(true),
                 sock,
                 echo_port,
@@ -131,8 +136,14 @@ impl Echo {
         if !*self.inner.mirror_on.lock().unwrap() {
             return;
         }
-        if *self.inner.rec.lock().unwrap() == Some(true) {
-            return;
+        // With a tap client, `None` means the baseline hasn't arrived yet
+        // (startup, or the tap socket is down): a recording could already be
+        // running, so unknown suppresses too. Standalone (no --tap-control)
+        // rec stays None forever and the mirror stays open.
+        match *self.inner.rec.lock().unwrap() {
+            Some(true) => return,
+            None if self.inner.follows_tap.load(Ordering::Relaxed) => return,
+            _ => {}
         }
         let live = self.live();
         if live.is_empty() {
@@ -183,6 +194,7 @@ impl Echo {
     /// baseline status snapshot seeds the rec state without waiting for a
     /// change.
     pub fn spawn_tap_client(&self, path: PathBuf) -> Result<()> {
+        self.inner.follows_tap.store(true, Ordering::Relaxed);
         let echo = self.clone();
         thread::Builder::new()
             .name("tap-client".into())

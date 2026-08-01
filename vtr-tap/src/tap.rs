@@ -617,6 +617,8 @@ impl Tap {
                 last_clip: None,
                 write_error: None,
                 write_errors: 0,
+                parse_log: RateLimitedLog::new(),
+                arg_log: RateLimitedLog::new(),
             };
             thread::Builder::new()
                 .name("writer".into())
@@ -664,6 +666,10 @@ struct Writer {
     /// must show up in status, not only on stderr.
     write_error: Option<String>,
     write_errors: u64,
+    /// Per-packet error paths, throttled: stderr is a pipe to the editor
+    /// and writes serialize across threads.
+    parse_log: RateLimitedLog,
+    arg_log: RateLimitedLog,
 }
 
 impl Writer {
@@ -690,11 +696,15 @@ impl Writer {
                     self.rec = Some(rec);
                     return;
                 };
-                let Ok((_, packet)) = rosc::decoder::decode_udp(&buf).map_err(|e| {
-                    eprintln!("vtr-tap: OSC parse error: {e}");
-                }) else {
-                    self.rec = Some(rec);
-                    return;
+                // Rate-limited: a controller streaming malformed OSC at
+                // 120 Hz must not turn the writer thread into a stderr pump.
+                let packet = match rosc::decoder::decode_udp(&buf) {
+                    Ok((_, p)) => p,
+                    Err(e) => {
+                        self.parse_log.log(&format!("OSC parse error: {e}"));
+                        self.rec = Some(rec);
+                        return;
+                    }
                 };
                 let ts = round6(dt.as_secs_f64());
                 // A beacon older than the cutoff means TD stopped talking
@@ -717,7 +727,11 @@ impl Writer {
                     line.insert("a".into(), json!(m.addr));
                     let mut types = String::new();
                     let mut args: Vec<Value> = Vec::with_capacity(m.args.len());
-                    for (tag, v) in m.args.iter().filter_map(arg_to_json_tagged) {
+                    for (tag, v) in m
+                        .args
+                        .iter()
+                        .filter_map(|a| arg_to_json_tagged(a, &mut self.arg_log))
+                    {
                         types.push(tag);
                         args.push(v);
                     }
@@ -945,8 +959,9 @@ fn flatten(packet: OscPacket, out: &mut Vec<OscMessage>) {
 const JS_SAFE_INT: u64 = 1 << 53;
 
 /// JSON value plus its OSC type tag. `types` in the JSONL line is these tags
-/// concatenated, so a skipped arg (blob) must skip its tag too.
-fn arg_to_json_tagged(arg: &OscType) -> Option<(char, Value)> {
+/// concatenated, so a skipped arg (blob) must skip its tag too. Warnings go
+/// through `log`: these run per arg per packet on the recording path.
+fn arg_to_json_tagged(arg: &OscType, log: &mut RateLimitedLog) -> Option<(char, Value)> {
     match arg {
         // Shortest f32 repr, reparsed as f64, so 0.42f32 logs as 0.42.
         OscType::Float(f) => Some(('f', json!(f.to_string().parse::<f64>().unwrap_or(*f as f64)))),
@@ -967,11 +982,11 @@ fn arg_to_json_tagged(arg: &OscType) -> Option<(char, Value)> {
         OscType::Inf => Some(('I', json!("<impulse>"))),
         OscType::Nil => Some(('N', Value::Null)),
         OscType::Blob(b) => {
-            eprintln!("vtr-tap: warn: blob arg skipped ({} bytes)", b.len());
+            log.log(&format!("warn: blob arg skipped ({} bytes)", b.len()));
             None
         }
         other => {
-            eprintln!("vtr-tap: warn: unsupported arg {other:?}, stringified");
+            log.log(&format!("warn: unsupported arg {other:?}, stringified"));
             Some(('s', json!(format!("{other:?}"))))
         }
     }
@@ -1036,6 +1051,8 @@ mod tests {
             last_clip: None,
             write_error: None,
             write_errors: 0,
+            parse_log: RateLimitedLog::new(),
+            arg_log: RateLimitedLog::new(),
         }
     }
 
@@ -1111,37 +1128,40 @@ mod tests {
             (OscType::Inf, 'I', json!("<impulse>")),
             (OscType::Nil, 'N', Value::Null),
         ];
+        let mut log = RateLimitedLog::new();
         for (arg, tag, value) in cases {
-            let (t, v) = arg_to_json_tagged(&arg).unwrap();
+            let (t, v) = arg_to_json_tagged(&arg, &mut log).unwrap();
             assert_eq!((t, v), (tag, value), "arg {arg:?}");
         }
     }
 
     #[test]
     fn big_long_becomes_string_small_stays_number() {
+        let mut log = RateLimitedLog::new();
         let big = (1i64 << 53) + 1;
         assert_eq!(
-            arg_to_json_tagged(&OscType::Long(big)).unwrap(),
+            arg_to_json_tagged(&OscType::Long(big), &mut log).unwrap(),
             ('h', json!(big.to_string()))
         );
         assert_eq!(
-            arg_to_json_tagged(&OscType::Long(-big)).unwrap(),
+            arg_to_json_tagged(&OscType::Long(-big), &mut log).unwrap(),
             ('h', json!((-big).to_string()))
         );
         assert_eq!(
-            arg_to_json_tagged(&OscType::Long(i64::MIN)).unwrap(),
+            arg_to_json_tagged(&OscType::Long(i64::MIN), &mut log).unwrap(),
             ('h', json!(i64::MIN.to_string()))
         );
         // Exactly ±2^53 is representable in f64: stays a number.
         assert_eq!(
-            arg_to_json_tagged(&OscType::Long(1 << 53)).unwrap(),
+            arg_to_json_tagged(&OscType::Long(1 << 53), &mut log).unwrap(),
             ('h', json!(1i64 << 53))
         );
     }
 
     #[test]
     fn blob_skips_value_and_tag() {
-        assert!(arg_to_json_tagged(&OscType::Blob(vec![1, 2, 3])).is_none());
+        let mut log = RateLimitedLog::new();
+        assert!(arg_to_json_tagged(&OscType::Blob(vec![1, 2, 3]), &mut log).is_none());
     }
 
     #[test]
