@@ -8,8 +8,10 @@ import {
   clipLen,
   contentEnd,
   formatRulerLabel,
-  recordingWarning
+  recordingWarning,
+  rulerStep
 } from '../timeline/model'
+import { useElementSize, zoomSlider } from './uiScale'
 
 export interface PlayingState {
   startPos: number
@@ -31,15 +33,6 @@ const RULER_H = 22
 export const MIN_PX_PER_SEC = 2
 export const MAX_PX_PER_SEC = 400
 const TRIM_HANDLE_PX = 8
-const RULER_STEPS = [0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300]
-
-function zoomToSlider(px: number, min: number): number {
-  return (100 * Math.log(px / min)) / Math.log(MAX_PX_PER_SEC / min)
-}
-
-function sliderToZoom(v: number, min: number): number {
-  return min * Math.pow(MAX_PX_PER_SEC / min, v / 100)
-}
 
 type DragMode = 'move' | 'trim-in' | 'trim-out'
 
@@ -48,7 +41,6 @@ export type ClipAction = 'mute' | 'copy' | 'paste' | 'duplicate' | 'split' | 're
 interface Drag {
   mode: DragMode
   clipId: number
-  fromTrack: number
   startX: number
   startY: number
   orig: ClipInst
@@ -206,13 +198,6 @@ function PlayheadLine({
   )
 }
 
-function rulerStep(pxPerSec: number): number {
-  for (const s of RULER_STEPS) {
-    if (s * pxPerSec >= 90) return s
-  }
-  return RULER_STEPS[RULER_STEPS.length - 1]
-}
-
 export function Timeline({
   tracks,
   markers,
@@ -246,6 +231,7 @@ export function Timeline({
   onPxPerSecChange,
   onHoverTime
 }: TimelineProps): React.JSX.Element {
+  const zoom = zoomSlider(minPxPerSec, MAX_PX_PER_SEC)
   const drag = useRef<Drag | null>(null)
   // Snap on: clip move/trim locks onto other clips' edges.
   const [snap, setSnap] = useState(false)
@@ -271,16 +257,7 @@ export function Timeline({
   // Visible scroll range: ruler marks render only for it, so a huge duration
   // never turns into millions of mark divs.
   const [scrollX, setScrollX] = useState(0)
-  const [viewW, setViewW] = useState(0)
-  useEffect(() => {
-    const el = scrollRef.current
-    if (!el) return
-    const measure = (): void => setViewW(el.clientWidth)
-    measure()
-    const ro = new ResizeObserver(measure)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [])
+  const { w: viewW } = useElementSize(scrollRef)
   // Time + viewport x under the cursor at pinch start; scroll is restored
   // after the zoomed width renders so that point stays put.
   const pinchAnchor = useRef<{ t: number; viewX: number } | null>(null)
@@ -481,11 +458,7 @@ export function Timeline({
     onTracksChange(next, commit)
   }
 
-  const onClipPointerDown = (
-    e: React.PointerEvent<HTMLDivElement>,
-    clip: ClipInst,
-    trackIdx: number
-  ): void => {
+  const onClipPointerDown = (e: React.PointerEvent<HTMLDivElement>, clip: ClipInst): void => {
     if (e.button !== 0) return
     e.stopPropagation()
     // Shift/cmd-click toggles selection membership; no drag starts.
@@ -507,7 +480,6 @@ export function Timeline({
     drag.current = {
       mode,
       clipId: clip.id,
-      fromTrack: trackIdx,
       startX: e.clientX,
       startY: e.clientY,
       orig: clip,
@@ -636,10 +608,10 @@ export function Timeline({
           min={0}
           max={100}
           step={1}
-          value={zoomToSlider(pxPerSec, minPxPerSec)}
-          style={{ '--val': `${zoomToSlider(pxPerSec, minPxPerSec)}%` } as React.CSSProperties}
+          value={zoom.toSlider(pxPerSec)}
+          style={{ '--val': `${zoom.toSlider(pxPerSec)}%` } as React.CSSProperties}
           aria-label="zoom"
-          onChange={(e) => onPxPerSecChange(sliderToZoom(Number(e.target.value), minPxPerSec))}
+          onChange={(e) => onPxPerSecChange(zoom.fromSlider(Number(e.target.value)))}
         />
         <button
           className="btn small"
@@ -815,7 +787,7 @@ export function Timeline({
                           zIndex: 10
                         })
                       }}
-                      onPointerDown={(e) => onClipPointerDown(e, clip, trackIdx)}
+                      onPointerDown={(e) => onClipPointerDown(e, clip)}
                       onPointerMove={onClipPointerMove}
                       onPointerUp={onClipPointerUp}
                       onPointerCancel={onClipPointerCancel}

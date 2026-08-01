@@ -23,8 +23,16 @@ fn ev(t: f64, a: &str, args: &[f64]) -> Value {
     json!({"t": t, "port": 10010, "a": a, "types": "f".repeat(args.len()), "args": args})
 }
 
+/// The expected emission for an `ev`/`curve` line: those helpers tag every
+/// arg `f`, and the resolver carries the recorded tags through to the OSC
+/// encoder, so the tags are part of what a step must produce.
 fn emit(port: u16, a: &str, args: &[f64]) -> Emit {
-    (port, a.to_string(), args.iter().map(|&v| json!(v)).collect())
+    Emit {
+        port,
+        addr: a.to_string(),
+        types: "f".repeat(args.len()),
+        args: args.iter().map(|&v| json!(v)).collect(),
+    }
 }
 
 fn resolver(s: &Arc<Session>) -> Resolver {
@@ -37,7 +45,7 @@ fn is_kick(addr: &str) -> bool {
 
 /// First float arg of each emission.
 fn firsts(out: &[Emit]) -> Vec<f64> {
-    out.iter().map(|e| e.2[0].as_f64().unwrap()).collect()
+    out.iter().map(|e| e.args[0].as_f64().unwrap()).collect()
 }
 
 #[test]
@@ -172,7 +180,7 @@ fn curve(a: &str, arg: usize, template: &[f64], span: [f64; 2], vals: [f64; 2]) 
 
 fn assert_first_near(out: &[Emit], want: f64) {
     assert_eq!(out.len(), 1, "expected one emission, got {out:?}");
-    let got = out[0].2[0].as_f64().unwrap();
+    let got = out[0].args[0].as_f64().unwrap();
     assert!((got - want).abs() < 1e-9, "got {got}, want {want}");
 }
 
@@ -252,8 +260,8 @@ fn test_curves_on_one_address_merge_into_one_message() {
     r.step(0.0);
     let out = r.step(0.25);
     assert_eq!(out.len(), 1);
-    assert!((out[0].2[0].as_f64().unwrap() - 0.25).abs() < 1e-9);
-    assert!((out[0].2[1].as_f64().unwrap() - 0.75).abs() < 1e-9);
+    assert!((out[0].args[0].as_f64().unwrap() - 0.25).abs() < 1e-9);
+    assert!((out[0].args[1].as_f64().unwrap() - 0.75).abs() < 1e-9);
 }
 
 #[test]
@@ -302,6 +310,32 @@ fn test_pump_same_time_tie_goes_to_curve() {
     let mut r = resolver(&s);
     r.step(0.95);
     assert_eq!(firsts(&r.step(1.05)), vec![9.0, 1.0]);
+}
+
+#[test]
+fn test_seek_before_event_and_curve_clamps_to_the_earliest_definition() {
+    // Both definitions lie after pos: clamp to the earlier one.
+    // Event first: its value extends flat-left.
+    let s = load(&[
+        ev(2.0, "/x", &[9.0]),
+        curve("/x", 0, &[0.0], [5.0, 6.0], [0.5, 1.0]),
+    ]);
+    let mut r = resolver(&s);
+    assert_eq!(firsts(&r.step(1.0)), vec![9.0]);
+    // Curve first: its flat-left value wins.
+    let s = load(&[
+        ev(7.0, "/x", &[9.0]),
+        curve("/x", 0, &[0.0], [5.0, 6.0], [0.5, 1.0]),
+    ]);
+    let mut r = resolver(&s);
+    assert_first_near(&r.step(1.0), 0.5);
+    // Same time: the tie goes to the curve (edit layer), like everywhere.
+    let s = load(&[
+        ev(5.0, "/x", &[9.0]),
+        curve("/x", 0, &[0.0], [5.0, 6.0], [0.5, 1.0]),
+    ]);
+    let mut r = resolver(&s);
+    assert_first_near(&r.step(1.0), 0.5);
 }
 
 #[test]

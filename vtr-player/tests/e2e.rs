@@ -135,7 +135,15 @@ struct Conn {
 
 impl Conn {
     fn request(&mut self, req: Value) -> Value {
+        self.send(req);
+        self.read_reply()
+    }
+
+    fn send(&mut self, req: Value) {
         writeln!(self.writer, "{req}").unwrap();
+    }
+
+    fn read_reply(&mut self) -> Value {
         let mut line = String::new();
         self.reader.read_line(&mut line).unwrap();
         serde_json::from_str(&line).unwrap()
@@ -895,7 +903,29 @@ fn watch_blocks_until_gen_changes() {
     assert_eq!(r["ok"], true, "resp = {r}");
     assert!(r["gen"].as_u64().unwrap() > g, "watch should wake: {r}");
     assert_eq!(r["origin"], "editor");
-    assert!((r["t"].as_f64().unwrap() - 4.0).abs() < 0.05);
+    assert!((r["playhead"].as_f64().unwrap() - 4.0).abs() < 0.05);
+}
+
+#[test]
+fn watch_does_not_block_later_requests_on_the_same_connection() {
+    let tmp = tempfile::tempdir().unwrap();
+    let h = start_player(tmp.path(), None);
+    let mut c = h.connect();
+    let g = c.request(json!({"cmd": "status"}))["status"]["gen"]
+        .as_u64()
+        .unwrap();
+
+    // Park a watch, then send a status behind it on the same socket.
+    c.send(json!({"cmd": "watch", "gen": g, "id": 1}));
+    thread::sleep(Duration::from_millis(100));
+    c.send(json!({"cmd": "status", "id": 2}));
+
+    // The status answers first: the watch waits on its own thread.
+    let first = c.read_reply();
+    assert_eq!(first["id"], 2, "status queued behind watch: {first}");
+    let second = c.read_reply();
+    assert_eq!(second["id"], 1, "resp = {second}");
+    assert_eq!(second["gen"].as_u64().unwrap(), g);
 }
 
 #[test]

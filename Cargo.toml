@@ -1,5 +1,5 @@
 [workspace]
-members = ["vtr-tap", "vtr-player"]
+members = ["vtr-core", "vtr-tap", "vtr-player"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -7,4 +7,7 @@ anyhow = "1.0.103"
 clap = { version = "4.6.2", features = ["derive"] }
 rosc = "0.11.4"
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = { version = "1.0.150", features = ["preserve_order"] }
+# float_roundtrip: the default float parse is best-effort (±1 ulp); the tap
+# writes shortest-round-trip floats and playback promises exact fidelity, so
+# the player must read back the identical f64.
+serde_json = { version = "1.0.150", features = ["preserve_order", "float_roundtrip"] }

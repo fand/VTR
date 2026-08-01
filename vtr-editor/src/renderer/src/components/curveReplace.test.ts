@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { evalCurve } from '../../../shared/curve'
 import type { ClipCurve, OscEvent } from '../../../shared/types'
-import { buildCurveReplace, subtractCurveOverlap, type ReplaceInput } from './curveReplace'
+import { subtractCurveOverlap } from '../../../shared/edits'
+import { buildCurveReplace, type ReplaceInput } from './curveReplace'
 
 function input(
   file: string,

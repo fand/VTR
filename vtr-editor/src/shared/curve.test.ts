@@ -1,6 +1,30 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { clipCurve, evalCurve, fitCurve, segmentCtrl, unshadowedPoints } from './curve'
 import type { CurveKnot } from './types'
+
+describe('TS↔Rust parity', () => {
+  it('evalCurve matches the golden fixture bit-for-bit', () => {
+    // Shared with vtr-player's conformance_curve_eval.rs; see the fixture's
+    // comment field for the regeneration rule.
+    const raw = readFileSync(
+      join(__dirname, '../../../vtr-player/tests/fixtures/curve_eval.json'),
+      'utf8'
+    )
+    const fx = JSON.parse(raw) as {
+      cases: { name: string; knots: CurveKnot[]; samples: number[]; expected: number[] }[]
+    }
+    expect(fx.cases.length).toBeGreaterThan(0)
+    for (const c of fx.cases) {
+      expect(c.samples.length).toBe(c.expected.length)
+      c.samples.forEach((t, i) => {
+        const got = evalCurve(c.knots, t)
+        expect(Object.is(got, c.expected[i]), `${c.name} at t=${t}: got ${got}`).toBe(true)
+      })
+    }
+  })
+})
 
 /** Max |evalCurve - v| over the samples. */
 function maxError(knots: CurveKnot[], samples: { t: number; v: number }[]): number {

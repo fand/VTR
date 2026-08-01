@@ -21,8 +21,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use rosc::{OscMessage, OscPacket, OscType};
+use rosc::{OscMessage, OscPacket};
 use serde_json::Value;
+
+use vtr_core::osc_json;
 
 use crate::echo::Echo;
 use crate::resolver::{DedupResolver, Emit, Resolver};
@@ -114,9 +116,10 @@ struct Inner {
     echo: Echo,
 }
 
-/// Emits staged for the controller mirror between flushes, latest value per
-/// (port, address).
-type Pending = HashMap<(u16, String), Vec<Value>>;
+/// Emits staged for the controller mirror between flushes, latest
+/// (types, args) per (port, address). The tags ride along so the mirror
+/// encodes the same OSC as the direct send.
+type Pending = HashMap<(u16, String), (String, Vec<Value>)>;
 
 #[derive(Clone)]
 pub struct Transport {
@@ -291,7 +294,10 @@ fn emit_loop(inner: Arc<Inner>) {
             // Carry the dedup state across the swap: a live session reload
             // (the editor's residency load during playback) must not
             // re-send values the receivers already hold.
-            let last = resolver.take().map(DedupResolver::into_last).unwrap_or_default();
+            let last = resolver
+                .take()
+                .map(DedupResolver::into_last)
+                .unwrap_or_default();
             resolver = l.as_ref().map(|l| {
                 DedupResolver::with_last(
                     Resolver::new(
@@ -315,9 +321,9 @@ fn emit_loop(inner: Arc<Inner>) {
         // after and overwrite — newest wins as usual.
         if inner.resync.swap(false, Ordering::Relaxed) {
             let t = inner.state.lock().unwrap().playhead();
-            for (port, addr, args) in r.snapshot_at(t) {
-                if l.routes.contains_key(&port) {
-                    pending.insert((port, addr), args);
+            for e in r.snapshot_at(t) {
+                if l.routes.contains_key(&e.port) {
+                    pending.insert((e.port, e.addr), (e.types, e.args));
                 }
             }
         }
@@ -340,14 +346,14 @@ fn emit_loop(inner: Arc<Inner>) {
 }
 
 fn send(inner: &Inner, loaded: &LoadedSession, emits: &[Emit], pending: &mut Pending) {
-    for (port, addr, args) in emits {
+    for e in emits {
         // Only routed ports are emitted — never back to a listen port.
-        let Some(&dst) = loaded.routes.get(port) else {
+        let Some(&dst) = loaded.routes.get(&e.port) else {
             continue;
         };
         let Ok(buf) = rosc::encoder::encode(&OscPacket::Message(OscMessage {
-            addr: addr.clone(),
-            args: to_osc_args(args),
+            addr: e.addr.clone(),
+            args: osc_json::args_from_json(&e.types, &e.args),
         })) else {
             continue;
         };
@@ -355,68 +361,25 @@ fn send(inner: &Inner, loaded: &LoadedSession, emits: &[Emit], pending: &mut Pen
         // The controller gets the same value, but coalesced: staging by
         // (port, address) means a flush carries the newest value only, so
         // slowing the mirror down can never leave a fader on a stale one.
-        pending.insert((*port, addr.clone()), args.clone());
+        pending.insert((e.port, e.addr.clone()), (e.types.clone(), e.args.clone()));
     }
 }
 
 fn drain_mirror(pending: &mut Pending) -> Vec<OscMessage> {
     pending
         .drain()
-        .map(|((_, addr), args)| OscMessage {
+        .map(|((_, addr), (types, args))| OscMessage {
             addr,
-            args: to_osc_args(&args),
-        })
-        .collect()
-}
-
-/// JSON args back to OSC. The columnar model does not keep f32-vs-f64
-/// apart post-resolve, so numbers encode as Float (the dominant recorded
-/// tag) or Int/Long — except values Float can't round-trip, which keep
-/// their d-tagged precision as Double (long timestamps, fine positions):
-/// the resolve-over-socket path replays them at full precision, and push
-/// playback must not disagree with it.
-fn to_osc_args(args: &[Value]) -> Vec<OscType> {
-    args.iter()
-        .map(|v| match v {
-            Value::Number(n) if n.is_i64() => {
-                let i = n.as_i64().unwrap();
-                match i32::try_from(i) {
-                    Ok(i) => OscType::Int(i),
-                    Err(_) => OscType::Long(i),
-                }
-            }
-            Value::Number(n) => {
-                let f = n.as_f64().unwrap_or(0.0);
-                if (f as f32) as f64 == f {
-                    OscType::Float(f as f32)
-                } else {
-                    OscType::Double(f)
-                }
-            }
-            Value::String(s) => OscType::String(s.clone()),
-            Value::Bool(b) => OscType::Bool(*b),
-            Value::Null => OscType::Nil,
-            other => OscType::String(other.to_string()),
+            args: osc_json::args_from_json(&types, &args),
         })
         .collect()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use rosc::OscType;
 
-    #[test]
-    fn to_osc_args_keeps_double_precision() {
-        let args = vec![
-            serde_json::json!(0.5),                  // f32-exact: stays Float
-            serde_json::json!(1_753_776_000.123_45), // needs f64: Double
-            serde_json::json!(7),
-        ];
-        let out = to_osc_args(&args);
-        assert_eq!(out[0], OscType::Float(0.5));
-        assert_eq!(out[1], OscType::Double(1_753_776_000.123_45));
-        assert_eq!(out[2], OscType::Int(7));
-    }
+    use super::*;
 
     #[test]
     fn accepts_arbitration() {
@@ -445,13 +408,17 @@ mod tests {
         .unwrap()
     }
 
+    fn stage(pending: &mut Pending, port: u16, types: &str, args: Vec<Value>) {
+        pending.insert((port, "/a".into()), (types.into(), args));
+    }
+
     #[test]
     fn mirror_staging_keeps_only_the_newest_value_per_address() {
         let mut pending = Pending::new();
-        pending.insert((10010, "/a".into()), vec![Value::from(1.0)]);
-        pending.insert((10010, "/a".into()), vec![Value::from(2.0)]);
+        stage(&mut pending, 10010, "f", vec![Value::from(1.0)]);
+        stage(&mut pending, 10010, "f", vec![Value::from(2.0)]);
         // Same address on another session port stays its own entry.
-        pending.insert((10020, "/a".into()), vec![Value::from(3.0)]);
+        stage(&mut pending, 10020, "f", vec![Value::from(3.0)]);
         let mut msgs = drain_mirror(&mut pending);
         msgs.sort_by_key(|m| format!("{:?}", m.args));
         assert!(pending.is_empty());
@@ -462,6 +429,37 @@ mod tests {
         assert_eq!(
             msgs.iter().map(|m| m.args.clone()).collect::<Vec<_>>(),
             [vec![OscType::Float(2.0)], vec![OscType::Float(3.0)]]
+        );
+    }
+
+    /// The mirror encodes from the staged tags, not from the JSON shape —
+    /// same rule as the direct send in `send()`.
+    #[test]
+    fn mirror_encodes_by_the_staged_tags() {
+        let mut pending = Pending::new();
+        stage(
+            &mut pending,
+            10010,
+            "rId",
+            vec![
+                Value::from("#ff001020"),
+                Value::from("<impulse>"),
+                Value::from(0.5),
+            ],
+        );
+        let msgs = drain_mirror(&mut pending);
+        assert_eq!(
+            msgs[0].args,
+            vec![
+                OscType::Color(rosc::OscColor {
+                    red: 255,
+                    green: 0,
+                    blue: 16,
+                    alpha: 32
+                }),
+                OscType::Inf,
+                OscType::Double(0.5),
+            ]
         );
     }
 

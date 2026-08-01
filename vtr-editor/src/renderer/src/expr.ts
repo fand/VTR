@@ -74,3 +74,8 @@ export function evalExpr(src: string): number | null {
     return null
   }
 }
+
+export function parsePort(draft: string): number | null {
+  const n = parseInt(draft, 10)
+  return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : null
+}

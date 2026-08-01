@@ -31,10 +31,21 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use crate::pick;
 use crate::session::Session;
 
-/// (listen port, address, args) — the caller maps port through routes and sends.
-pub type Emit = (u16, String, Vec<Value>);
+/// One message to send: the caller maps `port` through routes and sends.
+/// `types` is the recorded OSC type tag string, carried all the way to the
+/// encoder so replay reproduces the recorded tags instead of guessing them
+/// from the JSON values (see `vtr_core::osc_json`). It is empty when the
+/// source line had no usable `types`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Emit {
+    pub port: u16,
+    pub addr: String,
+    pub types: String,
+    pub args: Vec<Value>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -108,7 +119,25 @@ impl Resolver {
 
     fn emit(&self, i: usize) -> Emit {
         let (addr, port) = self.session.event_addr(i);
-        (*port, addr.clone(), self.session.event_args(i))
+        Emit {
+            port: *port,
+            addr: addr.clone(),
+            types: self.session.event_types(i).to_string(),
+            args: self.session.event_args(i),
+        }
+    }
+
+    /// A sampled curve group's merged message, tagged from the same member
+    /// whose template supplied the untouched args.
+    fn emit_group(&self, g: usize, args: Vec<Value>) -> Emit {
+        let session = &self.session;
+        let (addr, port) = &session.addrs[session.curve_groups[g].addr_id as usize];
+        Emit {
+            port: *port,
+            addr: addr.clone(),
+            types: session.curve_group_types(g).to_string(),
+            args,
+        }
     }
 
     fn pump(&mut self, prev: f64, pos: f64) -> Vec<Emit> {
@@ -131,8 +160,7 @@ impl Resolver {
             if self.group_last[g].as_ref() == Some(&args) {
                 continue;
             }
-            let (addr, port) = &session.addrs[group.addr_id as usize];
-            out.push((t, usize::MAX, (*port, addr.clone(), args.clone())));
+            out.push((t, usize::MAX, self.emit_group(g, args.clone())));
             self.group_last[g] = Some(args);
         }
         out.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
@@ -194,46 +222,31 @@ impl Resolver {
             }
             let times = &session.addr_t[k];
             let j = times.partition_point(|&x| x <= pos);
-            // Defined event: the last one at or before pos.
-            let event = (j > 0).then(|| (times[j - 1], session.addr_events[k][j - 1]));
-            // Defined curve: the group once pos has reached its span.
-            let group = session.addr_group[k].filter(|&g| session.curve_groups[g].start <= pos);
-            let pick = match (event, group) {
-                // Latest definition wins; ties go to the curve (edit layer).
-                (Some((et, i)), Some(g)) => {
-                    let gt = pos.min(session.curve_groups[g].end);
-                    if et > gt {
-                        Src::Event(i)
-                    } else {
-                        Src::Group(g)
-                    }
-                }
-                (Some((_, i)), None) => Src::Event(i),
-                (None, Some(g)) => Src::Group(g),
-                // Nothing defined at pos: clamp to the earliest definition
-                // (values extend flat before the first data point).
-                (None, None) => {
-                    let ev0 = times.first().map(|&t| (t, session.addr_events[k][0]));
-                    let grp = session.addr_group[k].map(|g| (session.curve_groups[g].start, g));
-                    match (ev0, grp) {
-                        (Some((et, i)), Some((gt, g))) => {
-                            if et < gt {
-                                Src::Event(i)
-                            } else {
-                                Src::Group(g)
-                            }
-                        }
-                        (Some((_, i)), None) => Src::Event(i),
-                        (None, Some((_, g))) => Src::Group(g),
-                        (None, None) => continue,
-                    }
-                }
+            // Two candidates, curve last so ties go to it (the edit layer):
+            // an event's def time is the last event at or before pos, a
+            // curve's is min(pos, span end) once pos has reached its span.
+            let mut cands: Vec<pick::Candidate> = Vec::new();
+            if let Some(&t0) = times.first() {
+                cands.push(((j > 0).then(|| times[j - 1]), t0));
+            }
+            let group = session.addr_group[k];
+            if let Some(g) = group {
+                let grp = &session.curve_groups[g];
+                cands.push(((grp.start <= pos).then(|| pos.min(grp.end)), grp.start));
+            }
+            let Some((w, started)) = pick::pick_latest_or_earliest(&cands) else {
+                continue;
             };
-            match pick {
-                Src::Event(i) => chosen.push((session.t[i], i, Src::Event(i))),
-                Src::Group(g) => {
-                    let def = pos.min(session.curve_groups[g].end).max(session.curve_groups[g].start);
+            match group {
+                // The curve, when present, is the last candidate.
+                Some(g) if w == cands.len() - 1 => {
+                    let grp = &session.curve_groups[g];
+                    let def = pos.min(grp.end).max(grp.start);
                     chosen.push((def, usize::MAX, Src::Group(g)));
+                }
+                _ => {
+                    let i = session.addr_events[k][if started { j - 1 } else { 0 }];
+                    chosen.push((session.t[i], i, Src::Event(i)));
                 }
             }
         }
@@ -247,8 +260,7 @@ impl Resolver {
                 Src::Group(g) => {
                     let args = session.curve_group_args(g, pos);
                     sampled.push((g, args.clone()));
-                    let (addr, port) = &session.addrs[session.curve_groups[g].addr_id as usize];
-                    (*port, addr.clone(), args)
+                    self.emit_group(g, args)
                 }
             })
             .collect();
@@ -304,19 +316,19 @@ impl DedupResolver {
         let (mode, emits) = self.inner.step_with_mode(pos);
         let emits = match mode {
             Mode::Pump => {
-                for (port, addr, args) in &emits {
-                    self.last.insert((*port, addr.clone()), args.clone());
+                for e in &emits {
+                    self.last.insert((e.port, e.addr.clone()), e.args.clone());
                 }
                 emits
             }
             Mode::Seek => emits
                 .into_iter()
-                .filter(|(port, addr, args)| {
-                    let key = (*port, addr.clone());
-                    if self.last.get(&key) == Some(args) {
+                .filter(|e| {
+                    let key = (e.port, e.addr.clone());
+                    if self.last.get(&key) == Some(&e.args) {
                         return false;
                     }
-                    self.last.insert(key, args.clone());
+                    self.last.insert(key, e.args.clone());
                     true
                 })
                 .collect(),
@@ -374,7 +386,7 @@ mod tests {
         // Jump past 2.0: catch-up value differs by 1e-12 -> emitted.
         let (_, emits) = r.step(5.0);
         assert_eq!(emits.len(), 1);
-        assert_eq!(emits[0].2[0].as_f64().unwrap(), 1.0 + 1e-12);
+        assert_eq!(emits[0].args[0].as_f64().unwrap(), 1.0 + 1e-12);
     }
 
     #[test]
@@ -431,7 +443,7 @@ mod tests {
         let (mode, emits) = r.step(1.0);
         assert_eq!(mode, Mode::Seek);
         assert_eq!(emits.len(), 1);
-        assert_eq!(emits[0].2[0].as_f64().unwrap(), 5.0);
+        assert_eq!(emits[0].args[0].as_f64().unwrap(), 5.0);
         // Jump past the event, then scrub back before it: catch-up
         // re-resolves /a to the same value -> deduped, quiet.
         assert_eq!(r.step(11.0).1, vec![]);
@@ -453,9 +465,9 @@ mod tests {
         // ...but a snapshot returns the full state anyway.
         let snap = r.snapshot_at(9.0);
         assert_eq!(snap.len(), 2);
-        assert_eq!(snap[0].1, "/b");
-        assert_eq!(snap[1].1, "/a");
-        assert_eq!(snap[1].2[0].as_f64().unwrap(), 3.0);
+        assert_eq!(snap[0].addr, "/b");
+        assert_eq!(snap[1].addr, "/a");
+        assert_eq!(snap[1].args[0].as_f64().unwrap(), 3.0);
         // And it disturbs neither dedup nor position tracking.
         assert_eq!(r.step(8.0).1.len(), 0);
     }
