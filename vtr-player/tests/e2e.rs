@@ -275,27 +275,19 @@ fn seek_emits_coalesced_catchup_and_drops_stale_seeks() {
     );
 }
 
-#[test]
-fn punch_in_primes_resolved_state() {
-    let tmp = tempfile::tempdir().unwrap();
-    let h = start_player(tmp.path(), None);
-    let path = write_session(
-        tmp.path(),
-        h.app_port,
-        &[
-            ev(1.0, "/a", &[1.0]),
-            ev(2.0, "/a", &[2.0]),
-            ev(10.0, "/a", &[10.0]),
-        ],
-    );
-    let mut c = h.connect();
-    assert_eq!(c.request(json!({"cmd": "load", "path": path}))["ok"], true);
-
-    // Relayed /vtr/rec/start 3.0: emit the state at 3.0 to the app.
-    h.relay("192.0.2.1:9000", "/vtr/rec/start", vec![f(3.0)]);
-    let (addr, args) = h.recv_app();
-    assert_eq!(addr, "/a");
-    assert_eq!(float_of(&args), 2.0);
+/// Poll `status` until the predicate holds, or fail after 2s. The tap client
+/// runs on its own long-poll thread, so nothing it does lands at a fixed
+/// delay.
+fn wait_status(c: &mut Conn, what: &str, pred: impl Fn(&Value) -> bool) -> Value {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let s = c.request(json!({"cmd": "status"}))["status"].clone();
+        if pred(&s) {
+            return s;
+        }
+        assert!(Instant::now() < deadline, "{what}: status = {s}");
+        thread::sleep(Duration::from_millis(10));
+    }
 }
 
 /// Fake tap control socket serving the `wait` API: answers the baseline with
@@ -329,6 +321,128 @@ fn fake_tap(path: &Path) -> mpsc::Sender<Value> {
         }
     });
     trigger_tx
+}
+
+fn rec_started(seq: u64, tl: Option<f64>) -> Value {
+    let mut event = json!({"ev": "rec_started", "clip": "x.jsonl"});
+    if let Some(tl) = tl {
+        event["tl"] = json!(tl);
+    }
+    json!({"ok": true, "seq": seq, "events": [event]})
+}
+
+/// Punch-in: rec start in the tap event log primes the transport to the
+/// take's timeline position and starts it, so followers land on the punch-in
+/// point and the session plays as backing.
+#[test]
+fn punch_in_primes_and_plays_on_rec_started() {
+    let tmp = tempfile::tempdir().unwrap();
+    let tap_sock = tmp.path().join("vtr-tap.sock");
+    let trigger_tx = fake_tap(&tap_sock);
+    let h = start_player(tmp.path(), Some(tap_sock));
+    let path = write_session(
+        tmp.path(),
+        h.app_port,
+        &[
+            ev(1.0, "/a", &[1.0]),
+            ev(2.0, "/a", &[2.0]),
+            ev(10.0, "/a", &[10.0]),
+        ],
+    );
+    let mut c = h.connect();
+    assert_eq!(c.request(json!({"cmd": "load", "path": path}))["ok"], true);
+    let gen0 = c.request(json!({"cmd": "status"}))["status"]["gen"]
+        .as_u64()
+        .unwrap();
+
+    trigger_tx.send(rec_started(1, Some(3.0))).unwrap();
+
+    // The app gets the state resolved at 3.0.
+    let (addr, args) = h.recv_app();
+    assert_eq!(addr, "/a");
+    assert_eq!(float_of(&args), 2.0);
+
+    let s = wait_status(&mut c, "punch-in should play", |s| s["playing"] == true);
+    assert_eq!(s["origin"], "rec");
+    assert!(s["gen"].as_u64().unwrap() > gen0, "status = {s}");
+    // At tl, plus whatever has elapsed since it started running.
+    let head = s["playhead"].as_f64().unwrap();
+    assert!((3.0..4.0).contains(&head), "playhead = {head}");
+}
+
+/// No `tl` (no clock beacon): start where we are rather than guess.
+#[test]
+fn punch_in_without_tl_plays_without_seeking() {
+    let tmp = tempfile::tempdir().unwrap();
+    let tap_sock = tmp.path().join("vtr-tap.sock");
+    let trigger_tx = fake_tap(&tap_sock);
+    let h = start_player(tmp.path(), Some(tap_sock));
+    let path = write_session(tmp.path(), h.app_port, &[ev(1.0, "/a", &[1.0])]);
+    let mut c = h.connect();
+    assert_eq!(c.request(json!({"cmd": "load", "path": path}))["ok"], true);
+    assert_eq!(
+        c.request(json!({"cmd": "seek", "t": 5.0, "origin": "editor"}))["ok"],
+        true
+    );
+    // Without a tl there is no priming, so the play is an ordinary foreign
+    // write: let the editor's hold expire or it would be rejected.
+    thread::sleep(Duration::from_millis(500));
+
+    trigger_tx.send(rec_started(1, None)).unwrap();
+
+    let s = wait_status(&mut c, "punch-in should play", |s| s["playing"] == true);
+    let head = s["playhead"].as_f64().unwrap();
+    assert!((5.0..6.0).contains(&head), "playhead = {head}");
+}
+
+/// Nothing to resolve without a session, so nothing moves.
+#[test]
+fn punch_in_does_nothing_without_a_session() {
+    let tmp = tempfile::tempdir().unwrap();
+    let tap_sock = tmp.path().join("vtr-tap.sock");
+    let trigger_tx = fake_tap(&tap_sock);
+    let h = start_player(tmp.path(), Some(tap_sock));
+    let mut c = h.connect();
+    // The rec LED is the handshake: once it flips, the event is processed.
+    h.relay("127.0.0.1:9001", "/vtr/origin", vec![]);
+    assert_eq!(float_of(&h.recv_controller_msg("/vtr/rec")), 0.0);
+
+    trigger_tx.send(rec_started(1, Some(3.0))).unwrap();
+    assert_eq!(float_of(&h.recv_controller_msg("/vtr/rec")), 1.0);
+
+    let s = c.request(json!({"cmd": "status"}))["status"].clone();
+    assert_eq!(s["playing"], false);
+    assert_eq!(s["playhead"], 0.0);
+    assert_eq!(s["gen"], 0);
+}
+
+/// Stopping a take leaves the transport running, like `/vtr/rec/stop`.
+#[test]
+fn rec_stopped_leaves_the_transport_alone() {
+    let tmp = tempfile::tempdir().unwrap();
+    let tap_sock = tmp.path().join("vtr-tap.sock");
+    let trigger_tx = fake_tap(&tap_sock);
+    let h = start_player(tmp.path(), Some(tap_sock));
+    let path = write_session(tmp.path(), h.app_port, &[ev(1.0, "/a", &[1.0])]);
+    let mut c = h.connect();
+    assert_eq!(c.request(json!({"cmd": "load", "path": path}))["ok"], true);
+    h.relay("127.0.0.1:9001", "/vtr/origin", vec![]);
+    assert_eq!(float_of(&h.recv_controller_msg("/vtr/rec")), 0.0);
+
+    trigger_tx.send(rec_started(1, Some(3.0))).unwrap();
+    assert_eq!(float_of(&h.recv_controller_msg("/vtr/rec")), 1.0);
+    let running = wait_status(&mut c, "punch-in should play", |s| s["playing"] == true);
+
+    trigger_tx
+        .send(json!({"ok": true, "seq": 2,
+                     "events": [{"ev": "rec_stopped", "clip": "x.jsonl"}]}))
+        .unwrap();
+    assert_eq!(float_of(&h.recv_controller_msg("/vtr/rec")), 0.0);
+
+    let s = c.request(json!({"cmd": "status"}))["status"].clone();
+    assert_eq!(s["playing"], true);
+    assert_eq!(s["gen"], running["gen"]);
+    assert_eq!(s["origin"], "rec");
 }
 
 #[test]
@@ -407,12 +521,9 @@ fn mirror_is_silent_while_recording() {
     assert_eq!(float_of(&h.recv_controller_msg("/vtr/rec")), 0.0);
 
     // Recording: mirroring the replay back would feed it into the clip.
-    trigger_tx
-        .send(json!({"ok": true, "seq": 1,
-                     "events": [{"ev": "rec_started", "clip": "x.jsonl"}]}))
-        .unwrap();
+    // The punch-in primes the transport to 2.0 and runs it from there.
+    trigger_tx.send(rec_started(1, Some(2.0))).unwrap();
     assert_eq!(float_of(&h.recv_controller_msg("/vtr/rec")), 1.0);
-    assert_eq!(c.request(json!({"cmd": "seek", "t": 2.0}))["ok"], true);
     // The app still gets it; the controller does not.
     assert_eq!(h.recv_app().0, "/fader");
     h.controller
@@ -421,7 +532,8 @@ fn mirror_is_silent_while_recording() {
     let mut buf = [0u8; 1024];
     assert!(h.controller.recv(&mut buf).is_err(), "mirrored while rec");
 
-    // Stopped again: the mirror comes back.
+    // Stopped again: the mirror comes back. The seek is from "rec" because
+    // the punch-in holds the transport for a moment.
     trigger_tx
         .send(json!({"ok": true, "seq": 2,
                      "events": [{"ev": "rec_stopped", "clip": "x.jsonl"}]}))
@@ -430,7 +542,10 @@ fn mirror_is_silent_while_recording() {
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
     assert_eq!(float_of(&h.recv_controller_msg("/vtr/rec")), 0.0);
-    assert_eq!(c.request(json!({"cmd": "seek", "t": 3.0}))["ok"], true);
+    assert_eq!(
+        c.request(json!({"cmd": "seek", "t": 3.0, "origin": "rec"}))["ok"],
+        true
+    );
     assert_eq!(float_of(&h.recv_controller_msg("/fader")), 0.25);
 }
 

@@ -7,6 +7,7 @@ pub mod relay;
 pub mod resolver;
 pub mod session;
 pub mod state;
+pub mod tap_client;
 pub mod transport;
 
 use std::net::{IpAddr, SocketAddr, UdpSocket};
@@ -42,11 +43,13 @@ pub fn start(cfg: PlayerConfig) -> Result<Player> {
     let relay_sock = UdpSocket::bind(cfg.relay).with_context(|| format!("bind relay {}", cfg.relay))?;
     let relay_addr = relay_sock.local_addr()?;
     let echo = echo::Echo::new(cfg.echo_port, cfg.echo_host)?;
-    if let Some(path) = cfg.tap_control {
-        echo.spawn_tap_client(path)?;
-    }
     let transport = transport::Transport::start(shared.clone(), cfg.emit_host, echo.clone())?;
-    relay::spawn(relay_sock, shared.clone(), transport.clone(), echo)?;
+    // After the transport: the tap client punches in on rec start, so it
+    // needs one.
+    if let Some(path) = cfg.tap_control {
+        tap_client::spawn(path, echo.clone(), transport.clone(), shared.clone())?;
+    }
+    relay::spawn(relay_sock, transport.clone(), echo)?;
     Ok(Player {
         relay_addr,
         ctx: Arc::new(control::Ctx {
