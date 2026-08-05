@@ -91,7 +91,6 @@ def build(td_dir):
     mode.val = "record"
 
     rec = comp.appendCustomPage("VTR Rec")
-    _par(rec.appendToggle("Record"), False)
     _par(rec.appendToggle("Clock"), True)
     p = _par(rec.appendFloat("Clockrate"), 10.0)
     p.normMin, p.normMax = 1, 60

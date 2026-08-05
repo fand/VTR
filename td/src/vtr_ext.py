@@ -4,8 +4,8 @@ The tox is a thin client with a Mode switch: no session parsing, no resolver.
 
 - record: TD follows VTR. The tap's rec notifications (`/vtr/rec/start [tl
   rate]` / `/vtr/rec/stop` on Notifyport) seek the root timeline and start
-  playback; the clock beacon (`/vtr/clock`) and the Record toggle talk to the
-  tap's listen port.
+  playback; the clock beacon (`/vtr/clock`) talks to the tap's listen port.
+  Recording is triggered from a controller or the editor, never from TD.
 - player: every frame blocks on a resolve query to vtr-player's unix socket
   and applies the delta before the frame cooks. Position source
   (`Positionmode`): the TD timeline (`timeline`, deterministic — offline
@@ -133,15 +133,7 @@ class VTRExt:
     def OnParChange(self, par):
         """Called from the Parameter Execute DAT."""
         name = par.name
-        if name == "Record":
-            if self._mode() != "record":
-                return
-            t, rate = self._timeline()
-            if par.eval():
-                self._tap().sendOSC("/vtr/rec/start", [t, rate])
-            else:
-                self._tap().sendOSC("/vtr/rec/stop", [])
-        elif name in ("File", "Triggerpatterns"):
+        if name in ("File", "Triggerpatterns"):
             # Trigger classification is compiled into the server-side load.
             self._pending_load = True
         elif name in ("Mode", "Sockpath"):

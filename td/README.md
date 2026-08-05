@@ -15,7 +15,8 @@ One Base COMP, one `Mode` switch:
   notifies the tox (plain OSC on `Notifyport`), and the tox seeks the root
   timeline to `tl` and starts playback. `/vtr/rec/stop` keeps TD playing.
   The tox beacons `/vtr/clock <t> <rate>` to the tap (also while paused,
-  rate 0) and the `Record` toggle can start/stop clips from TD.
+  rate 0). Recording is triggered from a controller or the editor — the tox
+  has no trigger of its own.
 - **player**: every frame, `onFrameStart` blocks on a resolve query to
   vtr-player's unix socket and applies the returned delta before the frame
   cooks. `Positionmode` picks the position source:
@@ -56,7 +57,6 @@ One Base COMP, one `Mode` switch:
 | Page | Parameter | Default | Meaning |
 | --- | --- | --- | --- |
 | VTR | `Mode` | `record` | `record` / `player` — gates all I/O. |
-| VTR Rec | `Record` | off | ON sends `/vtr/rec/start <t> <rate>` (t = root timeline seconds), OFF sends `/vtr/rec/stop`. Idempotent tap-side. |
 | VTR Rec | `Clock` / `Clockrate` | on / 10 Hz | `/vtr/clock <t> <rate>` beacon; rate 0 while paused. |
 | VTR Rec | `Taphost` / `Tapport` | `127.0.0.1` / 10010 | The tap's listen port (control shares it under `/vtr`). |
 | VTR Rec | `Notifyport` | 10014 | Where the tap's `--td-notify` rec notifications arrive. |
@@ -90,8 +90,8 @@ and saves `td/vtr.tox`.
 
 ### Manual verification checklist (needs TD + `./run`)
 
-1. Rec: Record toggle starts/stops clips with the editor open and closed;
-   clips carry `tl` from the clock beacon.
+1. Rec: clips recorded via the editor (and via `/vtr/rec/start` from a
+   controller) carry `tl` from the clock beacon.
 2. Rec follow: recording started from the editor *and* from a controller
    (`/vtr/rec/start <tl>`) both seek TD to `tl` and start playback;
    `/vtr/rec/stop` leaves TD playing.
