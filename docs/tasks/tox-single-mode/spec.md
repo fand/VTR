@@ -32,24 +32,38 @@ transport move.
 
 ### vtr.tox
 
-One page, no `Mode`. The tox is always both: clock beacon + sync client.
+No `Mode`, no `Positionmode` — zero mode concepts. The tox is always both:
+clock beacon + sync client. The position source is picked automatically
+from TD's realtime flag (`project.realTime`):
+
+- **realtime on (live):** sync — bidirectional glue to the player
+  transport, ~100 ms query timeout.
+- **realtime off (Export Movie, non-realtime):** resolve at
+  `TD timeline seconds − Offset`; the transport is never read or written.
+  5 s timeout — renders never skip events. Deterministic by construction.
+
+On a flag edge, `_sync_reset()` (re-adopt the transport on return to
+realtime, write nothing).
+
+The old `Positionmode` values map: `timeline` → the realtime-off branch,
+`sync` → the realtime-on branch, `follow` ≈ sync when you never touch the
+TD timeline, `internal` has no remaining use case.
 
 | Parameter | Meaning |
 | --- | --- |
-| `Positionmode` | `sync` (default, live) / `timeline` (offline render). `follow` and `internal` are dropped: follow ≈ sync when you never touch the TD timeline, internal has no remaining use case. |
-| `Clock` / `Clockrate` | unchanged; the beacon now runs in every mode. |
+| `Clock` / `Clockrate` | unchanged; the beacon now always runs. |
 | `Taphost` / `Tapport` | unchanged (beacon target). |
 | `Sockpath`, `File` / `Reload`, `Offset`, `Triggerpatterns` | unchanged. |
 
-Removed: `Mode`, `Notifyport`, `Play`, `Rewind`, and the `oscin_notify` DAT
-+ `OnNotify` + notify callbacks.
+Removed: `Mode`, `Positionmode`, `Notifyport`, `Play`, `Rewind`, and the
+`oscin_notify` DAT + `OnNotify` + notify callbacks.
 
 Behavior changes:
 
-- **Timeout split.** `timeline` keeps the 5 s budget (renders never skip
-  events). `sync` uses ~100 ms: on timeout, drop the socket, freeze state,
-  reconnect on the 1 s throttle. A hung player costs live TD one short
-  hiccup, not 5 s per frame.
+- **Timeout follows the branch.** Realtime: on timeout, drop the socket,
+  freeze state, reconnect on the 1 s throttle — a hung player costs live
+  TD one short hiccup, not 5 s per frame. Non-realtime keeps the 5 s
+  budget.
 - **No rec special-casing.** `_sync_tick` is unchanged: the rec-start seek
   shows up as a foreign transport move (gen bump, origin `rec`) and the
   existing adopt path handles it. Sync stays consistent through a take, so
@@ -91,6 +105,9 @@ Behavior changes:
 
 ## Accepted tradeoffs — flag before implementing
 
+- **Rendering requires realtime off.** A render run with realtime left on
+  goes through the sync branch and loses determinism. Non-realtime export
+  is the standard TD workflow; one line in td/README covers it.
 - **Mid-take TD gestures write back.** Dragging the TD timeline (or pausing
   it) during a take moves the editor playhead and the backing. Recorded
   data stays sane — event `t` is clip-relative wall clock, clip placement
@@ -111,7 +128,8 @@ Behavior changes:
 1. player: punch-in (prime + play) from tap events; drop the relay arm.
    (Testable in isolation: fake tap socket in e2e.)
 2. tox: single-mode rewrite — beacon always on, notify path deleted,
-   timeout split. Rebuild the tox in TD.
+   position source + timeout branched on `project.realTime`. Rebuild the
+   tox in TD.
 3. tap + editor: remove `--td-notify` / `notify.rs` / `tapArgs()` flag.
 4. Docs: td/README (modes → one section), root README protocol table,
    ARCHITECTURE diagram, manual checklist.
@@ -129,5 +147,7 @@ tap stops talking; the reverse order breaks rec follow in between).
 - **tox manual checklist** (td/README): rec-follow via transport from both
   trigger sources (TouchOSC and editor); scrubbing TD mid-take moves the
   editor playhead (bidirectional stays on); live hiccup ≤ ~100 ms with a
-  SIGSTOPped player while `timeline` mode still blocks; clips recorded
+  SIGSTOPped player while a non-realtime render still blocks; toggling
+  realtime mid-session re-baselines without a write-back; two non-realtime
+  exports of the same session produce identical frames; clips recorded
   during sync playback carry `tl`.
