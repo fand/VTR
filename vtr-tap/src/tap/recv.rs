@@ -10,7 +10,7 @@ use rosc::OscMessage;
 use vtr_core::{flatten, RateLimitedLog, MAX_DATAGRAM};
 
 use super::beacon::BeaconState;
-use super::notify::OriginNotifier;
+use super::origin::OriginNotifier;
 use super::writer::Msg;
 
 /// Kernel receive buffer for the listen socket (best effort).

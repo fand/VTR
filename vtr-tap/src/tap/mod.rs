@@ -2,7 +2,7 @@ mod beacon;
 mod ctl;
 mod eventlog;
 mod jsonl;
-mod notify;
+mod origin;
 mod recv;
 mod writer;
 
@@ -22,7 +22,7 @@ pub use eventlog::{Event, EventLog, WaitResult};
 pub use writer::Status;
 
 use beacon::BeaconState;
-use notify::{Notify, OriginNotifier};
+use origin::OriginNotifier;
 use writer::Msg;
 
 pub struct Tap {
@@ -82,7 +82,6 @@ impl Tap {
             .connect(config.forward)
             .with_context(|| format!("connect forward {}", config.forward))?;
         let relay_sock = UdpSocket::bind("0.0.0.0:0").context("bind relay socket")?;
-        let notify = config.td_notify.map(Notify::new).transpose()?;
 
         let listen_addr = listen.local_addr()?;
         std::fs::create_dir_all(&config.outdir)?;
@@ -129,7 +128,6 @@ impl Tap {
             dropped,
             received,
             event_log.clone(),
-            notify,
         );
         thread::Builder::new()
             .name("writer".into())
