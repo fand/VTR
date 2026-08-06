@@ -9,7 +9,7 @@ VJs' Timeline Recorder. Record, edit, and replay OSC for VJ performance archival
 - **vtr-tap** (Rust): UDP proxy that forwards OSC unchanged to TD and logs parsed copies as JSONL. Control messages arrive on the listen port under the `/vtr` prefix: `/vtr/clock` stamps TD-timeline time (`tl`), `/vtr/rec*` starts/stops clips, and every `/vtr/*` datagram is relayed to vtr-player. Default ports: listen 10010, forward 127.0.0.1:10011, relay 127.0.0.1:10013.
 - **vtr-player** (Rust, `vtr-player/`): resolver server. Replays a `session.jsonl` to the VJ app (push transport driven by relayed `/vtr/play|stop|seek`), answers per-frame sync queries over a unix socket (for TD), primes punch-in state, and feeds controllers back at `target IP : echo port` — rec state plus the playback values themselves, so faders follow the timeline. Protocol: "OSC control" below.
 - **vtr-editor** (Electron): DAW-style editor. Records clips via vtr-tap, arranges them on tracks, exports a merged `session.jsonl`. Spawns and monitors both vtr-tap and vtr-player, and delegates preview playback to the player (inline session load with routes + transport writes) — the player's resolver emits all preview OSC, so preview and replay behave identically, and sync clients follow the same transport.
-- **vtr.tox** (TouchDesigner, `td/`): mode-switched sync client. `record` follows VTR — the tap's rec notifications (`--td-notify`, default 127.0.0.1:10014) seek TD's timeline and start playback, while the tox beacons `/vtr/clock` back. `player` blocks each frame on a `resolve` query to vtr-player and applies the delta before the cook; position source is the TD timeline (deterministic offline rendering), the player transport (`follow` — tracks the editor preview live, no export needed), or bidirectional `sync` (seeking in TD or the editor propagates both ways). Build & docs: `td/README.md`.
+- **vtr.tox** (TouchDesigner, `td/`): sync client, no modes. Every frame it beacons `/vtr/clock` to the tap and blocks on one `resolve` query to vtr-player, applying the delta before the cook. The position source follows TD's realtime flag: realtime on = bidirectional sync with the player's push transport (seeking in TD or the editor propagates both ways, short timeout); realtime off = TD timeline − `Offset`, transport untouched, for deterministic offline rendering. Rec follow needs no special case — the player primes and starts its transport when a take starts, and TD follows that like any other foreign move. Build & docs: `td/README.md`.
 
 ## Quick start
 
@@ -58,7 +58,7 @@ its non-`/vtr` siblings are dropped, so don't mix them in one bundle.
 | --- | --- | --- | --- |
 | `/vtr/clock` | `t [rate]` | tap | Timeline beacon for `tl` stamping. `t` = master timeline seconds, `rate` = speed (default 1; 0 = paused). Send at ~10Hz; recorded events get an extrapolated `tl`, omitted once the last beacon is >5s old. |
 | `/vtr/rec` | `0\|1` | tap | Controller-facing rec toggle: `1` starts a clip (no beacon seed), `0` stops it. The player echoes the same address back on state change. |
-| `/vtr/rec/start` | `[tl] [rate]` | tap + player | Start a clip. The optional `tl` updates the clock and starts the clip in one step, so the recording is synced from its first event — this is the official sync mechanism. The player additionally primes punch-in state at `tl`. |
+| `/vtr/rec/start` | `[tl] [rate]` | tap | Start a clip. The optional `tl` updates the clock and starts the clip in one step, so the recording is synced from its first event — this is the official sync mechanism. The player reads the start off the tap's event log (whatever triggered it) and primes its transport to `tl`, so sync clients land on the punch-in point. |
 | `/vtr/rec/stop` | — | tap | Stop the clip. |
 | `/vtr/play` / `/vtr/stop` | — | player | Push-transport run/pause (origin `osc`). |
 | `/vtr/seek` | `t` | player | Jump the push transport to `t` (origin `osc`). |
@@ -103,18 +103,12 @@ It makes TouchOSC re-send values it receives, which turns the mirror into
 a loop.
 
 The push transport is the single authoritative playhead: the editor and
-the TD tox (`Positionmode` = `sync`) both read and write it, so a seek or
+the TD tox (with realtime on) both read and write it, so a seek or
 play/stop from either side — or a controller's `/vtr/*` — propagates to
 the others. Each write carries an `origin` and bumps a generation counter
 `gen`; a follower applies a change only when `gen` moved and the origin is
 not its own (echo suppression), and concurrent writers are arbitrated by a
 short hold window (last-touched wins).
-
-With `--td-notify <addr>` the tap additionally reports every rec state
-change — regardless of initiator — as plain unwrapped OSC to that address:
-`/vtr/rec/start <tl> <rate>` (args omitted when the clock is unknown) and
-`/vtr/rec/stop`. This drives the tox's record-mode follow (seek + play);
-the editor enables it at `127.0.0.1:10014`.
 
 The editor talks to vtr-tap over a unix-socket JSON Lines API:
 `start` (optional `tl`/`rate`) / `stop` / `status`, plus `wait` — a
