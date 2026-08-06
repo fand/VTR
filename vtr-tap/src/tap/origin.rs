@@ -3,7 +3,7 @@ use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use rosc::{OscMessage, OscPacket, OscType};
+use rosc::{OscMessage, OscPacket};
 
 use vtr_core::{relay_frame, RateLimitedLog};
 
@@ -11,40 +11,6 @@ use vtr_core::{relay_frame, RateLimitedLog};
 /// well under the player's own origin expiry (3 min) so a live controller
 /// never falls out of its registry.
 const ORIGIN_REFRESH: Duration = Duration::from_secs(60);
-
-/// Fire-and-forget rec-transition OSC to the TD tox (`--td-notify`). Plain,
-/// unwrapped messages — not the `"v1 <origin>"` relay framing — so a TD
-/// `oscin` DAT parses them natively.
-pub(super) struct Notify {
-    sock: UdpSocket,
-    addr: SocketAddr,
-    log: RateLimitedLog,
-}
-
-impl Notify {
-    pub(super) fn new(addr: SocketAddr) -> Result<Self> {
-        Ok(Self {
-            sock: UdpSocket::bind("0.0.0.0:0").context("bind td-notify socket")?,
-            addr,
-            log: RateLimitedLog::new("vtr-tap"),
-        })
-    }
-
-    pub(super) fn send(&mut self, addr: &str, args: Vec<OscType>) {
-        let packet = OscPacket::Message(OscMessage {
-            addr: addr.into(),
-            args,
-        });
-        match rosc::encoder::encode(&packet) {
-            Ok(buf) => {
-                if let Err(e) = self.sock.send_to(&buf, self.addr) {
-                    self.log.log(&format!("td-notify send error: {e}"));
-                }
-            }
-            Err(e) => self.log.log(&format!("td-notify encode error: {e}")),
-        }
-    }
-}
 
 /// Tells the player which hosts talk to us, so it can mirror playback back
 /// to them (`origin IP : echo port`). The player only ever learns an origin

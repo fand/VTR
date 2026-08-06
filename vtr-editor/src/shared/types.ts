@@ -108,9 +108,6 @@ export function isValidEchoHost(host: string): boolean {
 /** Loopback port the tap relays /vtr/* control datagrams to (vtr-player). */
 export const RELAY_PORT = 10013
 
-/** Loopback port the tap sends rec-transition OSC to (the TD tox). */
-export const TD_NOTIFY_PORT = 10014
-
 /**
  * Back-fill missing ports and drop legacy keys (the removed beacon port)
  * from older project files.

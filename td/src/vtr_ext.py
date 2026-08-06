@@ -1,20 +1,29 @@
 """VTRExt — extension for vtr.tox (protocol v2 client). TouchDesigner-only code.
 
-The tox is a thin client with a Mode switch: no session parsing, no resolver.
+The tox is a thin client with no modes: no session parsing, no resolver, no
+rec awareness. Every frame it does the same two things.
 
-- record: TD follows VTR. The tap's rec notifications (`/vtr/rec/start [tl
-  rate]` / `/vtr/rec/stop` on Notifyport) seek the root timeline and start
-  playback; the clock beacon (`/vtr/clock`) and the Record toggle talk to the
-  tap's listen port.
-- player: every frame blocks on a resolve query to vtr-player's unix socket
-  and applies the delta before the frame cooks. Position source
-  (`Positionmode`): the TD timeline (`timeline`, deterministic — offline
-  rendering), the player's push-transport playhead (`follow`, read-only —
-  tracks the editor preview), bidirectional glue between the two (`sync` —
-  seeking in TD or the editor propagates both ways), or an internal
-  transport (`internal`).
+- clock beacon: send `/vtr/clock [t rate]` to the tap's listen port so
+  recorded events carry TD-timeline time. The Clock toggle gates it.
+- player tick: block on one resolve query to vtr-player's unix socket and
+  apply the delta before the frame cooks.
 
-Spec: docs/tasks/tox-rework/spec.md + plan.md; sync: docs/tasks/tl-sync/.
+The position source is picked from TD's realtime flag (`project.realTime`):
+
+- realtime on (live): bidirectional sync glue to the player's push
+  transport — seeking in TD or in the editor propagates both ways. Short
+  query timeout, so a hung player costs one hiccup, not a stalled frame.
+- realtime off (Export Movie): resolve at the TD timeline seconds minus
+  Offset; the transport is never read or written. Long timeout — a render
+  must never skip a frame's events. Deterministic by construction.
+
+Recording is triggered from a controller or the editor, never from TD. Rec
+follow needs no special case here: vtr-player primes and starts its
+transport on rec start (`tap_client.rs`), and the sync glue below sees that
+as an ordinary foreign move.
+
+Spec: docs/tasks/tox-rework/spec.md + plan.md; sync: docs/tasks/tl-sync/;
+single mode: docs/tasks/tox-single-mode/.
 """
 
 import json
@@ -23,10 +32,12 @@ import socket
 import time
 import traceback
 
-# Blocking-read budget for one player reply. Generous on purpose: offline
-# rendering must never skip a frame's events, so slow is acceptable and only
-# a dead player should trip this.
-QUERY_TIMEOUT_S = 5.0
+# Blocking-read budget for one player reply, per branch. Offline rendering
+# must never skip a frame's events, so slow is acceptable there and only a
+# dead player should trip it. Live TD must not stall a whole frame on a hung
+# player, so it gives up fast and retries on the reconnect throttle.
+QUERY_TIMEOUT_LIVE_S = 0.1
+QUERY_TIMEOUT_RENDER_S = 5.0
 # Throttle reconnect attempts after a socket failure.
 RECONNECT_S = 1.0
 # Paused-timeline tick rate. onFrameStart stops when the TD timeline is
@@ -34,9 +45,9 @@ RECONNECT_S = 1.0
 # keeps player sync and the clock beacon alive through a pause.
 HEARTBEAT_MS = 50
 
-# Sync mode (Positionmode "sync"): TD is glued to the player transport both
-# ways. TD gives no scrub-gesture event, so a user seek is inferred from a
-# discontinuity between the timeline and the transport.
+# Live sync: TD is glued to the player transport both ways. TD gives no
+# scrub-gesture event, so a user seek is inferred from a discontinuity
+# between the timeline and the transport.
 # JUMP: a gap this large (seconds) is a deliberate seek — write it back.
 SYNC_JUMP_EPS = 0.25
 # DRIFT: below this (frames) the timeline is silently re-glued to the
@@ -47,18 +58,17 @@ SYNC_DRIFT_FRAMES = 2.0
 class VTRExt:
     def __init__(self, ownerComp):
         self.ownerComp = ownerComp
-        # record mode
+        # clock beacon
         self._last_clock = float("-inf")  # absTime of the last /vtr/clock
-        # player mode
+        # player client
         self.sock = None
         self.rfile = None
         self.error = ""
         self._rows = {}  # (port, addr) -> state DAT row
         self._pending_load = False
         self._next_connect = 0.0  # absTime gate on reconnect attempts
-        self._pos = 0.0  # internal transport position (Positionmode internal)
-        self._last_abs = None
-        self._sync_reset()  # Positionmode sync state
+        self._realtime = None  # last seen project.realTime; None forces an edge
+        self._sync_reset()  # live sync state
         self._reset_state()
         if str(self.ownerComp.par.File.eval()).strip():
             self._pending_load = True
@@ -72,8 +82,9 @@ class VTRExt:
 
     # ------------------------------------------------------------------ util
 
-    def _mode(self):
-        return str(self.ownerComp.par.Mode.eval())
+    def _timeout(self):
+        """Query timeout for the branch this tick runs (see the constants)."""
+        return QUERY_TIMEOUT_LIVE_S if self._realtime else QUERY_TIMEOUT_RENDER_S
 
     def _timeline(self):
         """(t, rate) of the root timeline. TD plays in real time, so rate is
@@ -98,10 +109,8 @@ class VTRExt:
 
     def OnFrame(self):
         """Called every frame (Execute DAT, frameStart) — before the cook."""
-        if self._mode() == "record":
-            self._clock_tick()
-        else:
-            self._player_tick()
+        self._clock_tick()
+        self._player_tick()
 
     def Heartbeat(self):
         """Paused-timeline tick. While the timeline plays, onFrameStart
@@ -133,59 +142,20 @@ class VTRExt:
     def OnParChange(self, par):
         """Called from the Parameter Execute DAT."""
         name = par.name
-        if name == "Record":
-            if self._mode() != "record":
-                return
-            t, rate = self._timeline()
-            if par.eval():
-                self._tap().sendOSC("/vtr/rec/start", [t, rate])
-            else:
-                self._tap().sendOSC("/vtr/rec/stop", [])
-        elif name in ("File", "Triggerpatterns"):
+        if name in ("File", "Triggerpatterns"):
             # Trigger classification is compiled into the server-side load.
             self._pending_load = True
-        elif name in ("Mode", "Sockpath"):
-            # Leaving player mode, or pointing at another player: reconnect
-            # lazily. A fresh connection re-baselines server-side, so the
-            # next resolve is a full catch-up.
+        elif name == "Sockpath":
+            # Pointing at another player: reconnect lazily. A fresh
+            # connection re-baselines server-side, so the next resolve is a
+            # full catch-up.
             self._disconnect()
-        elif name in ("Positionmode", "Play"):
-            # A jump in the queried t IS the seek; only the internal
-            # transport's time base needs resetting.
-            self._last_abs = None
-            # Entering sync re-baselines from the transport on the next tick.
-            self._sync_reset()
 
     def OnPulse(self, par):
-        if par.name == "Rewind":
-            self._pos = 0.0
-            self._last_abs = None
-        elif par.name == "Reload":
+        if par.name == "Reload":
             self._pending_load = True
 
-    def OnNotify(self, address, args):
-        """Rec notification from the tap (`--td-notify`, plain OSC)."""
-        if self._mode() != "record":
-            return
-        if address == "/vtr/rec/start":
-            # Args are omitted when the tap's clock is unknown: start
-            # playback without seeking. rate is accepted but unused (v1
-            # plays at the timeline's own speed).
-            t = op("/").time  # noqa: F821
-            if args:
-                try:
-                    tl = float(args[0])
-                except (TypeError, ValueError):
-                    tl = None
-                if tl is not None:
-                    t.frame = tl * t.rate + 1.0
-            t.play = True
-        elif address == "/vtr/rec/stop":
-            # Keep playing: a rec stop is a logging event, not a transport
-            # command (plan, resolved 2026-07-21).
-            pass
-
-    # ------------------------------------------------------------------- rec
+    # ----------------------------------------------------------------- clock
 
     def _clock_tick(self):
         p = self.ownerComp.par
@@ -206,39 +176,32 @@ class VTRExt:
 
     def _player_tick(self):
         p = self.ownerComp.par
-        mode = str(p.Positionmode.eval())
-        if mode == "sync":
-            if not self._ensure_connected():
-                return  # degraded: state freezes on the last applied values
-            try:
-                if self._pending_load:
-                    self._load()
-                self._sync_tick(p)
-            except Exception as e:
-                self._drop_socket("{}".format(e))
-            return
-        if mode == "follow":
-            # Track vtr-player's push transport: the editor preview (or a
-            # controller's /vtr/play|seek) drives it, TD follows.
-            req = {"cmd": "resolve", "follow": True}
-        elif mode == "internal":
-            now = absTime.seconds  # noqa: F821
-            if not p.Play.eval():
-                self._last_abs = None
-                return
-            if self._last_abs is not None:
-                self._pos += now - self._last_abs
-            self._last_abs = now
-            req = {"cmd": "resolve", "t": self._pos}
-        else:  # timeline: the offline-render position source
-            pos = float(op("/").time.seconds) - float(p.Offset.eval())  # noqa: F821
-            req = {"cmd": "resolve", "t": pos}
+        realtime = bool(project.realTime)  # noqa: F821
+        if realtime != self._realtime:
+            # Branch edge. Drop the sync baseline — coming back to realtime
+            # re-adopts the transport and writes nothing — and re-arm the
+            # live socket with this branch's timeout.
+            self._realtime = realtime
+            self._sync_reset()
+            if self.sock is not None:
+                try:
+                    self.sock.settimeout(self._timeout())
+                except Exception as e:
+                    self._drop_socket("{}".format(e))
+                    return
         if not self._ensure_connected():
             return  # degraded: state freezes on the last applied values
         try:
             if self._pending_load:
                 self._load()
-            reply = self._request(req)
+            if realtime:
+                self._sync_tick(p)
+                return
+            # Offline render: the TD timeline is the position source and the
+            # transport is neither read nor written — same session, same
+            # frames, every run.
+            pos = float(op("/").time.seconds) - float(p.Offset.eval())  # noqa: F821
+            reply = self._request({"cmd": "resolve", "t": pos})
         except Exception as e:
             self._drop_socket("{}".format(e))
             return
@@ -252,7 +215,7 @@ class VTRExt:
 
     def _sync_reset(self):
         """Drop the sync baseline: the next sync tick adopts the transport
-        state wholesale and writes nothing (mode entry, reconnect)."""
+        state wholesale and writes nothing (branch edge, reconnect)."""
         self._sync_gen = -1  # last transport gen applied
         self._sync_last = None  # (td_seconds, play, monotonic) at last tick
         self._sync_reseed = False  # error-driven drops set this (see _drop_socket)
@@ -353,7 +316,7 @@ class VTRExt:
         path = os.path.expanduser(str(self.ownerComp.par.Sockpath.eval()).strip())
         try:
             s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            s.settimeout(QUERY_TIMEOUT_S)
+            s.settimeout(self._timeout())
             s.connect(path)
         except Exception as e:
             self._next_connect = now + RECONNECT_S
@@ -520,8 +483,8 @@ class VTRExt:
     def _drop_socket(self, msg):
         self._disconnect()
         # Error-driven drop (player crash, dead socket): after the
-        # reconnect, sync mode reseeds the transport from TD instead of
-        # adopting. Deliberate drops (Mode/Sockpath change) keep the
+        # reconnect, live sync reseeds the transport from TD instead of
+        # adopting. Deliberate drops (Sockpath change) keep the
         # adopt-on-entry behavior from _disconnect alone.
         self._sync_reseed = True
         self._set_error(msg)
