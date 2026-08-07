@@ -318,11 +318,12 @@ class VTRExt:
             s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             # TD's embedded Python leaves SIGPIPE at its default (terminate),
             # unlike the CPython binary. A sendall after the player dies
-            # would then kill the whole TD process — SO_NOSIGPIPE turns that
-            # into an EPIPE exception, handled by _drop_socket. macOS-only,
-            # like AF_UNIX here.
-            if hasattr(socket, "SO_NOSIGPIPE"):
-                s.setsockopt(socket.SOL_SOCKET, socket.SO_NOSIGPIPE, 1)
+            # (VTR quit, or the player restart on project open) would then
+            # kill the whole TD process — SO_NOSIGPIPE turns that into an
+            # EPIPE exception, handled by _drop_socket. TD's Python does not
+            # export the constant, so use the darwin value (0x1022) directly;
+            # this client is macOS-only anyway (AF_UNIX).
+            s.setsockopt(socket.SOL_SOCKET, getattr(socket, "SO_NOSIGPIPE", 0x1022), 1)
             s.settimeout(self._timeout())
             s.connect(path)
         except Exception as e:
