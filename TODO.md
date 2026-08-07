@@ -1,9 +1,5 @@
 # TODO
 
-- curve editorにvalueのlimit機能がほしい
-  - snapボタンの横にlimitボタンを追加
-  - 有効のとき、data pointのdragは常に0~1の範囲に限定される
-    - 既存の0~1範囲外のdata pointには影響しない
 - snapが有効のとき、x方向のsnap単位はgridではなく、常にこうなってほしい:
   - timeline editor: clip境界 or 秒
   - curve editor: clip境界 or 付近のdatapoint or 秒

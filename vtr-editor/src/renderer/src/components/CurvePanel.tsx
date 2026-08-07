@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Magnet, Maximize2, Pencil, Spline, SquareDashed } from 'lucide-react'
+import { Brackets, Magnet, Maximize2, Pencil, Spline, SquareDashed } from 'lucide-react'
 import type { ClipCurve, ClipEdits, OscEvent } from '../../../shared/types'
 import {
   ClipInst,
@@ -142,9 +142,11 @@ export function CurvePanel({
   const [hidden, setHidden] = useState<Set<string>>(new Set())
   // Name filter: narrows the property list and the drawn curves.
   const [filter, setFilter] = useState('')
-  // Header toggles: snap point edits to the grid; show the transform box;
-  // pencil (clicks add points to the selected curve).
+  // Header toggles: snap point edits to the grid; limit dragged values to
+  // 0..1; show the transform box; pencil (clicks add points to the selected
+  // curve).
   const [snap, setSnap] = useState(false)
+  const [limit, setLimit] = useState(false)
   const [useBox, setUseBox] = useState(true)
   const [pencil, setPencil] = useState(false)
   // Selected properties: their curves draw thicker and win the hover tooltip.
@@ -282,6 +284,12 @@ export function CurvePanel({
     const step = gridStep(max - min, innerH - 2 * PAD, 18)
     return Math.round(v / step) * step
   }
+  // Limit on: dragged values clamp to 0..1. Points that started outside the
+  // range are left alone (v0 is the drag-start value).
+  const limitValue = (v: number, v0: number): number => {
+    if (!limit || v0 < 0 || v0 > 1) return v
+    return Math.min(Math.max(v, 0), 1)
+  }
 
   // Hover: the tooltip always shows the point nearest to the cursor (px
   // distance). Selected properties win; otherwise all visible points compete.
@@ -346,6 +354,7 @@ export function CurvePanel({
     innerH,
     snapTime,
     snapValue,
+    limitValue,
     loaded,
     pencil,
     useBox,
@@ -469,6 +478,15 @@ export function CurvePanel({
           onClick={() => setSnap((s) => !s)}
         >
           <Magnet size={14} />
+        </button>
+        <button
+          className={limit ? 'btn small snap active' : 'btn small snap'}
+          data-tip="Limit values to 0–1"
+          aria-label="limit"
+          aria-pressed={limit}
+          onClick={() => setLimit((l) => !l)}
+        >
+          <Brackets size={14} />
         </button>
         <button
           className={useBox ? 'btn small snap active' : 'btn small snap'}
