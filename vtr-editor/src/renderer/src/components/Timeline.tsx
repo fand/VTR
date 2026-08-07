@@ -732,6 +732,8 @@ export function Timeline({
             <div key={m.id} className="marker-line" style={{ left: LABEL_W + m.time * pxPerSec }} />
           ))}
 
+          <div className="duration-line" style={{ left: LABEL_W + duration * pxPerSec }} />
+
           <PlayheadLine playhead={playhead} playing={playing} pxPerSec={pxPerSec} />
 
           {tracks.map((track, trackIdx) => (

@@ -507,6 +507,18 @@ body {
   clip-path: polygon(0 0, 100% 0, 50% 100%);
 }
 
+/* End of the project duration (the header "dur" field). */
+.duration-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 1px dashed var(--text-dim);
+  opacity: 0.6;
+  z-index: 16;
+  pointer-events: none;
+}
+
 /* Marker time line through the tracks; the flag in the ruler is the handle. */
 .marker-line {
   position: absolute;
