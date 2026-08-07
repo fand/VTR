@@ -1,7 +1,7 @@
 import { applyPatches, enablePatches, produce, produceWithPatches } from 'immer'
 import { useCallback, useRef, useState } from 'react'
 import { UNDO_CAP, type ClipEdits, type UndoEntry } from '../../shared/types'
-import type { MarkerState, TrackState } from './timeline/model'
+import { contentEnd, type MarkerState, type TrackState } from './timeline/model'
 
 enablePatches()
 
@@ -11,6 +11,22 @@ export interface Doc {
   markers: MarkerState[]
   duration: number
   edits: Record<string, ClipEdits>
+}
+
+/**
+ * Wrap a recipe so the duration ratchets up to the content end (before and
+ * after the edit). The timeline view spans max(duration, contentEnd), so
+ * without this, moving the last clip earlier would shrink the view.
+ * Transients ratchet too — a mid-drag shrink would refit the zoom under the
+ * cursor and desync the drag. The pre-edit extent counts, so the ratchet
+ * also captures clips recorded past the duration.
+ */
+export function ratcheted(recipe: (d: Doc) => void): (d: Doc) => void {
+  return (d: Doc): void => {
+    const before = contentEnd(d.tracks)
+    recipe(d)
+    d.duration = Math.max(d.duration, before, contentEnd(d.tracks))
+  }
 }
 
 export interface History {
@@ -81,7 +97,7 @@ export function useHistory(
   const transient = useCallback(
     (recipe: (d: Doc) => void): void => {
       base.current ??= docRef.current
-      install(produce(docRef.current, recipe))
+      install(produce(docRef.current, ratcheted(recipe)))
     },
     [install]
   )
@@ -90,7 +106,8 @@ export function useHistory(
     (label: string, recipe: (d: Doc) => void): void => {
       const from = base.current ?? docRef.current
       base.current = null
-      const [next, patches, inversePatches] = produceWithPatches(from, recipe)
+      // Ratchet inside the recipe, so undo restores the duration too.
+      const [next, patches, inversePatches] = produceWithPatches(from, ratcheted(recipe))
       if (patches.length === 0) {
         // No-op commit still snaps any transient state back to the base.
         install(next)

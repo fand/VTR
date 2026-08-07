@@ -242,6 +242,80 @@ test('curve editor fit zoom fits all points, then the selected point', async () 
   }
 })
 
+test('dragging the last clip left keeps the view range, drag distance, and undo', async () => {
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
+  writeFileSync(
+    join(workdir, CLIP),
+    jsonl([
+      { type: 'session_start', t: 0, wall: '2026-07-16T00:00:00Z' },
+      { t: 0.5, port: LISTEN_PORT, a: '/a', args: [0.1] },
+      { type: 'session_end', t: 100 }
+    ])
+  )
+  // Clip recorded far past the stale 10s duration (the tl-align case): the
+  // view extent comes from the clip, and the timeline is long enough that
+  // min zoom sits below 2px/s. A mid-drag extent shrink would then refit
+  // the zoom under the cursor: the clip lags the pointer, the width jumps,
+  // and undo can't restore the view.
+  writeFileSync(
+    join(workdir, 'project.json'),
+    JSON.stringify({
+      version: 1,
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT },
+      duration: 10,
+      tracks: [{ clips: [{ file: CLIP, offset: 2000, trimIn: 0, trimOut: 100 }] }]
+    })
+  )
+
+  const app = await electron.launch({
+    args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
+    cwd: workdir,
+    env: {
+      ...process.env,
+      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
+      OSC_EDITOR_HIDDEN: '1',
+      OSC_EDITOR_DATA_DIR: workdir
+    }
+  })
+  try {
+    const page = await app.firstWindow()
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
+
+    // Min zoom: the whole 2100s fits, the clip is on screen.
+    await page.getByLabel('zoom', { exact: true }).fill('0')
+    const scrollWidth = (): Promise<number> =>
+      page.locator('.timeline-scroll').evaluate((el) => el.scrollWidth)
+    const clipX = async (): Promise<number> => (await page.locator('.clip').boundingBox())!.x
+    await expect
+      .poll(() => page.locator('.timeline-scroll').evaluate((el) => el.scrollWidth - el.clientWidth))
+      .toBeLessThanOrEqual(1)
+    const width0 = await scrollWidth()
+    const x0 = await clipX()
+
+    // Drag the clip 300px left.
+    const box = (await page.locator('.clip').boundingBox())!
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width / 2 - 300, box.y + box.height / 2, { steps: 10 })
+    // Mid-drag: the view extent must not shrink.
+    expect(await scrollWidth()).toBe(width0)
+    await page.mouse.up()
+
+    // The clip moved by the dragged distance, and the extent is unchanged.
+    await expect.poll(clipX).toBeLessThan(x0 - 290)
+    await expect.poll(clipX).toBeGreaterThan(x0 - 310)
+    expect(await scrollWidth()).toBe(width0)
+
+    // Undo restores the position and the extent.
+    await page.keyboard.press('ControlOrMeta+z')
+    await expect.poll(clipX).toBeGreaterThan(x0 - 2)
+    await expect.poll(clipX).toBeLessThan(x0 + 2)
+    expect(await scrollWidth()).toBe(width0)
+  } finally {
+    await app.close()
+  }
+})
+
 test('min zoom fits a long timeline in the window', async () => {
   const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   writeFileSync(

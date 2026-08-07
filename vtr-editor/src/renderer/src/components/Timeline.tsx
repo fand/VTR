@@ -258,9 +258,15 @@ export function Timeline({
   // never turns into millions of mark divs.
   const [scrollX, setScrollX] = useState(0)
   const { w: viewW } = useElementSize(scrollRef)
-  // Time + viewport x under the cursor at pinch start; scroll is restored
-  // after the zoomed width renders so that point stays put.
-  const pinchAnchor = useRef<{ t: number; viewX: number } | null>(null)
+  // Cursor viewport-x at the last pinch event; the zoom commit re-anchors the
+  // scroll so the time under the cursor stays put. Expired by timestamp, not
+  // per-frame: pinch events can outrun re-renders, and dropping the anchor at
+  // the frame boundary let commits land with no scroll fix, so the zoom
+  // anchored to the view edge instead of the cursor.
+  const pinchAnchor = useRef<{ viewX: number; at: number } | null>(null)
+  // pxPerSec the DOM currently reflects; scrollLeft is only consistent with
+  // this, never with a just-scheduled zoom.
+  const domPx = useRef(pxPerSec)
 
   // Marquee: drag on empty timeline space rubber-bands a clip selection.
   // A plain click (< 3px) deselects and seeks, like before.
@@ -348,28 +354,30 @@ export function Timeline({
     const onWheel = (e: WheelEvent): void => {
       if (!e.ctrlKey) return
       e.preventDefault()
-      const viewX = e.clientX - el.getBoundingClientRect().left
-      pinchAnchor.current = { t: (el.scrollLeft + viewX - LABEL_W) / pxPerSec, viewX }
-      // The zoom clamp lives in the parent: a pinch at the range edge
-      // commits nothing, so the layout effect never consumes this anchor.
-      // Drop it at the frame boundary (a consuming commit flushes first) so
-      // a later zoom button press can't apply a stale anchor and jump the
-      // scroll.
-      requestAnimationFrame(() => {
-        pinchAnchor.current = null
-      })
+      pinchAnchor.current = {
+        viewX: e.clientX - el.getBoundingClientRect().left,
+        at: performance.now()
+      }
       onZoom(Math.exp(-e.deltaY * 0.01))
     }
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
-  }, [pxPerSec, onZoom])
+  }, [onZoom])
 
   useLayoutEffect(() => {
     const el = scrollRef.current
+    const prev = domPx.current
+    domPx.current = pxPerSec
     const a = pinchAnchor.current
-    if (!el || !a) return
-    pinchAnchor.current = null
-    el.scrollLeft = LABEL_W + a.t * pxPerSec - a.viewX
+    if (!el || !a || prev === pxPerSec) return
+    // A zoom this long after the last pinch event came from the buttons or
+    // slider; those keep the scroll where it is.
+    if (performance.now() - a.at > 200) {
+      pinchAnchor.current = null
+      return
+    }
+    const t = (el.scrollLeft + a.viewX - LABEL_W) / prev
+    el.scrollLeft = LABEL_W + t * pxPerSec - a.viewX
   }, [pxPerSec])
 
   /** Smallest correction that lands t on another clip's edge, or 0. */
