@@ -42,8 +42,9 @@ export type {
   PointSel
 } from './curveModel'
 
-/** Curve sliders map 0..100 onto 1..MAX_ZOOM. */
-const zoom = zoomSlider(1, MAX_ZOOM)
+/** Y slider maps 0..100 onto 1..MAX_ZOOM; the X slider's ceiling is dynamic
+ *  (vp.zoomXMax), so its mapping is built per render. */
+const zoomYMap = zoomSlider(1, MAX_ZOOM)
 
 interface HoverInfo {
   px: number
@@ -148,10 +149,16 @@ export function CurvePanel({
   const [pencil, setPencil] = useState(false)
   // Selected properties: their curves draw thicker and win the hover tooltip.
   const [selectedProps, setSelectedProps] = useState<Set<string>>(new Set())
+  // Time domain: the union of the shown clips' timeline spans.
+  const tMin = clips.length > 0 ? Math.min(...clips.map((c) => c.offset)) : 0
+  const tMax = clips.length > 0 ? Math.max(...clips.map((c) => c.offset + clipLen(c))) : 0
+  const tRange = Math.max(tMax - tMin, 1e-9)
+
   const editorRef = useRef<HTMLDivElement | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
-  const vp = useCurveViewport(editorRef, scrollRef)
+  const vp = useCurveViewport(editorRef, scrollRef, tRange)
   const { w, h, zoomX, zoomY, innerW, innerH, scrollTop, scrollLeft } = vp
+  const zoomXMap = zoomSlider(1, vp.zoomXMax)
 
   // Load events for every shown clip. Keyed by the joined paths so a new
   // clips array with the same files doesn't refetch.
@@ -224,11 +231,6 @@ export function CurvePanel({
 
   // With a property selection, other curves fade out and lose their points.
   const dimmed = (key: string): boolean => selectedProps.size > 0 && !selectedProps.has(key)
-
-  // Time domain: the union of the shown clips' timeline spans.
-  const tMin = clips.length > 0 ? Math.min(...clips.map((c) => c.offset)) : 0
-  const tMax = clips.length > 0 ? Math.max(...clips.map((c) => c.offset + clipLen(c))) : 0
-  const tRange = Math.max(tMax - tMin, 1e-9)
 
   const scale: Scale = { tMin, tRange, innerW, innerH }
   const x = (t: number): number => xAt(scale, t)
@@ -370,7 +372,7 @@ export function CurvePanel({
     // Selected points all on hidden/dimmed curves: fit the visible ones.
     if (t1 < t0 && selKeys.size > 0) [t0, t1] = span(false)
     if (t1 < t0) return // nothing to fit
-    const fit = fitZoomX(w, tMin, tRange, t0, t1, MAX_ZOOM)
+    const fit = fitZoomX(w, tMin, tRange, t0, t1, vp.zoomXMax)
     if (fit) vp.applyFit(fit)
   }
 
@@ -511,10 +513,10 @@ export function CurvePanel({
           min={0}
           max={100}
           step={1}
-          value={zoom.toSlider(zoomX)}
-          style={{ '--val': `${zoom.toSlider(zoomX)}%` } as React.CSSProperties}
+          value={zoomXMap.toSlider(zoomX)}
+          style={{ '--val': `${zoomXMap.toSlider(zoomX)}%` } as React.CSSProperties}
           aria-label="x zoom"
-          onChange={(e) => vp.setZoomX(zoom.fromSlider(Number(e.target.value)))}
+          onChange={(e) => vp.setZoomX(zoomXMap.fromSlider(Number(e.target.value)))}
         />
         <span className="curve-zoom-label">Y</span>
         <input
@@ -523,10 +525,10 @@ export function CurvePanel({
           min={0}
           max={100}
           step={1}
-          value={zoom.toSlider(zoomY)}
-          style={{ '--val': `${zoom.toSlider(zoomY)}%` } as React.CSSProperties}
+          value={zoomYMap.toSlider(zoomY)}
+          style={{ '--val': `${zoomYMap.toSlider(zoomY)}%` } as React.CSSProperties}
           aria-label="y zoom"
-          onChange={(e) => vp.setZoomY(zoom.fromSlider(Number(e.target.value)))}
+          onChange={(e) => vp.setZoomY(zoomYMap.fromSlider(Number(e.target.value)))}
         />
       </div>
       <div className="curve-body">

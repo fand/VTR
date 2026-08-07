@@ -1,7 +1,5 @@
 # TODO
 
-- timelineが長いとき、詳細にzoom inできない
-  - timeline durationに関わらず、最大zoomではframeが見えるべき
 - curve editorにvalueのlimit機能がほしい
   - snapボタンの横にlimitボタンを追加
   - 有効のとき、data pointのdragは常に0~1の範囲に限定される

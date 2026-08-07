@@ -2,6 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { AlignStartVertical, BookmarkPlus, Magnet, ZoomIn, ZoomOut } from 'lucide-react'
 import {
   ClipInst,
+  MAX_PX_PER_SEC,
   MIN_CLIP_LEN,
   MarkerState,
   TrackState,
@@ -30,8 +31,7 @@ export interface PlayingState {
 export const TRACK_HEIGHT = 64
 /** .ruler-row height in main.css; tracks stack right below it. */
 const RULER_H = 22
-export const MIN_PX_PER_SEC = 2
-export const MAX_PX_PER_SEC = 400
+export { MIN_PX_PER_SEC, MAX_PX_PER_SEC } from '../timeline/model'
 const TRIM_HANDLE_PX = 8
 
 type DragMode = 'move' | 'trim-in' | 'trim-out'

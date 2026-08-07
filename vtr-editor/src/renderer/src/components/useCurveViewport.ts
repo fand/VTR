@@ -4,7 +4,7 @@
  *  on pinchAnchor/zoomXRef. */
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { PAD } from './curveGeom'
-import { MAX_ZOOM } from './curveModel'
+import { maxZoomX } from './curveModel'
 import { useElementSize } from './uiScale'
 
 export interface CurveViewport {
@@ -12,6 +12,8 @@ export interface CurveViewport {
   h: number
   zoomX: number
   zoomY: number
+  /** Current X-zoom ceiling; grows with the shown time range (frame-level max). */
+  zoomXMax: number
   setZoomX: (z: number) => void
   setZoomY: (z: number) => void
   innerW: number
@@ -28,9 +30,17 @@ export interface CurveViewport {
 
 export function useCurveViewport(
   editorRef: React.RefObject<HTMLDivElement | null>,
-  scrollRef: React.RefObject<HTMLDivElement | null>
+  scrollRef: React.RefObject<HTMLDivElement | null>,
+  /** Shown time range in seconds; sets the X-zoom ceiling. */
+  tRange: number
 ): CurveViewport {
   const { w, h } = useElementSize(editorRef)
+  const zoomXMax = maxZoomX(w, tRange)
+  // For the wheel handler, which is subscribed once.
+  const zoomXMaxRef = useRef(zoomXMax)
+  useLayoutEffect(() => {
+    zoomXMaxRef.current = zoomXMax
+  }, [zoomXMax])
 
   // Pinch (ctrl+wheel) or the X slider zooms the time axis; 1 = the time
   // range fits the panel. The Y slider zooms the value axis; past 1 the
@@ -64,7 +74,10 @@ export function useCurveViewport(
       const scroll = scrollRef.current
       if (!e.ctrlKey || !scroll) return
       e.preventDefault()
-      const next = Math.min(Math.max(zoomXRef.current * Math.exp(-e.deltaY * 0.01), 1), MAX_ZOOM)
+      const next = Math.min(
+        Math.max(zoomXRef.current * Math.exp(-e.deltaY * 0.01), 1),
+        zoomXMaxRef.current
+      )
       if (next === zoomXRef.current) return // clamped: nothing will re-render
       zoomXRef.current = next
       // Anchor from the DOM, not React state: pinch events outrun re-renders,
@@ -114,11 +127,17 @@ export function useCurveViewport(
     }
   }
 
+  // A shrinking time range can drop the ceiling below the current zoom.
+  useEffect(() => {
+    setZoomX((z) => Math.min(z, zoomXMax))
+  }, [zoomXMax])
+
   return {
     w,
     h,
     zoomX,
     zoomY,
+    zoomXMax,
     setZoomX,
     setZoomY,
     innerW,
