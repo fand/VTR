@@ -316,6 +316,13 @@ class VTRExt:
         path = os.path.expanduser(str(self.ownerComp.par.Sockpath.eval()).strip())
         try:
             s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            # TD's embedded Python leaves SIGPIPE at its default (terminate),
+            # unlike the CPython binary. A sendall after the player dies
+            # would then kill the whole TD process — SO_NOSIGPIPE turns that
+            # into an EPIPE exception, handled by _drop_socket. macOS-only,
+            # like AF_UNIX here.
+            if hasattr(socket, "SO_NOSIGPIPE"):
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_NOSIGPIPE, 1)
             s.settimeout(self._timeout())
             s.connect(path)
         except Exception as e:
