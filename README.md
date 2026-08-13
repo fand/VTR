@@ -65,8 +65,11 @@ as a new bottom track, so overdub wins.
   away and they come back.
 
 Priority is resolved when the project is flattened, so exports stay ordinary
-events + curves and vtr-player is unchanged. Projects with overlapping tracks
-export differently than they did before this change; there is no migration.
+events + curves. On the player side, curves on one address group by span
+connectivity — disjoint pieces are separate groups, so an event in the gap
+between them plays (a hull-wide group used to shadow it). Projects with
+overlapping tracks export differently than they did before this change;
+there is no migration.
 
 ## OSC control (protocol v2, `/vtr` namespace)
 

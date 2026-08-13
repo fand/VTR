@@ -30,10 +30,16 @@ curve again.
 - **Track order is semantic.** Reordering tracks changes what plays —
   priority is an arrangement tool. Document in README.
 - **Muted clips don't mask.**
-- **Resolver untouched.** Priority is resolved structurally at merge
-  time; session.jsonl schema, player, and conformance stay as they are.
-  Same philosophy as curve-interp's span invariant: the editor emits
-  data with no dead regions, the resolver stays dumb.
+- **Resolver: one grouping fix, schema untouched.** Priority is resolved
+  structurally at merge time; session.jsonl stays as it is. But the
+  player used to merge every curve line of one address into a single
+  group whose def-time span was the hull — the gap between two carved
+  pieces stayed shadowed, so the take never played (adversarial review,
+  CRITICAL). Curves now group by span connectivity: overlap/touch merges
+  (one message per sample), disjoint spans are separate groups, and an
+  event in a gap outranks the left piece — matching the editor's
+  per-span `unshadowedPoints` model. Gap-without-events behavior is
+  unchanged (left piece's end value holds).
 
 ## Semantics at mask boundaries
 
@@ -65,10 +71,18 @@ curve pieces must stay clear of the lower track's boundary events.
     it splices its value in at its own arg index.
   - **no resume** when a live carved piece of the same key already covers
     that time (it resumes by itself, and an event inside a span never
-    plays), when the time lands inside the next mask window for that key
-    (a sub-grid gap between two windows), or when no clip window of the
-    upper track contains the mask end (punch-out past the clip's end
-    resumes nothing).
+    plays), when a real event of the track sits exactly on the resume
+    grid point (it re-asserts the value itself; a stale resume would
+    override it), when the time lands inside the next mask window for
+    that key (a sub-grid gap between two windows), or when no clip window
+    of the upper track contains the mask end (punch-out past the clip's
+    end resumes nothing).
+  - **template patch**: when a piece suppresses the resume, it only
+    re-asserts its own arg — the track's resolved values for the other
+    args it defines are spliced into every covering piece's emission
+    template (the player emits template values verbatim for args no
+    curve controls). Arg splices past a template's arity extend args
+    from the curve's own template and rebuild `types` to match.
 
 ## Stacking
 
