@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { maskIntervals, maskKey } from '../../../shared/trackMask'
+import type { Interval } from '../../../shared/trackMask'
 import type { ClipCurve, ClipEdits, OscEvent } from '../../../shared/types'
 import type { ClipInst } from '../timeline/model'
 import { buildProperties, type MaskCtx } from './curveModel'
@@ -42,10 +43,17 @@ const ramp: ClipCurve = {
   ]
 }
 
-/** The shown clip on the upper track, masked over [start, end] for `key`. */
-function ctx(start: number, end: number, key = maskKey(PORT, A)): MaskCtx {
+/** The shown clip on the upper track, masked over [start, end] for `key`.
+ *  `windows` are the upper track's own clip windows (the resume gate). */
+function ctx(
+  start: number,
+  end: number,
+  key = maskKey(PORT, A),
+  windows: Interval[] = [{ start: 0, end: 10 }]
+): MaskCtx {
   return {
     masks: maskIntervals([[], [{ start, end, keys: new Set([key]) }]]),
+    windows: [windows, []],
     trackOf: new Map([[1, 0]])
   }
 }
@@ -62,8 +70,9 @@ describe('buildProperties masking', () => {
   it('marks masked points and drops them from the merged path', () => {
     const [p] = buildProperties([{ clip: clip(1, 0, 10), events: points }], {}, ctx(2, 4))
     expect(p.points.map((pt) => pt.masked)).toEqual([false, true, false])
-    // Still drawn and selectable; only the played path loses it.
-    expect(p.els.map((el) => ('knots' in el ? null : el.t))).toEqual([1, 5])
+    // Still drawn and selectable; only the played path loses it (4.000001 is
+    // the resume).
+    expect(p.els.map((el) => ('knots' in el ? null : el.t))).toEqual([1, 4.000001, 5])
   })
 
   it('scopes the mask to its own key', () => {
@@ -87,11 +96,11 @@ describe('buildProperties masking', () => {
     ])
   })
 
-  it('drops a fully masked curve from the merged path', () => {
+  it('drops a fully masked curve from the merged path, leaving its resume', () => {
     const edits: Record<string, ClipEdits> = { 'c1.jsonl': { curves: [ramp] } }
     const [p] = buildProperties([{ clip: clip(1, 0, 10), events: points }], edits, ctx(0, 10))
     expect(p.curves).toHaveLength(1)
-    expect(p.els).toEqual([])
+    expect(p.els).toEqual([{ t: 10.000001, v: 1 }])
   })
 
   it('clips a mask window to the curve it draws over', () => {
@@ -99,5 +108,96 @@ describe('buildProperties masking', () => {
     const edits: Record<string, ClipEdits> = { 'c1.jsonl': { curves: [ramp] } }
     const [p] = buildProperties([{ clip: clip(1, 4, 10), events: [] }], edits, ctx(0, 6))
     expect(p.curves[0].maskedRanges).toEqual([{ start: 4, end: 6 }])
+  })
+})
+
+/** The merged path must hold what merge exports (docs/tasks/track-priority):
+ *  past a mask, discrete upper data resumes its own value at end + 1e-6. */
+describe('buildProperties resume', () => {
+  const two = [ev(1, 0.1), ev(3, 0.3)]
+
+  it('resumes the last masked value past the window', () => {
+    const [p] = buildProperties([{ clip: clip(1, 0, 10), events: two }], {}, ctx(2, 4))
+    expect(p.els).toEqual([
+      { t: 1, v: 0.1 },
+      { t: 4.000001, v: 0.3 }
+    ])
+    // Path only: no dot, no selection identity.
+    expect(p.points).toHaveLength(2)
+  })
+
+  it('resumes a swallowed curve at its end value', () => {
+    const swallowed: ClipCurve = {
+      ...ramp,
+      knots: [
+        { t: 0, v: 0 },
+        { t: 3, v: 0.6 }
+      ]
+    }
+    const edits: Record<string, ClipEdits> = { 'c1.jsonl': { curves: [swallowed] } }
+    const [p] = buildProperties([{ clip: clip(1, 0, 10), events: [] }], edits, ctx(2, 4))
+    const last = p.els[p.els.length - 1]
+    expect(last).toEqual({ t: 4.000001, v: 0.6 })
+  })
+
+  it('skips the resume when a real point sits on it', () => {
+    const withPoint = [...two, ev(4.000001, 0.9)]
+    const [p] = buildProperties([{ clip: clip(1, 0, 10), events: withPoint }], {}, ctx(2, 4))
+    expect(p.els).toEqual([
+      { t: 1, v: 0.1 },
+      { t: 4.000001, v: 0.9 }
+    ])
+  })
+
+  it('skips the resume when no clip window of the track covers the mask end', () => {
+    // Punch-out past the upper clip's own end (window 0..3, mask 2..4).
+    const short = ctx(2, 4, maskKey(PORT, A), [{ start: 0, end: 3 }])
+    const [p] = buildProperties([{ clip: clip(1, 0, 3), events: two }], {}, short)
+    expect(p.els).toEqual([{ t: 1, v: 0.1 }])
+  })
+
+  it('skips the resume when a live curve piece covers it', () => {
+    const edits: Record<string, ClipEdits> = { 'c1.jsonl': { curves: [ramp] } }
+    const [p] = buildProperties([{ clip: clip(1, 0, 10), events: [] }], edits, ctx(2, 4))
+    // The right piece starts exactly on the resume time and resumes by itself.
+    expect(p.els).toHaveLength(2)
+    expect(p.els.every((el) => 'knots' in el)).toBe(true)
+  })
+
+  it('skips a resume that lands inside the next mask window', () => {
+    // Sub-grid gap between two lower clips: 4 + 1e-6 falls in the second.
+    const key = maskKey(PORT, A)
+    const mask: MaskCtx = {
+      masks: maskIntervals([
+        [],
+        [
+          { start: 2, end: 4, keys: new Set([key]) },
+          { start: 4.0000005, end: 6, keys: new Set([key]) }
+        ]
+      ]),
+      windows: [[{ start: 0, end: 10 }], []],
+      trackOf: new Map([[1, 0]])
+    }
+    const [p] = buildProperties([{ clip: clip(1, 0, 10), events: [...two, ev(5, 0.5)] }], {}, mask)
+    expect(p.els).toEqual([
+      { t: 1, v: 0.1 },
+      { t: 6.000001, v: 0.5 }
+    ])
+  })
+
+  it('skips the resume when the track defines nothing before the mask end', () => {
+    const [p] = buildProperties([{ clip: clip(1, 0, 10), events: [ev(5, 0.5)] }], {}, ctx(2, 4))
+    expect(p.els).toEqual([{ t: 5, v: 0.5 }])
+  })
+
+  it('leaves an unmasked property alone', () => {
+    const B = '/other'
+    const mixed = [...two, ev(2, 0.7, B), ev(3, 0.8, B)]
+    const props = buildProperties([{ clip: clip(1, 0, 10), events: mixed }], {}, ctx(2, 4))
+    const other = props.find((p) => p.label === B)
+    expect(other?.els).toEqual([
+      { t: 2, v: 0.7 },
+      { t: 3, v: 0.8 }
+    ])
   })
 })

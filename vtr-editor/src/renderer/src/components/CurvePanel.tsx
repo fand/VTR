@@ -300,7 +300,8 @@ export function CurvePanel({
       }
       return out
     })
-    return { masks: maskIntervals(perTrack), trackOf }
+    // Same clips both ways: a resume fires only inside a window that masks.
+    return { masks: maskIntervals(perTrack), windows: perTrack, trackOf }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- tracksKey covers tracks
   }, [tracksKey, loaded, edits])
 
