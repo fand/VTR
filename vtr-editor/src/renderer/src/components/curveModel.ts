@@ -4,6 +4,8 @@
 import { clipCurve, unshadowedPoints } from '../../../shared/curve'
 import { applyEditsIndexed } from '../../../shared/edits'
 import type { EventPointSel, KnotSel, PointSel } from '../../../shared/edits'
+import { carveKnots, maskKey, maskedAt } from '../../../shared/trackMask'
+import type { Interval, MaskIntervals } from '../../../shared/trackMask'
 import type { ClipCurve, ClipEdits, CurveKnot, OscEvent } from '../../../shared/types'
 import { MAX_PX_PER_SEC, type ClipInst } from '../timeline/model'
 import type { GeomEl } from './curveGeom'
@@ -40,6 +42,9 @@ export interface CurvePoint {
   clip: ClipInst
   /** The edited event itself (template for added points). */
   ev: OscEvent
+  /** A lower track owns this (port, address) here, so the point never plays.
+   *  Drawn dimmed, still selectable and editable. */
+  masked: boolean
 }
 
 /** One overlay curve drawn on a property: timeline-space knots, already
@@ -51,9 +56,23 @@ export interface PropCurve {
   /** The overlay record itself (clip-local knots; edits rebuild from it). */
   src: ClipCurve
   /** srcIndex maps back into src.knots; -1 marks synthetic boundary knots
-   *  from trim clipping (drawn but not editable). */
+   *  from trim clipping (drawn but not editable). The whole list stays here
+   *  (selection identities don't move), masked or not. */
   knots: (CurveKnot & { srcIndex: number })[]
+  /** Stretches a lower track owns, clipped to this curve's span. Drawn
+   *  dimmed/dashed; the live pieces between them make the merged path. */
+  maskedRanges: Interval[]
 }
+
+/** Which lower-track windows cover each shown clip. Absent = nothing masked. */
+export interface MaskCtx {
+  /** Per track index (top-to-bottom): the windows lower tracks mask, per key. */
+  masks: readonly MaskIntervals[]
+  /** Clip id → its track index. */
+  trackOf: ReadonlyMap<number, number>
+}
+
+const NO_MASK: MaskIntervals = new Map()
 
 export interface Property {
   /** `${addr} ${argIndex}` — stable id, never shown. */
@@ -70,28 +89,27 @@ export interface Property {
 
 export function buildProperties(
   clipEvents: { clip: ClipInst; events: OscEvent[] }[],
-  edits: Record<string, ClipEdits>
+  edits: Record<string, ClipEdits>,
+  mask?: MaskCtx
 ): Property[] {
   const byKey = new Map<string, CurvePoint[]>()
   const curvesByKey = new Map<string, PropCurve[]>()
   const argCount = new Map<string, number>()
   for (const { clip, events } of clipEvents) {
+    // The mask this clip's track carries; a clip with no track entry (tests,
+    // stale ids) draws unmasked.
+    const intervals = mask?.masks[mask.trackOf.get(clip.id) ?? -1] ?? NO_MASK
     for (const { ev, idx } of applyEditsIndexed(events, edits[clip.file])) {
       if (ev.t < clip.trimIn || ev.t > clip.trimOut) continue
+      const t = clip.offset + (ev.t - clip.trimIn)
+      const masked = maskedAt(intervals, maskKey(ev.port, ev.a), t)
       ev.args.forEach((arg, argIndex) => {
         if (typeof arg !== 'number') return
         argCount.set(ev.a, Math.max(argCount.get(ev.a) ?? 1, ev.args.length))
         const key = `${ev.a} ${argIndex}`
         let pts = byKey.get(key)
         if (!pts) byKey.set(key, (pts = []))
-        pts.push({
-          t: clip.offset + (ev.t - clip.trimIn),
-          v: arg,
-          eventIndex: idx,
-          argIndex,
-          clip,
-          ev
-        })
+        pts.push({ t, v: arg, eventIndex: idx, argIndex, clip, ev, masked })
       })
     }
     const clipEdits = edits[clip.file]
@@ -104,18 +122,23 @@ export function buildProperties(
       if (!byKey.has(key)) byKey.set(key, [])
       let list = curvesByKey.get(key)
       if (!list) curvesByKey.set(key, (list = []))
-      list.push({
-        clip,
-        curveIndex: ci,
-        src: c,
-        knots: clipped.map((k) => ({
-          ...k,
-          t: clip.offset + (k.t - clip.trimIn),
-          // Interior knots are copied verbatim by clipCurve, so an exact
-          // t match identifies the source knot; boundary splits get -1.
-          srcIndex: c.knots.findIndex((sk) => sk.t === k.t)
+      const knots = clipped.map((k) => ({
+        ...k,
+        t: clip.offset + (k.t - clip.trimIn),
+        // Interior knots are copied verbatim by clipCurve, so an exact
+        // t match identifies the source knot; boundary splits get -1.
+        srcIndex: c.knots.findIndex((sk) => sk.t === k.t)
+      }))
+      // Mask windows narrowed to this curve's span; they stay sorted and
+      // disjoint, so carveKnots can take them as they are.
+      const span = { start: knots[0].t, end: knots[knots.length - 1].t }
+      const maskedRanges = (intervals.get(maskKey(c.port, c.a)) ?? [])
+        .map((iv) => ({
+          start: Math.max(iv.start, span.start),
+          end: Math.min(iv.end, span.end)
         }))
-      })
+        .filter((r) => r.end >= r.start)
+      list.push({ clip, curveIndex: ci, src: c, knots, maskedRanges })
     })
   }
   // Sort by address, then arg index, so the list order is stable and scannable.
@@ -146,16 +169,32 @@ export function buildProperties(
         }
       }
     }
-    // Points inside a span never play (the curve outranks them for good —
-    // unshadowedPoints), so the merged path skips them; the dots still draw
-    // from `points` so they stay visible and editable.
-    const spans = curves.map((pc) => ({
-      start: pc.knots[0].t,
-      end: pc.knots[pc.knots.length - 1].t
+    // What actually plays: each curve minus its masked stretches (the same
+    // carve merge exports), and the points that survive both the masks and
+    // those live pieces.
+    const live: GeomEl[] = curves.flatMap((pc, ci) =>
+      pc.maskedRanges.length === 0
+        ? [{ t: pc.knots[0].t, knots: pc.knots, curve: ci }]
+        : carveKnots(pc.knots, pc.maskedRanges).map((knots) => ({
+            t: knots[0].t,
+            knots,
+            curve: ci
+          }))
+    )
+    // Points inside a live span never play (the curve outranks them for good —
+    // unshadowedPoints), and masked points never play at all, so the merged
+    // path skips both; the dots still draw from `points` so they stay visible
+    // and editable.
+    const spans = live.map((el) => ({
+      start: el.t,
+      end: 'knots' in el ? el.knots[el.knots.length - 1].t : el.t
     }))
     const els: GeomEl[] = [
-      ...unshadowedPoints(points, spans).map((pt) => ({ t: pt.t, v: pt.v })),
-      ...curves.map((pc, ci) => ({ t: pc.knots[0].t, knots: pc.knots, curve: ci }))
+      ...unshadowedPoints(
+        points.filter((pt) => !pt.masked),
+        spans
+      ).map((pt) => ({ t: pt.t, v: pt.v })),
+      ...live
     ].sort((a, b) => a.t - b.t)
     return { key, label, color: propColor(i), points, curves, els, min, max }
   })

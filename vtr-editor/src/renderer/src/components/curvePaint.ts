@@ -1,8 +1,17 @@
 /** Canvas painter of the curve editor + the e2e geometry hooks. Viewport-
  *  sized, devicePixelRatio-aware: draws the step-after lines and ALL points,
  *  translated by the scroll offsets and culled to the visible time span. */
+import { clipCurve } from '../../../shared/curve'
 import { tAt, visibleRange, walkMerged, xAt, yAt, PAD, type Scale } from './curveGeom'
-import { knotSel, ptSel, selKey, type Property } from './curveModel'
+import { knotSel, ptSel, selKey, type Property, type PropCurve } from './curveModel'
+
+/** Masked material (a lower track owns the window) draws faint and dashed. */
+const MASK_ALPHA = 0.3
+const MASK_DASH = [4, 3]
+
+/** Whether a knot sits in one of its curve's masked stretches. */
+const knotMasked = (pc: PropCurve, t: number): boolean =>
+  pc.maskedRanges.some((r) => r.start <= t && t <= r.end)
 
 /** e2e hooks: curves/points are canvas pixels, not DOM nodes, so tests read
  *  their geometry (in client coordinates) from these. */
@@ -23,6 +32,8 @@ declare global {
       selected: boolean
       t: number
       v: number
+      /** A lower track owns this time for the point's key. */
+      masked: boolean
     }[]
     __curveKnots?: {
       label: string
@@ -35,6 +46,8 @@ declare global {
       s: boolean
       hasIn: boolean
       hasOut: boolean
+      /** Sits in a masked stretch of its curve. */
+      masked: boolean
     }[]
   }
 }
@@ -89,7 +102,8 @@ export function paintCurves({
             y: rect.top + y(p, pt.v) - st,
             selected: selKeys.has(selKey(ptSel(pt))),
             t: pt.t,
-            v: pt.v
+            v: pt.v,
+            masked: pt.masked
           }))
         )
     : []
@@ -107,7 +121,8 @@ export function paintCurves({
               selected: k.srcIndex >= 0 && selKeys.has(selKey(knotSel(pc, k.srcIndex))),
               s: k.s === true,
               hasIn: k.i != null,
-              hasOut: k.o != null
+              hasOut: k.o != null,
+              masked: knotMasked(pc, k.t)
             }))
           )
         )
@@ -125,31 +140,54 @@ export function paintCurves({
   ctx.translate(-sl, -st)
   const t0 = tAt(scale, sl - PAD)
   const t1 = tAt(scale, sl + w + PAD)
+  const sink = {
+    moveTo: (px: number, py: number) => ctx.moveTo(px, py),
+    lineTo: (px: number, py: number) => ctx.lineTo(px, py),
+    bezierTo: (x1: number, y1: number, x2: number, y2: number, x3: number, y3: number) =>
+      ctx.bezierCurveTo(x1, y1, x2, y2, x3, y3)
+  }
   for (const p of drawn) {
     const dim = dimmed(p.key)
-    ctx.globalAlpha = dim ? 0.1 : 1
     ctx.strokeStyle = p.color
     ctx.lineWidth = selectedProps.has(p.key) ? 3 : 1.5
+    // Masked stretches first, so the live path draws over them: what a lower
+    // track owns still shows, dashed and faint, but never as the played line.
+    ctx.globalAlpha = dim ? 0.1 : MASK_ALPHA
+    ctx.setLineDash(MASK_DASH)
+    ctx.beginPath()
+    for (const pc of p.curves) {
+      for (const r of pc.maskedRanges) {
+        const piece = clipCurve(pc.knots, r.start, r.end)
+        if (!piece) continue
+        const el = { t: piece[0].t, knots: piece, curve: 0 }
+        walkMerged({ min: p.min, max: p.max, points: [], els: [el] }, scale, t0, t1, sink)
+      }
+    }
+    ctx.stroke()
+    ctx.setLineDash([])
+    ctx.globalAlpha = dim ? 0.1 : 1
     // One path per property: step-after lines and bezier spans merged.
     // The y map is affine, so mapping the control points maps the curve.
     ctx.beginPath()
-    walkMerged(p, scale, t0, t1, {
-      moveTo: (px, py) => ctx.moveTo(px, py),
-      lineTo: (px, py) => ctx.lineTo(px, py),
-      bezierTo: (x1, y1, x2, y2, x3, y3) => ctx.bezierCurveTo(x1, y1, x2, y2, x3, y3)
-    })
+    walkMerged(p, scale, t0, t1, sink)
     ctx.stroke()
     if (dim) continue
     ctx.fillStyle = p.color
     const [lo, hi] = visibleRange(p.points, t0, t1)
-    ctx.beginPath()
-    for (let i = lo; i <= hi; i++) {
-      const px = x(p.points[i].t)
-      const py = y(p, p.points[i].v)
-      ctx.moveTo(px + 3, py)
-      ctx.arc(px, py, 3, 0, Math.PI * 2)
+    // Two passes so masked dots read as out of play.
+    for (const masked of [false, true]) {
+      ctx.globalAlpha = masked ? MASK_ALPHA : 1
+      ctx.beginPath()
+      for (let i = lo; i <= hi; i++) {
+        if (p.points[i].masked !== masked) continue
+        const px = x(p.points[i].t)
+        const py = y(p, p.points[i].v)
+        ctx.moveTo(px + 3, py)
+        ctx.arc(px, py, 3, 0, Math.PI * 2)
+      }
+      ctx.fill()
     }
-    ctx.fill()
+    ctx.globalAlpha = 1
     // Knots draw as squares to read apart from points.
     ctx.beginPath()
     for (const pc of p.curves) {

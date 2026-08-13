@@ -7,10 +7,13 @@ import {
   formatRulerLabel,
   gridStep,
   stepDecimals,
-  TIME_TICK_MIN_PX
+  TIME_TICK_MIN_PX,
+  type TrackState
 } from '../timeline/model'
-import { applyEditsIndexed } from '../../../shared/edits'
+import { applyEdits, applyEditsIndexed } from '../../../shared/edits'
 import type { EventPointSel } from '../../../shared/edits'
+import { clipKeys, maskIntervals } from '../../../shared/trackMask'
+import type { MaskClip } from '../../../shared/trackMask'
 import { buildPointConversion, type ConvertCtx, type ConvertResult } from './curveConvert'
 import { MIN_FIT_POINTS, buildCurveReplace } from './curveReplace'
 import { PAD, fitZoomX, tAt, xAt, yAt, type Scale } from './curveGeom'
@@ -22,6 +25,7 @@ import {
   ptSel,
   selKey,
   type CurvePoint,
+  type MaskCtx,
   type PointAdd,
   type PointPatch,
   type PointSel,
@@ -157,6 +161,7 @@ function CurvePlayhead({
 
 export function CurvePanel({
   clips,
+  tracks,
   edits,
   height,
   playhead,
@@ -171,6 +176,9 @@ export function CurvePanel({
 }: {
   /** Every clip whose events are shown; empty shows the placeholder. */
   clips: ClipInst[]
+  /** The whole timeline, top to bottom: a lower track masks the shown clips
+   *  even when it isn't displayed itself (docs/tasks/track-priority). */
+  tracks: TrackState[]
   edits: Record<string, ClipEdits>
   /** Panel height, px (the splitter above drives it). */
   height: number
@@ -221,9 +229,15 @@ export function CurvePanel({
   const { w, h, zoomX, zoomY, innerW, innerH, scrollTop, scrollLeft } = vp
   const zoomXMap = zoomSlider(1, vp.zoomXMax)
 
-  // Load events for every shown clip. Keyed by the joined paths so a new
-  // clips array with the same files doesn't refetch.
-  const pathsKey = clips.map((c) => c.path).join('\n')
+  // Load events for every shown clip plus every unmuted clip of the project:
+  // masking needs the lower tracks' keys even when they aren't shown. Keyed by
+  // the joined paths so a new clips array with the same files doesn't refetch.
+  const pathsKey = [
+    ...new Set([
+      ...clips.map((c) => c.path),
+      ...tracks.flatMap((t) => t.clips.filter((c) => !c.muted).map((c) => c.path))
+    ])
+  ].join('\n')
   useEffect(() => {
     const paths = pathsKey === '' ? [] : pathsKey.split('\n')
     const missing = [...new Set(paths.filter((p) => !eventsCache.has(p)))]
@@ -253,14 +267,51 @@ export function CurvePanel({
   const clipsKey = clips
     .map((c) => `${c.id} ${c.offset} ${c.trimIn} ${c.trimOut} ${c.file} ${c.path}`)
     .join('\n')
+
+  // Masks: what each track's lower tracks own, per (port, address). Same keyed
+  // memo as clipsKey, but over every track — mute included, since a muted clip
+  // masks nothing.
+  const tracksKey = tracks
+    .map((t) =>
+      t.clips
+        .map(
+          (c) =>
+            `${c.id} ${c.offset} ${c.trimIn} ${c.trimOut} ${c.muted ? 'm' : ''} ${c.file} ${c.path}`
+        )
+        .join(',')
+    )
+    .join('\n')
+  const maskCtx = useMemo((): MaskCtx => {
+    const trackOf = new Map<number, number>()
+    const perTrack = tracks.map((track, i) => {
+      const out: MaskClip[] = []
+      for (const c of track.clips) {
+        trackOf.set(c.id, i)
+        const events = loaded.get(c.path)
+        // A clip masks only once its events are in; masks pop in on load like
+        // the curves do.
+        if (c.muted || !events) continue
+        const clipEdits = edits[c.file]
+        out.push({
+          start: c.offset,
+          end: c.offset + clipLen(c),
+          keys: clipKeys(applyEdits(events, clipEdits), clipEdits, c.trimIn, c.trimOut)
+        })
+      }
+      return out
+    })
+    return { masks: maskIntervals(perTrack), trackOf }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- tracksKey covers tracks
+  }, [tracksKey, loaded, edits])
+
   const curves = useMemo(() => {
     const ready = clips.flatMap((clip) => {
       const events = loaded.get(clip.path)
       return events ? [{ clip, events }] : []
     })
-    return buildProperties(ready, edits)
+    return buildProperties(ready, edits, maskCtx)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- clipsKey covers clips
-  }, [clipsKey, loaded, edits])
+  }, [clipsKey, loaded, edits, maskCtx])
 
   // Properties that pass the name filter; everything drawn works off this.
   const shown = useMemo(() => {

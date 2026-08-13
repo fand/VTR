@@ -867,6 +867,7 @@ function App(): React.JSX.Element {
 
       <CurvePanel
         clips={curveClips}
+        tracks={tracks}
         height={curveHeight}
         edits={edits}
         playhead={playhead}
