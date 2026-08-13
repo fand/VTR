@@ -128,8 +128,10 @@ export interface PathSink {
 
 /**
  * Walk one property's merged path — step-after between discrete values,
- * cubic beziers across curve spans, a hold + jump connecting the two — so a
- * property always draws as a single curve. Culled to elements starting in
+ * cubic beziers across curve spans (a knot's `s` holds and jumps instead), a
+ * hold + jump connecting the two — so a property always draws as a single
+ * curve, and painting, hit-testing and mergedValueAt all follow from this
+ * one walk. Culled to elements starting in
  * [t0, t1], widened by one so entering/leaving lines continue offscreen (a
  * curve span reaching into the window from further left is caught too).
  */
@@ -196,6 +198,12 @@ export function walkMerged(p: GeomProp, s: Scale, t0: number, t1: number, sink: 
       const kn = el.knots
       step(xAt(s, kn[0].t), yAt(s, p, kn[0].v))
       for (let j = 1; j < kn.length; j++) {
+        // Step segment: hold the left value, then jump on the right knot.
+        if (kn[j - 1].s) {
+          sink.lineTo(xAt(s, kn[j].t), yAt(s, p, kn[j - 1].v))
+          sink.lineTo(xAt(s, kn[j].t), yAt(s, p, kn[j].v))
+          continue
+        }
         const [, p1, p2, p3] = segmentCtrl(kn[j - 1], kn[j])
         sink.bezierTo(
           xAt(s, p1.x),

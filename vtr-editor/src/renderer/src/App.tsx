@@ -8,6 +8,7 @@ import {
   type PortConfig
 } from '../../shared/types'
 import { CurvePanel, PointAdd, PointPatch } from './components/CurvePanel'
+import { MODE_LABELS, modePatches, type InterpMode } from './components/curveMode'
 import { addPoints, applyPointPatches, deletePoints, replaceWithCurves } from '../../shared/edits'
 import {
   ClipAction,
@@ -473,13 +474,25 @@ function App(): React.JSX.Element {
   }, [tracks, curveSel])
 
   const onPointEdit = useCallback(
-    (patches: PointPatch[], isCommit: boolean) => {
+    (patches: PointPatch[], isCommit: boolean, label?: string) => {
       if (patches.length === 0) return
       const apply = (d: Doc): void => applyPointPatches(d.edits, patches)
-      if (isCommit) commit(`${count(patches.length, 'point')} edited`, apply)
+      if (isCommit) commit(label ?? `${count(patches.length, 'point')} edited`, apply)
       else transient(apply)
     },
     [commit, transient]
+  )
+
+  // Interpolation of the selected points, in one undo entry: knot mode
+  // changes today, discrete-point conversion alongside them later. Picking
+  // the mode a point already has patches nothing.
+  const onInterpolate = useCallback(
+    (mode: InterpMode) => {
+      const patches = modePatches(selectedPoints, edits, mode)
+      if (patches.length === 0) return
+      commit(`interpolation: ${MODE_LABELS[mode]}`, (d) => applyPointPatches(d.edits, patches))
+    },
+    [selectedPoints, edits, commit]
   )
 
   // New points append to the clips' edit overlays and become the selection.
@@ -846,6 +859,7 @@ function App(): React.JSX.Element {
         onPointEdit={onPointEdit}
         onPointAdd={onPointAdd}
         onCurveReplace={onCurveReplace}
+        onInterpolate={onInterpolate}
       />
       <StatusBar hoverTime={hoverTime} selection={selection} log={log} />
       <TooltipLayer />

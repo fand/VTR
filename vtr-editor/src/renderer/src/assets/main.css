@@ -473,6 +473,21 @@ body {
   width: 90px;
 }
 
+/* Curve header value + interpolation editors: the port-field shell, tighter. */
+.curve-header .curve-field input {
+  width: 60px;
+  padding: 2px 6px;
+}
+
+.curve-header .curve-interp {
+  font: inherit;
+  color: var(--text);
+  background: #0c0d10;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+
 .curve-zoom-label {
   color: var(--text-dim);
   font-family: var(--mono);

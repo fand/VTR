@@ -139,6 +139,41 @@ test('walkMerged culls to the window but keeps entering lines', () => {
   expect(none).toEqual([])
 })
 
+// A step segment t=2..6 (hold at v=0.25) followed by a bezier one t=6..8.
+const steppedProp = (): GeomProp => {
+  const knots = [
+    { t: 2, v: 0.25, s: true as const },
+    { t: 6, v: 1 },
+    { t: 8, v: 0 }
+  ]
+  return { min: 0, max: 1, points: [], els: [{ t: 2, knots, curve: 0 }] }
+}
+
+test('walkMerged draws a step segment as a hold plus a jump', () => {
+  const cmds: string[] = []
+  walkMerged(steppedProp(), s, -Infinity, Infinity, {
+    moveTo: (x, y) => cmds.push(`M${x},${y}`),
+    lineTo: (x, y) => cmds.push(`L${x},${y}`),
+    bezierTo: () => cmds.push('C')
+  })
+  const p = steppedProp()
+  expect(cmds).toEqual([
+    `M${xAt(s, 2)},${yAt(s, p, 0.25)}`,
+    `L${xAt(s, 6)},${yAt(s, p, 0.25)}`, // hold at the left value
+    `L${xAt(s, 6)},${yAt(s, p, 1)}`, // jump on the right knot
+    'C'
+  ])
+})
+
+test('hit-testing and value follow the step walk', () => {
+  const p = steppedProp()
+  // On the hold line, not on the phantom linear third between the knots.
+  expect(hitCurve([p], s, { x: xAt(s, 4), y: yAt(s, p, 0.25) + 2 }, 5)).toBe(0)
+  expect(hitCurve([p], s, { x: xAt(s, 4), y: yAt(s, p, 0.625) }, 5)).toBeNull()
+  expect(mergedValueAt(p, 4)).toBe(0.25)
+  expect(mergedValueAt(p, 6)).toBeCloseTo(1, 9)
+})
+
 test('hitCurve hits the bezier span and the connecting hold line', () => {
   const p = mergedProp()
   // Mid-span of the linear bezier: t=6 → v=0.5.

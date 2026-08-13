@@ -40,7 +40,8 @@ export function applyKnotMoves(
 /**
  * Set one handle to the offset (dt, dv), dt clamped into its segment
  * (o: [0, next span]; i: [-prev span, 0]). A handle with no neighbor on its
- * side does not exist; the knots come back unchanged.
+ * side does not exist, and neither does one across a step segment (dead);
+ * the knots come back unchanged.
  */
 export function setKnotHandle(
   knots: CurveKnot[],
@@ -53,11 +54,11 @@ export function setKnotHandle(
   const k = out[index]
   if (!k) return out
   if (side === 'o') {
-    if (index + 1 >= out.length) return out
+    if (index + 1 >= out.length || k.s) return out
     const span = out[index + 1].t - k.t
     k.o = [Math.min(Math.max(dt, 0), span), dv]
   } else {
-    if (index === 0) return out
+    if (index === 0 || out[index - 1].s) return out
     const span = k.t - out[index - 1].t
     k.i = [Math.min(Math.max(dt, -span), 0), dv]
   }

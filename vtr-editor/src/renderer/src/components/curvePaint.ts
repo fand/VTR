@@ -31,6 +31,10 @@ declare global {
       t: number
       v: number
       selected: boolean
+      /** Step segment leaving this knot. */
+      s: boolean
+      hasIn: boolean
+      hasOut: boolean
     }[]
   }
 }
@@ -100,7 +104,10 @@ export function paintCurves({
               y: rect.top + y(p, k.v) - st,
               t: k.t,
               v: k.v,
-              selected: k.srcIndex >= 0 && selKeys.has(selKey(knotSel(pc, k.srcIndex)))
+              selected: k.srcIndex >= 0 && selKeys.has(selKey(knotSel(pc, k.srcIndex))),
+              s: k.s === true,
+              hasIn: k.i != null,
+              hasOut: k.o != null
             }))
           )
         )

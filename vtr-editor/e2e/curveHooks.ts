@@ -32,6 +32,10 @@ export interface CurveKnotHook {
   t: number
   v: number
   selected: boolean
+  /** Step segment leaving this knot. */
+  s: boolean
+  hasIn: boolean
+  hasOut: boolean
 }
 
 export const curvePoints = (page: Page): Promise<CurvePointHook[]> =>

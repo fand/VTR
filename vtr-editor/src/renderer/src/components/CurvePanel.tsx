@@ -22,8 +22,10 @@ import {
   type PointAdd,
   type PointPatch,
   type PointSel,
+  type PropCurve,
   type Property
 } from './curveModel'
+import { MODES, MODE_LABELS, selectionMode, type InterpMode } from './curveMode'
 import { paintCurves } from './curvePaint'
 import { zoomSlider } from './uiScale'
 import { useCurveInteraction } from './useCurveInteraction'
@@ -70,6 +72,54 @@ const HoverTooltip = React.memo(function HoverTooltip({
   )
 })
 
+/** Value editor for the point selection: the value they all share, `-` when
+ *  they differ. Enter/blur commits it to every selected point, Esc reverts.
+ *  The 0–1 limit toggle doesn't apply — explicit typing beats a drag guard. */
+function ValueField({
+  value,
+  onCommit
+}: {
+  value: number | null
+  onCommit: (v: number) => void
+}): React.JSX.Element {
+  const text = value == null ? '' : fmt(value)
+  const [draft, setDraft] = useState(text)
+  useEffect(() => setDraft(text), [text])
+  // Esc blurs too, so the blur handler must know not to commit the draft.
+  const reverting = useRef(false)
+  const commit = (): void => {
+    const n = Number(draft)
+    if (draft.trim() !== '' && Number.isFinite(n) && n !== value) onCommit(n)
+    else setDraft(text)
+  }
+  return (
+    <label className="port-field curve-field">
+      <span className="port-field-label">value</span>
+      <input
+        value={draft}
+        placeholder="-"
+        inputMode="numeric"
+        aria-label="point value"
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => {
+          if (!reverting.current) commit()
+          else {
+            reverting.current = false
+            setDraft(text)
+          }
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur()
+          else if (e.key === 'Escape') {
+            reverting.current = true
+            e.currentTarget.blur()
+          }
+        }}
+      />
+    </label>
+  )
+}
+
 /** Playhead line over the ruler + curves; rAF-follows playback like the
  *  timeline's PlayheadLine. toPx maps timeline seconds to viewport px. */
 function CurvePlayhead({
@@ -113,7 +163,8 @@ export function CurvePanel({
   onSelectPoints,
   onPointEdit,
   onPointAdd,
-  onCurveReplace
+  onCurveReplace,
+  onInterpolate
 }: {
   /** Every clip whose events are shown; empty shows the placeholder. */
   clips: ClipInst[]
@@ -125,8 +176,9 @@ export function CurvePanel({
   onSeek: (sec: number) => void
   selectedPoints: PointSel[]
   onSelectPoints: (pts: PointSel[]) => void
-  /** Streams transient patches while dragging; isCommit on release. */
-  onPointEdit: (patches: PointPatch[], isCommit: boolean) => void
+  /** Streams transient patches while dragging; isCommit on release. The
+   *  label names the commit's undo entry (default: "N points edited"). */
+  onPointEdit: (patches: PointPatch[], isCommit: boolean, label?: string) => void
   /** Appends events to the clips' edit overlays. A pencil stroke streams
    *  single adds (transient) and re-sends the whole batch with isCommit. */
   onPointAdd: (adds: PointAdd[], isCommit: boolean) => void
@@ -135,6 +187,8 @@ export function CurvePanel({
     dels: { file: string; eventIndex: number }[],
     adds: { file: string; curve: ClipCurve }[]
   ) => void
+  /** Sets the interpolation of every selected point; one undo entry. */
+  onInterpolate: (mode: InterpMode) => void
 }): React.JSX.Element {
   // Events per clip path; the cache never goes stale (files are immutable).
   const [loaded, setLoaded] = useState<Map<string, OscEvent[]>>(new Map())
@@ -239,6 +293,56 @@ export function CurvePanel({
   const y = (p: Property, v: number): number => yAt(scale, p, v)
 
   const selKeys = useMemo(() => new Set(selectedPoints.map(selKey)), [selectedPoints])
+
+  // Header editors work on the whole point selection — event points and
+  // knots alike — so they read and write through the one traversal.
+  const selValues = ((): number[] => {
+    if (selectedPoints.length === 0) return []
+    const out: number[] = []
+    forEachEl(curves, (el) => {
+      if (el.sel && selKeys.has(selKey(el.sel))) out.push(el.v)
+    })
+    return out
+  })()
+  const selValue =
+    selValues.length > 0 && selValues.every((v) => v === selValues[0]) ? selValues[0] : null
+  const selMode = selectionMode(selectedPoints, edits)
+  // Discrete points only take const until the conversion op lands.
+  const hasPointSel = selectedPoints.some((s) => !('curveIndex' in s))
+
+  /** Typed value → patches: event points patch their arg, knots chain into
+   *  one whole-array patch per curve (per-knot patches would overwrite each
+   *  other — same rule as movePatches in useCurveInteraction). Handle
+   *  offsets are relative, so they carry over untouched. */
+  const setSelectedValue = (v: number): void => {
+    const out: PointPatch[] = []
+    const byCurve = new Map<string, { pc: PropCurve; idx: Set<number> }>()
+    forEachEl(curves, (el) => {
+      if (!el.sel || !selKeys.has(selKey(el.sel))) return
+      if (el.pt) {
+        out.push({
+          file: el.pt.clip.file,
+          eventIndex: el.pt.eventIndex,
+          argIndex: el.pt.argIndex,
+          value: v
+        })
+        return
+      }
+      const pc = el.pc!
+      const key = `${pc.clip.file}:${pc.curveIndex}`
+      let g = byCurve.get(key)
+      if (!g) byCurve.set(key, (g = { pc, idx: new Set() }))
+      g.idx.add(el.srcIndex!)
+    })
+    for (const { pc, idx } of byCurve.values()) {
+      out.push({
+        file: pc.clip.file,
+        curveIndex: pc.curveIndex,
+        knots: pc.src.knots.map((k, i) => (idx.has(i) ? { ...k, v } : k))
+      })
+    }
+    if (out.length > 0) onPointEdit(out, true, 'value edit')
+  }
 
   // Replace with Curve targets: the selected points, else the selected
   // properties' full point sets. Each (property, clip) group needs
@@ -515,6 +619,32 @@ export function CurvePanel({
         >
           <Spline size={14} />
         </button>
+        {selectedPoints.length > 0 && (
+          <>
+            <ValueField value={selValue} onCommit={setSelectedValue} />
+            <label className="port-field curve-field">
+              <span className="port-field-label">interpolate</span>
+              <select
+                className="curve-interp"
+                aria-label="interpolation"
+                value={selMode ?? ''}
+                onChange={(e) => onInterpolate(e.target.value as InterpMode)}
+              >
+                {/* Mixed selection: no mode is current until one is picked. */}
+                {selMode == null && (
+                  <option value="" disabled>
+                    -
+                  </option>
+                )}
+                {MODES.map((m) => (
+                  <option key={m} value={m} disabled={hasPointSel && m !== 'const'}>
+                    {MODE_LABELS[m]}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </>
+        )}
         <div className="spacer" />
         <button
           className="btn small snap"
