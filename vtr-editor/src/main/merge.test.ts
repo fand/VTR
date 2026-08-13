@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { expect, test } from 'vitest'
-import type { ProjectFile } from '../shared/types'
+import type { ClipCurve, CurveKnot, ProjectFile } from '../shared/types'
 import { mergeProject } from './merge'
 
 test('unreadable clip contributes no events but keeps its duration', () => {
@@ -257,4 +257,406 @@ test('curveDel and muted clips drop curves', () => {
   writeFileSync(join(dir, 'h.jsonl'), '{"t":0.0,"port":10000,"a":"/x","args":[1]}\n')
   const { curves } = mergeProject((f) => join(dir, f), project)
   expect(curves.map((c) => c.a)).toEqual(['/kept'])
+})
+
+// --- track priority: the lower track wins (docs/tasks/track-priority) ---
+
+const PORT = 10000
+
+/** One clip file of plain events; returns its name for the project. */
+function clipOf(
+  dir: string,
+  name: string,
+  events: { t: number; a?: string; v?: number; port?: number }[]
+): string {
+  const lines = events.map((e) =>
+    JSON.stringify({ t: e.t, port: e.port ?? PORT, a: e.a ?? '/a', args: [e.v ?? 0] })
+  )
+  writeFileSync(join(dir, name), lines.map((l) => l + '\n').join(''))
+  return name
+}
+
+function curveOf(knots: CurveKnot[], a = '/a', port = PORT): ClipCurve {
+  return { port, a, arg: 0, args: [0], types: 'f', knots }
+}
+
+/** A two-knot ramp. */
+const seg = (t0: number, v0: number, t1: number, v1: number): CurveKnot[] => [
+  { t: t0, v: v0 },
+  { t: t1, v: v1 }
+]
+
+/** Compact view of a merged event list. */
+const shape = (events: { t: number; a: string; args: unknown[] }[]): unknown[][] =>
+  events.map((e) => [e.a, e.t, e.args[0]])
+
+test('the take beats the curve above it: curve carved in two, take intact', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vtr-merge-'))
+  const project: ProjectFile = {
+    version: 1,
+    tracks: [
+      { clips: [{ file: clipOf(dir, 'up.jsonl', []), offset: 0, trimIn: 0, trimOut: 10 }] },
+      {
+        clips: [
+          {
+            file: clipOf(dir, 'take.jsonl', [
+              { t: 0, v: 0.9 },
+              { t: 2, v: 0.95 }
+            ]),
+            offset: 2,
+            trimIn: 0,
+            trimOut: 2
+          }
+        ]
+      }
+    ],
+    edits: {
+      'up.jsonl': {
+        curves: [
+          curveOf([
+            { t: 0, v: 0 },
+            { t: 10, v: 1 }
+          ])
+        ]
+      }
+    }
+  }
+  const { events, curves } = mergeProject((f) => join(dir, f), project)
+  // The take loses nothing, and the carved right piece resumes by itself, so
+  // no synthetic event joins it.
+  expect(shape(events)).toEqual([
+    ['/a', 2, 0.9],
+    ['/a', 4, 0.95]
+  ])
+  expect(curves.map((c) => [c.knots[0].t, c.knots[c.knots.length - 1].t])).toEqual([
+    [0, 1.999999],
+    [4.000001, 10]
+  ])
+})
+
+test('discrete over discrete: masked events drop and the track resumes after the take', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vtr-merge-'))
+  const project: ProjectFile = {
+    version: 1,
+    tracks: [
+      {
+        clips: [
+          {
+            file: clipOf(dir, 'up.jsonl', [
+              { t: 1, v: 0.1 },
+              { t: 2, v: 0.2 },
+              { t: 3, v: 0.3 }
+            ]),
+            offset: 0,
+            trimIn: 0,
+            trimOut: 10
+          }
+        ]
+      },
+      {
+        clips: [
+          {
+            file: clipOf(dir, 'take.jsonl', [
+              { t: 0, v: 0.9 },
+              { t: 2, v: 0.95 }
+            ]),
+            offset: 2,
+            trimIn: 0,
+            trimOut: 2
+          }
+        ]
+      }
+    ]
+  }
+  const { events } = mergeProject((f) => join(dir, f), project)
+  // The resume carries the upper track's latest masked value and sorts after
+  // the take's boundary event at 4, so the take still wins at the boundary.
+  expect(shape(events)).toEqual([
+    ['/a', 1, 0.1],
+    ['/a', 2, 0.9],
+    ['/a', 4, 0.95],
+    ['/a', 4.000001, 0.3]
+  ])
+})
+
+test('a curve fully inside the take is dropped and resumes with its end value', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vtr-merge-'))
+  const project: ProjectFile = {
+    version: 1,
+    tracks: [
+      { clips: [{ file: clipOf(dir, 'up.jsonl', []), offset: 0, trimIn: 0, trimOut: 10 }] },
+      {
+        clips: [
+          {
+            file: clipOf(dir, 'take.jsonl', [{ t: 0, v: 0.9 }]),
+            offset: 2,
+            trimIn: 0,
+            trimOut: 2
+          }
+        ]
+      }
+    ],
+    edits: { 'up.jsonl': { curves: [curveOf(seg(2, 0.2, 3, 0.8))] } }
+  }
+  const { events, curves } = mergeProject((f) => join(dir, f), project)
+  expect(curves).toEqual([])
+  expect(shape(events)).toEqual([
+    ['/a', 2, 0.9],
+    ['/a', 4.000001, 0.8]
+  ])
+})
+
+test('masks are per (port, address): other addresses and ports pass through', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vtr-merge-'))
+  const project: ProjectFile = {
+    version: 1,
+    tracks: [
+      {
+        clips: [
+          {
+            file: clipOf(dir, 'up.jsonl', [
+              { t: 3, v: 0.3 },
+              { t: 3, a: '/b', v: 0.31 },
+              { t: 3, port: 10020, v: 0.32 }
+            ]),
+            offset: 0,
+            trimIn: 0,
+            trimOut: 10
+          }
+        ]
+      },
+      {
+        clips: [
+          {
+            file: clipOf(dir, 'take.jsonl', [{ t: 0, v: 0.9 }]),
+            offset: 2,
+            trimIn: 0,
+            trimOut: 2
+          }
+        ]
+      }
+    ]
+  }
+  const { events } = mergeProject((f) => join(dir, f), project)
+  expect(events.map((e) => [e.a, e.port, e.t])).toEqual([
+    ['/a', PORT, 2],
+    ['/b', PORT, 3],
+    ['/a', 10020, 3],
+    ['/a', PORT, 4.000001] // resume of the masked /a on PORT only
+  ])
+})
+
+test('a muted clip masks nothing', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vtr-merge-'))
+  const project: ProjectFile = {
+    version: 1,
+    tracks: [
+      {
+        clips: [
+          {
+            file: clipOf(dir, 'up.jsonl', [
+              { t: 2, v: 0.2 },
+              { t: 3, v: 0.3 }
+            ]),
+            offset: 0,
+            trimIn: 0,
+            trimOut: 10
+          }
+        ]
+      },
+      {
+        clips: [
+          {
+            file: clipOf(dir, 'take.jsonl', [{ t: 0, v: 0.9 }]),
+            offset: 2,
+            trimIn: 0,
+            trimOut: 2,
+            muted: true
+          }
+        ]
+      }
+    ]
+  }
+  const { events, duration } = mergeProject((f) => join(dir, f), project)
+  expect(shape(events)).toEqual([
+    ['/a', 2, 0.2],
+    ['/a', 3, 0.3]
+  ])
+  expect(duration).toBe(10)
+})
+
+test('three tracks stack: the bottom masks both above it', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vtr-merge-'))
+  const project: ProjectFile = {
+    version: 1,
+    tracks: [
+      {
+        clips: [
+          {
+            file: clipOf(dir, 't1.jsonl', [
+              { t: 1, v: 0.1 },
+              { t: 3, v: 0.3 },
+              { t: 7, v: 0.7 }
+            ]),
+            offset: 0,
+            trimIn: 0,
+            trimOut: 10
+          }
+        ]
+      },
+      {
+        clips: [
+          {
+            file: clipOf(dir, 't2.jsonl', [
+              { t: 0.5, v: 0.25 },
+              { t: 4.5, v: 0.65 }
+            ]),
+            offset: 2,
+            trimIn: 0,
+            trimOut: 6
+          }
+        ]
+      },
+      {
+        clips: [
+          { file: clipOf(dir, 't3.jsonl', [{ t: 0, v: 0.9 }]), offset: 6, trimIn: 0, trimOut: 1 }
+        ]
+      }
+    ]
+  }
+  const { events } = mergeProject((f) => join(dir, f), project)
+  // Track 2's window [2, 8] masks track 1; track 3's [6, 7] masks both.
+  expect(shape(events)).toEqual([
+    ['/a', 1, 0.1],
+    ['/a', 2.5, 0.25],
+    ['/a', 6, 0.9],
+    ['/a', 7.000001, 0.65], // track 2 resumes after track 3
+    ['/a', 8.000001, 0.7] // track 1 resumes after track 2
+  ])
+})
+
+test('trim and offset decide the mask: events land in it only once placed', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vtr-merge-'))
+  const project: ProjectFile = {
+    version: 1,
+    tracks: [
+      {
+        clips: [
+          {
+            file: clipOf(dir, 'up.jsonl', [
+              { t: 0, v: 0 },
+              { t: 1, v: 0.1 },
+              { t: 2, v: 0.2 },
+              { t: 3, v: 0.3 }
+            ]),
+            // Local 1..3 → timeline 10..12; the local 0 event is trimmed off.
+            offset: 10,
+            trimIn: 1,
+            trimOut: 3
+          }
+        ]
+      },
+      {
+        clips: [
+          {
+            file: clipOf(dir, 'take.jsonl', [{ t: 0, v: 0.9 }]),
+            offset: 11,
+            trimIn: 0,
+            trimOut: 1
+          }
+        ]
+      }
+    ]
+  }
+  const { events } = mergeProject((f) => join(dir, f), project)
+  expect(shape(events)).toEqual([
+    ['/a', 10, 0.1],
+    ['/a', 11, 0.9],
+    ['/a', 12.000001, 0.3]
+  ])
+})
+
+test('no resume past the masked clip own window', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vtr-merge-'))
+  const project: ProjectFile = {
+    version: 1,
+    tracks: [
+      {
+        clips: [
+          {
+            file: clipOf(dir, 'up.jsonl', [{ t: 1, v: 0.1 }]),
+            offset: 0,
+            trimIn: 0,
+            trimOut: 3
+          }
+        ]
+      },
+      {
+        clips: [
+          {
+            file: clipOf(dir, 'take.jsonl', [{ t: 0, v: 0.9 }]),
+            offset: 2,
+            trimIn: 0,
+            trimOut: 3
+          }
+        ]
+      }
+    ]
+  }
+  const { events } = mergeProject((f) => join(dir, f), project)
+  // The mask ends at 5, past the upper clip's end (3): nothing to resume.
+  expect(shape(events)).toEqual([
+    ['/a', 1, 0.1],
+    ['/a', 2, 0.9]
+  ])
+})
+
+test('a resume landing in the next mask window is suppressed', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vtr-merge-'))
+  const project: ProjectFile = {
+    version: 1,
+    tracks: [
+      {
+        clips: [
+          {
+            file: clipOf(dir, 'up.jsonl', [{ t: 1, v: 0.1 }]),
+            offset: 0,
+            trimIn: 0,
+            trimOut: 10
+          }
+        ]
+      },
+      // Two takes a sub-grid gap apart: the first mask ends at 4, the second
+      // starts at 4.000001 — exactly where the first resume would land.
+      {
+        clips: [
+          {
+            file: clipOf(dir, 'take1.jsonl', [{ t: 0, v: 0.9 }]),
+            offset: 2,
+            trimIn: 0,
+            trimOut: 2
+          }
+        ]
+      },
+      {
+        clips: [
+          {
+            file: clipOf(dir, 'take2.jsonl', [{ t: 0, v: 0.8 }]),
+            offset: 4.000001,
+            trimIn: 0,
+            trimOut: 1.999999
+          }
+        ]
+      }
+    ]
+  }
+  const { events } = mergeProject((f) => join(dir, f), project)
+  // Only the second mask's end resumes the upper track; the first resume
+  // would fire under take2.
+  expect(shape(events)).toEqual([
+    ['/a', 1, 0.1],
+    ['/a', 2, 0.9],
+    ['/a', 4.000001, 0.8],
+    ['/a', 6.000001, 0.1]
+  ])
 })
