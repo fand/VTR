@@ -91,7 +91,12 @@ value [ 1.0  ]  interpolate [ ease in ▾ ]
   replacement; per-knot patches would overwrite each other — see
   `movePatches` in useCurveInteraction for the pattern).
 - **interpolate**: dropdown `const / linear / ease in / ease out /
-  ease in out`. All selected share a mode → that mode; mixed → `-`.
+  ease in out`. All selected share a mode → that mode. When they differ,
+  the dead sides decide: an endpoint knot demands no handle there, so it
+  is consistent with more modes than the one it displays, and the single
+  mode every selected point is consistent with shows (a whole curve set
+  to ease in out reads back as ease in out, not `-`). Nothing shared →
+  `-`.
   Selecting the mode a point already has is a **no-op** (idempotent:
   never resets dragged handles to the flat defaults).
 - Mode changes go through **one handler** (`onInterpolate`): knot edits
@@ -138,7 +143,14 @@ entry, via `onInterpolate`):
 - **Refusal.** An event that cannot be absorbed — a non-numeric arg
   differing from the group's template — would survive as a live event
   inside the span, violating the invariant. The whole op refuses with a
-  message instead. No partial conversion.
+  message instead, shown in the editor's error banner (cleared by the
+  next interpolation that lands). No partial conversion. Two more cases
+  refuse for the same reason — deleting the events would drop data:
+  a numeric arg the span leaves with a single knot (no curve of its own
+  to carry it) while another arg does convert, and a span that would
+  swallow an existing curve of any arg it isn't joining (its shadowed
+  events would be absorbed as if live, and the overlap carving would
+  delete the curve) — the merged-span form of "never skip past a curve".
 - **A lone point with no neighbor element on either side** can't convert;
   the non-const options are disabled.
 - **Adjacent curves join.** A boundary element that is an endpoint knot of
@@ -147,13 +159,17 @@ entry, via `onInterpolate`):
   segment toward the run interpolates), and the existing overlap carving
   (`subtractCurveOverlap`) deletes the covered original.
 - **Point inside an existing curve's span** (a legacy shadowed dot):
-  insert a knot at `P.t` — de Casteljau split of the segment, then M's
-  handles on the new knot; delete P's event.
+  insert a knot at P's exact `(t, v)` — de Casteljau split of the
+  segment, then M's handles on the new knot; delete P's event. A sibling
+  numeric arg of that event with no curve covering `P.t` refuses: its
+  value would go with the deleted event.
 - **Multi-arg events.** Deleting an event removes every arg's point, so
   sibling numeric args get their own curves (one per arg, knots at the
   same times, `s` on every non-last knot: their behavior stays exactly
-  discrete). The refusal rule guarantees full coverage, so every absorbed
-  event is deleted — nothing is left shadowed.
+  discrete). A sibling that joins a curve on its left keeps `s` on the
+  junction knot too — its value used to hold there, and clearing it
+  would ramp. The refusal rule guarantees full coverage, so every
+  absorbed event is deleted — nothing is left shadowed.
 
 ### Reverse (knot → const)
 
@@ -189,6 +205,11 @@ accepted.
     join/insert, refusal, multi-arg siblings). Emits the
     `(event dels, curve adds)` shape of `buildCurveReplace`, so the
     overlap carving in `replaceWithCurves` handles curve joins.
+    CurvePanel builds the conversion — it owns the loaded events and the
+    overlay curves — and passes it to `onInterpolate`, which commits it
+    with the knot mode patches in one entry. Its context is the whole
+    file's events, trim ignored: the overlay is per file, so the span
+    invariant has to hold outside this clip's window too.
 - Step segment **geometry lives in `curveGeom.ts` (`walkMerged`)**, not
   curvePaint: the same walk feeds painting, hit-testing, and
   `mergedValueAt`, so a hold draws as horizontal line + vertical jump and
@@ -198,7 +219,7 @@ accepted.
   when `knots[i].s`, `i` blocked when `knots[i-1].s` (cross-knot
   condition, `handleViews` in useCurveInteraction); `setKnotHandle`
   guards the same so a dead handle can't be written back.
-- `onPointEdit`/`onInterpolate` carry an undo label (App.tsx hard-codes
-  labels today).
+- `onPointEdit`/`onInterpolate` carry an undo label (`"value edit"`,
+  `"interpolation: <mode>"`, `"N points → curve"`); App.tsx owns them.
 - e2e hooks: `__curveKnots` exposes `s` **and handle presence**; header
   input/dropdown get aria-labels.

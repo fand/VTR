@@ -110,8 +110,8 @@ Track priority is implemented after this task ships.
   - lone isolated point → non-const options disabled.
 - `CurvePanel.tsx` / App.tsx: dropdown on event-point selections routes
   through `onInterpolate` (one commit, label `"N points → curve"`; a
-  mixed knots+points selection commits once). Refusal surfaces as a
-  toast/status message, not a silent no-op.
+  mixed knots+points selection commits once). Refusal surfaces in the
+  error banner, not as a silent no-op.
 - Unit tests: run extension, in-between absorption (a+c selected), curve
   join both sides, span-equal join (existing curve fully covered →
   deleted with no remainders — pin the `subtractCurveOverlap`
