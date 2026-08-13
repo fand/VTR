@@ -111,6 +111,48 @@ describe('buildProperties masking', () => {
   })
 })
 
+/** A clip may be trimmed past its recording (trimIn < 0, trimOut > duration):
+ *  the extension is just empty, so the player holds the last value there. */
+describe('buildProperties extended trims', () => {
+  // A 3s recording stretched both ways to fill the timeline window [4, 11].
+  const extended: ClipInst = { ...clip(1, 4, 3), trimIn: -2, trimOut: 5 }
+
+  it('places points by the negative trimIn and leaves the extension empty', () => {
+    const [p] = buildProperties([{ clip: extended, events: [ev(0, 0.1), ev(3, 0.3)] }], {})
+    expect(p.els).toEqual([
+      { t: 6, v: 0.1 },
+      { t: 9, v: 0.3 }
+    ])
+  })
+
+  it('clips an overlay curve to the recording, not to the extension', () => {
+    const edits: Record<string, ClipEdits> = { 'c1.jsonl': { curves: [ramp] } }
+    const [p] = buildProperties([{ clip: extended, events: [] }], edits)
+    const knots = p.curves[0].knots
+    const last = knots[knots.length - 1]
+    // Clip-local [0, 5] of the 0..10 ramp → timeline [6, 11].
+    expect([knots[0].t, knots[0].v, knots[0].srcIndex]).toEqual([6, 0, 0])
+    expect(last.t).toBeCloseTo(11, 6) // bisection split, exact only to ~1e-14
+    expect(last.v).toBeCloseTo(0.5, 6)
+    expect(last.srcIndex).toBe(-1) // trimOut split, not a source knot
+  })
+
+  it('resumes in the extended span, which the clip window still covers', () => {
+    // The mask ends at 10 — past the recording, inside the extension.
+    const win = [{ start: 4, end: 11 }]
+    const [p] = buildProperties(
+      [{ clip: extended, events: [ev(0, 0.1), ev(3, 0.3)] }],
+      {},
+      ctx(8, 10, maskKey(PORT, A), win)
+    )
+    expect(p.points.map((pt) => pt.masked)).toEqual([false, true])
+    expect(p.els).toEqual([
+      { t: 6, v: 0.1 },
+      { t: 10.000001, v: 0.3 }
+    ])
+  })
+})
+
 /** The merged path must hold what merge exports (docs/tasks/track-priority):
  *  past a mask, discrete upper data resumes its own value at end + 1e-6. */
 describe('buildProperties resume', () => {

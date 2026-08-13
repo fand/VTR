@@ -841,6 +841,77 @@ test('no resume past the masked clip own window', () => {
   ])
 })
 
+test('an extended clip places its events by trim and masks the empty span', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vtr-merge-'))
+  const project: ProjectFile = {
+    version: 1,
+    tracks: [
+      {
+        clips: [
+          {
+            file: clipOf(dir, 'up.jsonl', [
+              { t: 3, v: 0.3 },
+              { t: 5, v: 0.5 },
+              { t: 7, v: 0.7 },
+              { t: 12, v: 1.2 }
+            ]),
+            offset: 0,
+            trimIn: 0,
+            trimOut: 20
+          }
+        ]
+      },
+      {
+        clips: [
+          {
+            // A 3s recording extended both ways to fill [4, 11]: 2s of nothing
+            // before its events, 2s after.
+            file: clipOf(dir, 'take.jsonl', [
+              { t: 0, v: 0.9 },
+              { t: 3, v: 0.95 }
+            ]),
+            offset: 4,
+            trimIn: -2,
+            trimOut: 5
+          }
+        ]
+      }
+    ]
+  }
+  const { events, duration } = mergeProject((f) => join(dir, f), project)
+  expect(shape(events)).toEqual([
+    ['/a', 3, 0.3],
+    // offset + (t - trimIn): the empty span holds the last value, no events.
+    ['/a', 6, 0.9],
+    ['/a', 9, 0.95],
+    ['/a', 11.000001, 0.7], // the mask spans the whole extended window
+    ['/a', 12, 1.2]
+  ])
+  expect(duration).toBe(20)
+})
+
+test('an extended clip shifts its overlay curve by the negative trimIn', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vtr-merge-'))
+  const project: ProjectFile = {
+    version: 1,
+    tracks: [
+      {
+        clips: [
+          { file: clipOf(dir, 'j.jsonl', [{ t: 0, v: 0 }]), offset: 4, trimIn: -2, trimOut: 5 }
+        ]
+      }
+    ],
+    edits: { 'j.jsonl': { curves: [curveOf(seg(0, 0, 3, 1))] } }
+  }
+  const { curves } = mergeProject((f) => join(dir, f), project)
+  // The trim window only extends the empty span; the curve keeps its whole
+  // span, shifted to offset + (t - trimIn).
+  expect(curves[0].knots.map((k) => [k.t, k.v])).toEqual([
+    [6, 0],
+    [9, 1]
+  ])
+})
+
 test('a resume landing in the next mask window is suppressed', () => {
   const dir = mkdtempSync(join(tmpdir(), 'vtr-merge-'))
   const project: ProjectFile = {

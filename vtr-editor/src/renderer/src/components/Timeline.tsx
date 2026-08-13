@@ -447,7 +447,8 @@ export function Timeline({
     const updated: ClipInst = { ...orig }
     const self = new Set([d.clipId])
     if (d.mode === 'trim-in') {
-      const lo = -Math.min(orig.trimIn, orig.offset)
+      // trimIn may go negative (extend past the recording); offset stays ≥ 0.
+      const lo = -orig.offset
       const hi = clipLen(orig) - MIN_CLIP_LEN
       let delta = Math.min(Math.max(dx, lo), hi)
       delta = Math.min(Math.max(delta + snapAdjust(orig.offset + delta, self), lo), hi)
@@ -456,7 +457,8 @@ export function Timeline({
     }
     if (d.mode === 'trim-out') {
       const lo = orig.trimIn + MIN_CLIP_LEN
-      const hi = orig.summary.duration
+      // No cap: the clip may extend past the recording (empty span, held value).
+      const hi = Infinity
       let out = Math.min(Math.max(orig.trimOut + dx, lo), hi)
       // The clip's right edge sits at offset + (trimOut - trimIn).
       out = Math.min(Math.max(out + snapAdjust(orig.offset + (out - orig.trimIn), self), lo), hi)
