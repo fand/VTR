@@ -44,6 +44,9 @@ vtr-player ── プレビュー OSC (③ の再生経路と同一) ──▶ T
   inline load し、transport を seek/play するだけ。OSC を出すのは player の
   emit loop のみ(resolver 一本化 — preview と本番再生が同一挙動)。
   停止中の seek も catch-up が dedup 付きで TD へ届く。
+- merge 時に track priority を解決: (port, address) ごとに下の track が上を
+  masking する(`docs/tasks/track-priority`)。export と preview は同じ merge を
+  通るので挙動は一致し、session.jsonl と player は素のまま。
 - sync クライアント(TD)は同じ transport に追従する。
 
 ## ③ 再生 / 同期 (vtr-player)

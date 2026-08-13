@@ -161,6 +161,48 @@ fn test_curve_lines_parse_and_intern_addresses() {
 }
 
 #[test]
+fn test_knot_step_flag_parses() {
+    let s = load(&[curve_line(
+        "/x",
+        0,
+        json!([
+            {"t": 0.0, "v": 0.0, "s": true},
+            {"t": 1.0, "v": 1.0},
+            {"t": 2.0, "v": 2.0, "s": true},
+        ]),
+    )]);
+    let k = &s.curves[0].knots;
+    assert!(k[0].s);
+    assert!(!k[1].s, "absent s is false");
+    assert!(k[2].s, "s on the last knot parses; evaluation ignores it");
+}
+
+#[test]
+fn test_unknown_keys_and_dead_handles_do_not_reject_a_curve() {
+    // Dead handles on a step segment (the step knot's `o`, the next knot's
+    // `i`) are ignored by evaluation, not a parse error; unknown keys —
+    // anywhere — stay tolerated, same as before `s` existed.
+    let mut line = curve_line(
+        "/x",
+        0,
+        json!([
+            {"t": 0.0, "v": 0.0, "s": true, "o": [0.3, 0.2], "future": 1},
+            {"t": 1.0, "v": 1.0, "i": [-0.3, -0.2]},
+        ]),
+    );
+    line["future"] = json!("ignored");
+    let s = load(&[line]);
+    assert_eq!(s.curves.len(), 1);
+    assert_eq!(s.skipped, 0);
+    let k = &s.curves[0].knots;
+    assert_eq!(k[0].o, Some([0.3, 0.2]));
+    assert_eq!(k[1].i, Some([-0.3, -0.2]));
+    // Held anyway: the step branch returns before any handle is read.
+    let args = s.curve_group_args(0, 0.5);
+    assert_eq!(args[0], json!(0.0));
+}
+
+#[test]
 fn test_malformed_curves_are_skipped() {
     let s = load(&[
         // One knot.
@@ -175,20 +217,39 @@ fn test_malformed_curves_are_skipped() {
 }
 
 #[test]
-fn test_curves_group_per_address() {
+fn test_curves_group_per_address_by_span_connectivity() {
     let s = load(&[
-        curve_line("/xy", 1, json!([{"t": 0.0, "v": 0.0}, {"t": 1.0, "v": 1.0}])),
+        curve_line("/xy", 1, json!([{"t": 0.0, "v": 0.0}, {"t": 3.0, "v": 1.0}])),
         curve_line("/xy", 0, json!([{"t": 2.0, "v": 0.0}, {"t": 5.0, "v": 1.0}])),
         curve_line("/other", 0, json!([{"t": 0.0, "v": 0.0}, {"t": 1.0, "v": 1.0}])),
     ]);
     assert_eq!(s.curve_groups.len(), 2);
-    let g = &s.curve_groups[0]; // /xy
+    let g = &s.curve_groups[0]; // /xy: the spans overlap -> one group
     assert_eq!(g.members.len(), 2);
     // Members are arg-sorted; the span is the union.
     assert_eq!(s.curves[g.members[0]].arg, 0);
     assert_eq!(s.curves[g.members[1]].arg, 1);
     assert_eq!(g.start, 0.0);
     assert_eq!(g.end, 5.0);
+    assert_eq!(s.addr_group[g.addr_id as usize], vec![0]);
+}
+
+#[test]
+fn test_disjoint_spans_on_one_address_become_separate_groups() {
+    // A hull over the gap would shadow every event in it (the editor
+    // shadows per individual span), so the pieces stay separate — even
+    // across args. Touching spans still merge.
+    let s = load(&[
+        curve_line("/xy", 1, json!([{"t": 0.0, "v": 0.0}, {"t": 1.0, "v": 1.0}])),
+        curve_line("/xy", 0, json!([{"t": 1.0, "v": 0.0}, {"t": 2.0, "v": 1.0}])),
+        curve_line("/xy", 0, json!([{"t": 5.0, "v": 0.0}, {"t": 6.0, "v": 1.0}])),
+    ]);
+    assert_eq!(s.curve_groups.len(), 2);
+    assert_eq!((s.curve_groups[0].start, s.curve_groups[0].end), (0.0, 2.0));
+    assert_eq!(s.curve_groups[0].members.len(), 2, "touching spans merge");
+    assert_eq!((s.curve_groups[1].start, s.curve_groups[1].end), (5.0, 6.0));
+    // Groups of one address are start-ordered.
+    assert_eq!(s.addr_group[s.curve_groups[0].addr_id as usize], vec![0, 1]);
 }
 
 #[test]
@@ -213,19 +274,34 @@ fn test_curve_group_args_respects_int_tags() {
 }
 
 #[test]
-fn test_same_arg_curves_share_a_group() {
+fn test_same_arg_curves_share_a_group_when_their_spans_overlap() {
     let s = load(&[
-        curve_line("/x", 0, json!([{"t": 0.0, "v": 0.0}, {"t": 1.0, "v": 1.0}])),
-        curve_line("/x", 0, json!([{"t": 10.0, "v": 5.0}, {"t": 11.0, "v": 6.0}])),
+        curve_line("/x", 0, json!([{"t": 0.0, "v": 0.0}, {"t": 10.0, "v": 10.0}])),
+        curve_line("/x", 0, json!([{"t": 2.0, "v": 5.0}, {"t": 4.0, "v": 6.0}])),
     ]);
     assert_eq!(s.curve_groups.len(), 1);
     assert_eq!(s.curve_groups[0].members.len(), 2);
     assert_eq!(s.curve_groups[0].start, 0.0);
-    assert_eq!(s.curve_groups[0].end, 11.0);
-    // The earlier line's curve wins its own span; the later takes over.
+    assert_eq!(s.curve_groups[0].end, 10.0);
+    // Inside the inner span it wins the def-time tie; after it the outer
+    // curve's later definition takes over again.
+    let args = s.curve_group_args(0, 3.0);
+    assert!((args[0].as_f64().unwrap() - 5.5).abs() < 1e-9, "{args:?}");
+    let args = s.curve_group_args(0, 6.0);
+    assert!((args[0].as_f64().unwrap() - 6.0).abs() < 1e-9, "{args:?}");
+}
+
+#[test]
+fn test_same_arg_curves_with_disjoint_spans_split_into_groups() {
+    let s = load(&[
+        curve_line("/x", 0, json!([{"t": 0.0, "v": 0.0}, {"t": 1.0, "v": 1.0}])),
+        curve_line("/x", 0, json!([{"t": 10.0, "v": 5.0}, {"t": 11.0, "v": 6.0}])),
+    ]);
+    assert_eq!(s.curve_groups.len(), 2);
+    // Each piece answers for its own span; the resolver picks between them.
     let args = s.curve_group_args(0, 0.5);
     assert!((args[0].as_f64().unwrap() - 0.5).abs() < 1e-9);
-    let args = s.curve_group_args(0, 10.5);
+    let args = s.curve_group_args(1, 10.5);
     assert!((args[0].as_f64().unwrap() - 5.5).abs() < 1e-9);
 }
 
@@ -248,9 +324,10 @@ fn test_shared_jsonl_fixture_loads_identically() {
 
 #[test]
 fn test_curve_group_args_clamps_to_the_earliest_span_before_both() {
+    // Overlapping spans, so both live in one group.
     let s = load(&[
         curve_line("/x", 0, json!([{"t": 10.0, "v": 5.0}, {"t": 11.0, "v": 6.0}])),
-        curve_line("/x", 0, json!([{"t": 3.0, "v": 0.5}, {"t": 4.0, "v": 1.0}])),
+        curve_line("/x", 0, json!([{"t": 3.0, "v": 0.5}, {"t": 10.5, "v": 1.0}])),
     ]);
     // t before both spans: the earliest span's flat-left value, regardless
     // of line order.

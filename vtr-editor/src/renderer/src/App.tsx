@@ -8,6 +8,8 @@ import {
   type PortConfig
 } from '../../shared/types'
 import { CurvePanel, PointAdd, PointPatch } from './components/CurvePanel'
+import { isRefusal, type ConvertResult } from './components/curveConvert'
+import { MODE_LABELS, modePatches, type InterpMode } from './components/curveMode'
 import { addPoints, applyPointPatches, deletePoints, replaceWithCurves } from '../../shared/edits'
 import {
   ClipAction,
@@ -473,13 +475,42 @@ function App(): React.JSX.Element {
   }, [tracks, curveSel])
 
   const onPointEdit = useCallback(
-    (patches: PointPatch[], isCommit: boolean) => {
+    (patches: PointPatch[], isCommit: boolean, label?: string) => {
       if (patches.length === 0) return
       const apply = (d: Doc): void => applyPointPatches(d.edits, patches)
-      if (isCommit) commit(`${count(patches.length, 'point')} edited`, apply)
+      if (isCommit) commit(label ?? `${count(patches.length, 'point')} edited`, apply)
       else transient(apply)
     },
     [commit, transient]
+  )
+
+  // Interpolation of the selected points, in one undo entry: knot mode
+  // changes and the discrete-point conversion the panel built commit
+  // together. Picking the mode a point already has patches nothing; a
+  // conversion that would drop data refuses with its reason instead.
+  const onInterpolate = useCallback(
+    (mode: InterpMode, convert: ConvertResult | null) => {
+      if (isRefusal(convert)) {
+        setError(convert.refusal)
+        return
+      }
+      const patches = modePatches(selectedPoints, edits, mode)
+      const dels = convert?.dels ?? []
+      const adds = convert?.adds ?? []
+      if (patches.length === 0 && adds.length === 0) return
+      const label =
+        adds.length > 0
+          ? `${count(dels.length, 'point')} → curve`
+          : `interpolation: ${MODE_LABELS[mode]}`
+      commit(label, (d) => {
+        applyPointPatches(d.edits, patches)
+        if (adds.length > 0) replaceWithCurves(d.edits, dels, adds)
+      })
+      setError(null)
+      // The converted points are gone; any selected knots stay.
+      if (adds.length > 0) setSelectedPoints(selectedPoints.filter((s) => 'curveIndex' in s))
+    },
+    [selectedPoints, edits, commit, setSelectedPoints]
   )
 
   // New points append to the clips' edit overlays and become the selection.
@@ -836,6 +867,7 @@ function App(): React.JSX.Element {
 
       <CurvePanel
         clips={curveClips}
+        tracks={tracks}
         height={curveHeight}
         edits={edits}
         playhead={playhead}
@@ -846,6 +878,7 @@ function App(): React.JSX.Element {
         onPointEdit={onPointEdit}
         onPointAdd={onPointAdd}
         onCurveReplace={onCurveReplace}
+        onInterpolate={onInterpolate}
       />
       <StatusBar hoverTime={hoverTime} selection={selection} log={log} />
       <TooltipLayer />

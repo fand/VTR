@@ -21,8 +21,10 @@
 //!   identical to the group's previous one is skipped (flat regions don't
 //!   spam the tick rate).
 //! - Seek: per address, the definition with the latest time <= pos wins —
-//!   an event at its t, a curve at min(pos, span end) once pos >= span
-//!   start; ties go to the curve (it is the edit layer). An address whose
+//!   an event at its t, each of the address's curve groups at min(pos, its
+//!   span end) once pos >= its span start; ties go to the curve (it is the
+//!   edit layer). Disjoint curve pieces are separate groups, so an event in
+//!   the gap between them outranks the left piece. An address whose
 //!   definitions all lie after pos clamps to the earliest one. Outside its
 //!   span a curve extends flat, and triggers stay suppressed.
 
@@ -222,29 +224,35 @@ impl Resolver {
             }
             let times = &session.addr_t[k];
             let j = times.partition_point(|&x| x <= pos);
-            // Two candidates, curve last so ties go to it (the edit layer):
-            // an event's def time is the last event at or before pos, a
-            // curve's is min(pos, span end) once pos has reached its span.
+            // Candidates in tie order (later wins): the event first, then the
+            // address's curve groups start-ordered — so an equal-time tie
+            // goes to a curve (the edit layer) and, between groups, to the
+            // later-starting piece. An event's def time is the last event at
+            // or before pos, a group's is min(pos, its span end) once pos has
+            // reached it. Gaps between groups are nobody's span, so an event
+            // there wins on time.
             let mut cands: Vec<pick::Candidate> = Vec::new();
+            // Parallel to `cands`: which group each one samples, none = event.
+            let mut srcs: Vec<Option<usize>> = Vec::new();
             if let Some(&t0) = times.first() {
                 cands.push(((j > 0).then(|| times[j - 1]), t0));
+                srcs.push(None);
             }
-            let group = session.addr_group[k];
-            if let Some(g) = group {
+            for &g in &session.addr_group[k] {
                 let grp = &session.curve_groups[g];
                 cands.push(((grp.start <= pos).then(|| pos.min(grp.end)), grp.start));
+                srcs.push(Some(g));
             }
             let Some((w, started)) = pick::pick_latest_or_earliest(&cands) else {
                 continue;
             };
-            match group {
-                // The curve, when present, is the last candidate.
-                Some(g) if w == cands.len() - 1 => {
+            match srcs[w] {
+                Some(g) => {
                     let grp = &session.curve_groups[g];
                     let def = pos.min(grp.end).max(grp.start);
                     chosen.push((def, usize::MAX, Src::Group(g)));
                 }
-                _ => {
+                None => {
                     let i = session.addr_events[k][if started { j - 1 } else { 0 }];
                     chosen.push((session.t[i], i, Src::Event(i)));
                 }

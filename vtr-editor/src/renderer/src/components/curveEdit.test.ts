@@ -68,3 +68,12 @@ test('setKnotHandle without a neighbor on that side is a noop', () => {
   expect(setKnotHandle(knots(), 0, 'i', -0.5, 0.2)).toEqual(knots())
   expect(setKnotHandle(knots(), 2, 'o', 0.5, 0.2)).toEqual(knots())
 })
+
+test('setKnotHandle leaves the dead handles of a step segment alone', () => {
+  // Knot 1 steps: its `o` and knot 2's `i` mean nothing.
+  const stepped = knots().map((k, i) => (i === 1 ? { ...k, s: true as const } : k))
+  expect(setKnotHandle(stepped, 1, 'o', 0.5, 0.2)).toEqual(stepped)
+  expect(setKnotHandle(stepped, 2, 'i', -0.5, 0.2)).toEqual(stepped)
+  // The live side of the same knot still writes.
+  expect(setKnotHandle(stepped, 1, 'i', -0.5, 0.2)[1].i).toEqual([-0.5, 0.2])
+})

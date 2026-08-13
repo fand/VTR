@@ -7,8 +7,14 @@ import {
   formatRulerLabel,
   gridStep,
   stepDecimals,
-  TIME_TICK_MIN_PX
+  TIME_TICK_MIN_PX,
+  type TrackState
 } from '../timeline/model'
+import { applyEdits, applyEditsIndexed } from '../../../shared/edits'
+import type { EventPointSel } from '../../../shared/edits'
+import { clipKeys, maskIntervals } from '../../../shared/trackMask'
+import type { MaskClip } from '../../../shared/trackMask'
+import { buildPointConversion, type ConvertCtx, type ConvertResult } from './curveConvert'
 import { MIN_FIT_POINTS, buildCurveReplace } from './curveReplace'
 import { PAD, fitZoomX, tAt, xAt, yAt, type Scale } from './curveGeom'
 import {
@@ -19,11 +25,14 @@ import {
   ptSel,
   selKey,
   type CurvePoint,
+  type MaskCtx,
   type PointAdd,
   type PointPatch,
   type PointSel,
+  type PropCurve,
   type Property
 } from './curveModel'
+import { MODES, MODE_LABELS, selectionMode, type InterpMode } from './curveMode'
 import { paintCurves } from './curvePaint'
 import { zoomSlider } from './uiScale'
 import { useCurveInteraction } from './useCurveInteraction'
@@ -70,6 +79,54 @@ const HoverTooltip = React.memo(function HoverTooltip({
   )
 })
 
+/** Value editor for the point selection: the value they all share, `-` when
+ *  they differ. Enter/blur commits it to every selected point, Esc reverts.
+ *  The 0–1 limit toggle doesn't apply — explicit typing beats a drag guard. */
+function ValueField({
+  value,
+  onCommit
+}: {
+  value: number | null
+  onCommit: (v: number) => void
+}): React.JSX.Element {
+  const text = value == null ? '' : fmt(value)
+  const [draft, setDraft] = useState(text)
+  useEffect(() => setDraft(text), [text])
+  // Esc blurs too, so the blur handler must know not to commit the draft.
+  const reverting = useRef(false)
+  const commit = (): void => {
+    const n = Number(draft)
+    if (draft.trim() !== '' && Number.isFinite(n) && n !== value) onCommit(n)
+    else setDraft(text)
+  }
+  return (
+    <label className="port-field curve-field">
+      <span className="port-field-label">value</span>
+      <input
+        value={draft}
+        placeholder="-"
+        inputMode="numeric"
+        aria-label="point value"
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => {
+          if (!reverting.current) commit()
+          else {
+            reverting.current = false
+            setDraft(text)
+          }
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur()
+          else if (e.key === 'Escape') {
+            reverting.current = true
+            e.currentTarget.blur()
+          }
+        }}
+      />
+    </label>
+  )
+}
+
 /** Playhead line over the ruler + curves; rAF-follows playback like the
  *  timeline's PlayheadLine. toPx maps timeline seconds to viewport px. */
 function CurvePlayhead({
@@ -104,6 +161,7 @@ function CurvePlayhead({
 
 export function CurvePanel({
   clips,
+  tracks,
   edits,
   height,
   playhead,
@@ -113,10 +171,14 @@ export function CurvePanel({
   onSelectPoints,
   onPointEdit,
   onPointAdd,
-  onCurveReplace
+  onCurveReplace,
+  onInterpolate
 }: {
   /** Every clip whose events are shown; empty shows the placeholder. */
   clips: ClipInst[]
+  /** The whole timeline, top to bottom: a lower track masks the shown clips
+   *  even when it isn't displayed itself (docs/tasks/track-priority). */
+  tracks: TrackState[]
   edits: Record<string, ClipEdits>
   /** Panel height, px (the splitter above drives it). */
   height: number
@@ -125,8 +187,9 @@ export function CurvePanel({
   onSeek: (sec: number) => void
   selectedPoints: PointSel[]
   onSelectPoints: (pts: PointSel[]) => void
-  /** Streams transient patches while dragging; isCommit on release. */
-  onPointEdit: (patches: PointPatch[], isCommit: boolean) => void
+  /** Streams transient patches while dragging; isCommit on release. The
+   *  label names the commit's undo entry (default: "N points edited"). */
+  onPointEdit: (patches: PointPatch[], isCommit: boolean, label?: string) => void
   /** Appends events to the clips' edit overlays. A pencil stroke streams
    *  single adds (transient) and re-sends the whole batch with isCommit. */
   onPointAdd: (adds: PointAdd[], isCommit: boolean) => void
@@ -135,6 +198,10 @@ export function CurvePanel({
     dels: { file: string; eventIndex: number }[],
     adds: { file: string; curve: ClipCurve }[]
   ) => void
+  /** Sets the interpolation of every selected point; one undo entry. The
+   *  conversion carries the selected event points' curves (null when none
+   *  are selected), so knot modes and conversions commit together. */
+  onInterpolate: (mode: InterpMode, convert: ConvertResult | null) => void
 }): React.JSX.Element {
   // Events per clip path; the cache never goes stale (files are immutable).
   const [loaded, setLoaded] = useState<Map<string, OscEvent[]>>(new Map())
@@ -162,9 +229,15 @@ export function CurvePanel({
   const { w, h, zoomX, zoomY, innerW, innerH, scrollTop, scrollLeft } = vp
   const zoomXMap = zoomSlider(1, vp.zoomXMax)
 
-  // Load events for every shown clip. Keyed by the joined paths so a new
-  // clips array with the same files doesn't refetch.
-  const pathsKey = clips.map((c) => c.path).join('\n')
+  // Load events for every shown clip plus every unmuted clip of the project:
+  // masking needs the lower tracks' keys even when they aren't shown. Keyed by
+  // the joined paths so a new clips array with the same files doesn't refetch.
+  const pathsKey = [
+    ...new Set([
+      ...clips.map((c) => c.path),
+      ...tracks.flatMap((t) => t.clips.filter((c) => !c.muted).map((c) => c.path))
+    ])
+  ].join('\n')
   useEffect(() => {
     const paths = pathsKey === '' ? [] : pathsKey.split('\n')
     const missing = [...new Set(paths.filter((p) => !eventsCache.has(p)))]
@@ -194,14 +267,52 @@ export function CurvePanel({
   const clipsKey = clips
     .map((c) => `${c.id} ${c.offset} ${c.trimIn} ${c.trimOut} ${c.file} ${c.path}`)
     .join('\n')
+
+  // Masks: what each track's lower tracks own, per (port, address). Same keyed
+  // memo as clipsKey, but over every track — mute included, since a muted clip
+  // masks nothing.
+  const tracksKey = tracks
+    .map((t) =>
+      t.clips
+        .map(
+          (c) =>
+            `${c.id} ${c.offset} ${c.trimIn} ${c.trimOut} ${c.muted ? 'm' : ''} ${c.file} ${c.path}`
+        )
+        .join(',')
+    )
+    .join('\n')
+  const maskCtx = useMemo((): MaskCtx => {
+    const trackOf = new Map<number, number>()
+    const perTrack = tracks.map((track, i) => {
+      const out: MaskClip[] = []
+      for (const c of track.clips) {
+        trackOf.set(c.id, i)
+        const events = loaded.get(c.path)
+        // A clip masks only once its events are in; masks pop in on load like
+        // the curves do.
+        if (c.muted || !events) continue
+        const clipEdits = edits[c.file]
+        out.push({
+          start: c.offset,
+          end: c.offset + clipLen(c),
+          keys: clipKeys(applyEdits(events, clipEdits), clipEdits, c.trimIn, c.trimOut)
+        })
+      }
+      return out
+    })
+    // Same clips both ways: a resume fires only inside a window that masks.
+    return { masks: maskIntervals(perTrack), windows: perTrack, trackOf }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- tracksKey covers tracks
+  }, [tracksKey, loaded, edits])
+
   const curves = useMemo(() => {
     const ready = clips.flatMap((clip) => {
       const events = loaded.get(clip.path)
       return events ? [{ clip, events }] : []
     })
-    return buildProperties(ready, edits)
+    return buildProperties(ready, edits, maskCtx)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- clipsKey covers clips
-  }, [clipsKey, loaded, edits])
+  }, [clipsKey, loaded, edits, maskCtx])
 
   // Properties that pass the name filter; everything drawn works off this.
   const shown = useMemo(() => {
@@ -239,6 +350,88 @@ export function CurvePanel({
   const y = (p: Property, v: number): number => yAt(scale, p, v)
 
   const selKeys = useMemo(() => new Set(selectedPoints.map(selKey)), [selectedPoints])
+
+  // Header editors work on the whole point selection — event points and
+  // knots alike — so they read and write through the one traversal.
+  const selValues = ((): number[] => {
+    if (selectedPoints.length === 0) return []
+    const out: number[] = []
+    forEachEl(curves, (el) => {
+      if (el.sel && selKeys.has(selKey(el.sel))) out.push(el.v)
+    })
+    return out
+  })()
+  const selValue =
+    selValues.length > 0 && selValues.every((v) => v === selValues[0]) ? selValues[0] : null
+  const selMode = selectionMode(selectedPoints, edits)
+  const pointSels = selectedPoints.filter((s): s is EventPointSel => !('curveIndex' in s))
+
+  // Conversion context: every event and live overlay curve of the shown
+  // files. Trim doesn't narrow it — the overlay is per file, so an event
+  // outside this clip's window still plays through another instance of it,
+  // and the span invariant has to hold there too.
+  const convertCtx = useMemo((): ConvertCtx => {
+    const events: ConvertCtx['events'] = []
+    const list: ConvertCtx['curves'] = []
+    const seen = new Set<string>()
+    for (const clip of clips) {
+      const evs = loaded.get(clip.path)
+      if (!evs || seen.has(clip.file)) continue
+      seen.add(clip.file)
+      const clipEdits = edits[clip.file]
+      for (const { ev, idx } of applyEditsIndexed(evs, clipEdits)) {
+        events.push({ file: clip.file, eventIndex: idx, ev })
+      }
+      clipEdits?.curves?.forEach((c, ci) => {
+        if (!clipEdits.curveDel?.[ci]) list.push({ file: clip.file, curveIndex: ci, curve: c })
+      })
+    }
+    return { events, curves: list }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- clipsKey covers clips
+  }, [clipsKey, loaded, edits])
+
+  // Whether the selected points can become knots at all is structural (a
+  // lone point with no neighbor element can't), so one mode probes for all.
+  const canConvert = useMemo(
+    () =>
+      pointSels.length > 0 && buildPointConversion(pointSels, convertCtx, 'ease-in-out') != null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- selectedPoints covers pointSels
+    [selectedPoints, convertCtx]
+  )
+
+  /** Typed value → patches: event points patch their arg, knots chain into
+   *  one whole-array patch per curve (per-knot patches would overwrite each
+   *  other — same rule as movePatches in useCurveInteraction). Handle
+   *  offsets are relative, so they carry over untouched. */
+  const setSelectedValue = (v: number): void => {
+    const out: PointPatch[] = []
+    const byCurve = new Map<string, { pc: PropCurve; idx: Set<number> }>()
+    forEachEl(curves, (el) => {
+      if (!el.sel || !selKeys.has(selKey(el.sel))) return
+      if (el.pt) {
+        out.push({
+          file: el.pt.clip.file,
+          eventIndex: el.pt.eventIndex,
+          argIndex: el.pt.argIndex,
+          value: v
+        })
+        return
+      }
+      const pc = el.pc!
+      const key = `${pc.clip.file}:${pc.curveIndex}`
+      let g = byCurve.get(key)
+      if (!g) byCurve.set(key, (g = { pc, idx: new Set() }))
+      g.idx.add(el.srcIndex!)
+    })
+    for (const { pc, idx } of byCurve.values()) {
+      out.push({
+        file: pc.clip.file,
+        curveIndex: pc.curveIndex,
+        knots: pc.src.knots.map((k, i) => (idx.has(i) ? { ...k, v } : k))
+      })
+    }
+    if (out.length > 0) onPointEdit(out, true, 'value edit')
+  }
 
   // Replace with Curve targets: the selected points, else the selected
   // properties' full point sets. Each (property, clip) group needs
@@ -515,6 +708,44 @@ export function CurvePanel({
         >
           <Spline size={14} />
         </button>
+        {selectedPoints.length > 0 && (
+          <>
+            <ValueField value={selValue} onCommit={setSelectedValue} />
+            <label className="port-field curve-field">
+              <span className="port-field-label">interpolate</span>
+              <select
+                className="curve-interp"
+                aria-label="interpolation"
+                value={selMode ?? ''}
+                onChange={(e) => {
+                  const m = e.target.value as InterpMode
+                  onInterpolate(
+                    m,
+                    pointSels.length > 0 ? buildPointConversion(pointSels, convertCtx, m) : null
+                  )
+                }}
+              >
+                {/* Mixed selection: no mode is current until one is picked. */}
+                {selMode == null && (
+                  <option value="" disabled>
+                    -
+                  </option>
+                )}
+                {/* Points convert into knots; ones with no neighbor element
+                    to interpolate with can only stay const. */}
+                {MODES.map((m) => (
+                  <option
+                    key={m}
+                    value={m}
+                    disabled={pointSels.length > 0 && !canConvert && m !== 'const'}
+                  >
+                    {MODE_LABELS[m]}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </>
+        )}
         <div className="spacer" />
         <button
           className="btn small snap"

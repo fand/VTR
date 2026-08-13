@@ -13,6 +13,8 @@ export interface CurvePointHook {
   selected: boolean
   t: number
   v: number
+  /** A lower track owns this time for the point's key. */
+  masked: boolean
 }
 
 export interface CurvePropHook {
@@ -32,6 +34,12 @@ export interface CurveKnotHook {
   t: number
   v: number
   selected: boolean
+  /** Step segment leaving this knot. */
+  s: boolean
+  hasIn: boolean
+  hasOut: boolean
+  /** Sits in a masked stretch of its curve. */
+  masked: boolean
 }
 
 export const curvePoints = (page: Page): Promise<CurvePointHook[]> =>

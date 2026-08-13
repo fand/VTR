@@ -149,6 +149,27 @@ test('deletePoints: a curve left with fewer than 2 knots is dropped via curveDel
   expect(edits['a.jsonl'].curves![0].knots).toHaveLength(2)
 })
 
+test('deletePoints: a new last knot loses its step flag', () => {
+  const edits: Record<string, ClipEdits> = {
+    'a.jsonl': {
+      curves: [
+        {
+          ...curve(0, 2),
+          knots: [
+            { t: 0, v: 0 },
+            { t: 1, v: 1, s: true },
+            { t: 2, v: 0 }
+          ]
+        }
+      ]
+    }
+  }
+  deletePoints(edits, [{ file: 'a.jsonl', curveIndex: 0, knotIndex: 2 }])
+  const knots = edits['a.jsonl'].curves![0].knots
+  expect(knots.map((k) => k.t)).toEqual([0, 1])
+  expect(knots[1].s).toBeUndefined()
+})
+
 test('replaceWithCurves: dels flag events; a new curve carves overlapping same-arg curves', () => {
   const edits: Record<string, ClipEdits> = {
     'a.jsonl': { curves: [curve(0, 10), curve(0, 1, { arg: 1 })] }

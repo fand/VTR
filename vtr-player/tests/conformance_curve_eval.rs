@@ -30,6 +30,7 @@ fn value_at_matches_the_editor_fixture_bit_for_bit() {
                 v: k["v"].as_f64().unwrap(),
                 i: handle(k, "i"),
                 o: handle(k, "o"),
+                s: k.get("s").and_then(Value::as_bool).unwrap_or(false),
             })
             .collect();
         let samples = case["samples"].as_array().unwrap();

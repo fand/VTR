@@ -420,8 +420,10 @@ export function useCurveInteraction(ctx: CurveInteractionCtx): CurveInteraction 
 
   // Bezier handles: every selected knot shows its incoming/outgoing handle
   // (the linear-third default where the knot has none yet), draggable to
-  // reshape the segment. Handle offsets are clip-local seconds, which map
-  // 1:1 onto timeline seconds (offset/trim only translate).
+  // reshape the segment. A side across a step segment is dead — no handle
+  // affordance there (setKnotHandle guards the same). Handle offsets are
+  // clip-local seconds, which map 1:1 onto timeline seconds (offset/trim
+  // only translate).
   const handleViews = (): HandleView[] => {
     if (clips.length === 0) return []
     const out: HandleView[] = []
@@ -445,11 +447,11 @@ export function useCurveInteraction(ctx: CurveInteractionCtx): CurveInteraction 
           hy: y(p, el.v + dv)
         })
       }
-      if (i > 0) {
+      if (i > 0 && !kn[i - 1].s) {
         const [dt, dv] = kn[i].i ?? [(kn[i - 1].t - kn[i].t) / 3, (kn[i - 1].v - kn[i].v) / 3]
         mk('i', dt, dv)
       }
-      if (i + 1 < kn.length) {
+      if (i + 1 < kn.length && !kn[i].s) {
         const [dt, dv] = kn[i].o ?? [(kn[i + 1].t - kn[i].t) / 3, (kn[i + 1].v - kn[i].v) / 3]
         mk('o', dt, dv)
       }

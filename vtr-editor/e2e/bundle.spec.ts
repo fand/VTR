@@ -45,10 +45,18 @@ async function launch(
   return { app, page }
 }
 
-async function recordClip(page: Page, sock: dgram.Socket, n: number, clips: number): Promise<void> {
+async function recordClip(
+  page: Page,
+  sock: dgram.Socket,
+  n: number,
+  clips: number,
+  // Distinct per take: overlapping takes on one address would mask the
+  // earlier one (track priority), making the export count timing-dependent.
+  addr = '/fader'
+): Promise<void> {
   await page.getByRole('button', { name: 'Rec' }).click()
   for (let i = 0; i < n; i++) {
-    sock.send(oscMessage('/fader', [i / n]), LISTEN_PORT, '127.0.0.1')
+    sock.send(oscMessage(addr, [i / n]), LISTEN_PORT, '127.0.0.1')
     await sleep(100)
   }
   await page.getByRole('button', { name: 'Stop' }).click()
@@ -109,7 +117,7 @@ test('bundle: rec into project clips/, Save As collects into .oscproj, reopen + 
   const { app: app2, page: page2 } = await launch(workdir, bundle, bundle)
   try {
     await expect(page2.locator('.clip')).toHaveCount(1)
-    await recordClip(page2, sock, 3, 2)
+    await recordClip(page2, sock, 3, 2, '/fader2')
     expect(clipFiles(join(bundle, 'clips'))).toHaveLength(2)
 
     // Export defaults next to the bundle, not inside it.

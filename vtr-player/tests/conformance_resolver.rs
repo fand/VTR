@@ -178,6 +178,15 @@ fn curve(a: &str, arg: usize, template: &[f64], span: [f64; 2], vals: [f64; 2]) 
     })
 }
 
+/// Curve on `a` with hand-written knots (step flags, mixed segments).
+fn curve_knots(a: &str, arg: usize, template: &[f64], knots: Value) -> Value {
+    json!({
+        "type": "curve", "port": 10010, "a": a, "arg": arg,
+        "types": "f".repeat(template.len()), "args": template,
+        "knots": knots,
+    })
+}
+
 fn assert_first_near(out: &[Emit], want: f64) {
     assert_eq!(out.len(), 1, "expected one emission, got {out:?}");
     let got = out[0].args[0].as_f64().unwrap();
@@ -359,6 +368,195 @@ fn test_same_arg_curves_with_disjoint_spans_take_turns() {
     let mut r = resolver(&s);
     r.step(1.0);
     assert_first_near(&r.step(1.25), 0.25);
+}
+
+#[test]
+fn test_events_in_a_gap_between_curve_pieces_win() {
+    // Track priority overdubs a take over a curve: the export carves the
+    // curve into pieces around the take (epsilon-shrunk so its edges don't
+    // shadow the take's edge events) and keeps the take's events in the
+    // gap. The gap must play the take, not the left piece's held end.
+    let s = load(&[
+        curve("/x", 0, &[0.0], [0.0, 1.999_999], [0.0, 1.0]),
+        curve("/x", 0, &[0.0], [4.000_001, 10.0], [5.0, 6.0]),
+        ev(2.0, "/x", &[7.0]),
+        ev(3.0, "/x", &[8.0]),
+    ]);
+    // Seek into the gap: the take's last event outranks the left piece.
+    let mut r = resolver(&s);
+    assert_eq!(firsts(&r.step(3.0)), vec![8.0]);
+    // Pump across the punch-in: the left piece lands its end value, then
+    // the take's event — and nothing clobbers it further into the gap.
+    let mut r = resolver(&s);
+    r.step(1.95);
+    assert_eq!(firsts(&r.step(2.05)), vec![1.0, 7.0]);
+    assert_eq!(r.step(2.5), vec![]);
+    assert_eq!(firsts(&r.step(3.0)), vec![8.0]);
+    assert_eq!(r.step(3.4), vec![]);
+    // The right piece takes over once its span starts.
+    let mut r = resolver(&s);
+    assert_first_near(&r.step(4.000_001), 5.0);
+    let mut r = resolver(&s);
+    assert_first_near(&r.step(11.0), 6.0);
+}
+
+#[test]
+fn test_right_piece_takes_over_from_its_start_after_a_gap_event() {
+    let s = load(&[
+        curve("/x", 0, &[0.0], [0.0, 2.0], [0.0, 1.0]),
+        curve("/x", 0, &[0.0], [4.0, 6.0], [5.0, 6.0]),
+        ev(3.0, "/x", &[9.0]),
+    ]);
+    let mut r = resolver(&s);
+    assert_eq!(firsts(&r.step(3.5)), vec![9.0]); // in the gap: the event
+    assert_first_near(&r.step(4.0), 5.0); // pump into the right piece
+    assert_first_near(&r.step(5.0), 5.5); // jump: seek picks it too
+    // Same from a cold seek straight into the right span.
+    let mut r = resolver(&s);
+    assert_first_near(&r.step(4.5), 5.25);
+}
+
+#[test]
+fn test_gap_without_events_still_holds_the_left_piece() {
+    // No events in the gap: unchanged behavior — the left piece's flat
+    // end value holds until the right piece starts.
+    let s = load(&[
+        curve("/x", 0, &[0.0], [0.0, 2.0], [0.0, 1.0]),
+        curve("/x", 0, &[0.0], [4.0, 6.0], [5.0, 6.0]),
+    ]);
+    let mut r = resolver(&s);
+    r.step(1.8);
+    assert_first_near(&r.step(2.2), 1.0); // pump lands the end value
+    assert_eq!(r.step(2.6), vec![]); // gap: quiet, the value stands
+    assert_eq!(r.step(3.0), vec![]);
+    assert_eq!(r.step(3.8), vec![]);
+    assert_first_near(&r.step(4.2), 5.1); // the right piece takes over
+    let mut r = resolver(&s);
+    assert_first_near(&r.step(3.0), 1.0); // seek into the gap: the same value
+}
+
+#[test]
+fn test_overlapping_args_merge_but_a_disjoint_piece_is_its_own_group() {
+    let s = load(&[
+        curve("/xy", 0, &[0.0, 0.0], [0.0, 2.0], [0.0, 2.0]),
+        curve("/xy", 1, &[0.0, 0.0], [1.0, 3.0], [1.0, 0.0]),
+        curve("/xy", 0, &[0.0, 0.0], [8.0, 10.0], [4.0, 5.0]),
+    ]);
+    assert_eq!(s.curve_groups.len(), 2);
+    // Overlapping spans (different args) stay one merged message.
+    let mut r = resolver(&s);
+    r.step(1.0);
+    let out = r.step(1.5);
+    assert_eq!(out.len(), 1, "one message per sample: {out:?}");
+    assert!((out[0].args[0].as_f64().unwrap() - 1.5).abs() < 1e-9);
+    assert!((out[0].args[1].as_f64().unwrap() - 0.75).abs() < 1e-9);
+    // The disjoint piece is its own group: it wins alone past its start and
+    // sends its own template for the args it doesn't control.
+    let mut r = resolver(&s);
+    let out = r.step(9.0);
+    assert_eq!(out.len(), 1);
+    assert!((out[0].args[0].as_f64().unwrap() - 4.5).abs() < 1e-9);
+    assert_eq!(out[0].args[1], json!(0.0));
+}
+
+// ---------------------------------------------------------------------------
+// Step segments (knot `s`): the value holds at the left knot's `v` until the
+// next knot's t, then jumps.
+
+/// A held value is the knot's `v` verbatim — no bezier math ran on it.
+fn assert_first_exact(out: &[Emit], want: f64) {
+    assert_eq!(out.len(), 1, "expected one emission, got {out:?}");
+    let got = out[0].args[0].as_f64().unwrap();
+    assert_eq!(got.to_bits(), want.to_bits(), "got {got}, want {want}");
+}
+
+#[test]
+fn test_pump_holds_a_step_span_without_duplicate_emissions() {
+    let s = load(&[curve_knots(
+        "/x",
+        0,
+        &[0.0],
+        json!([{"t": 0.0, "v": 0.25, "s": true}, {"t": 1.0, "v": 0.75}]),
+    )]);
+    let mut r = resolver(&s);
+    assert_first_exact(&r.step(0.0), 0.25); // first step: seek catch-up
+    assert_eq!(r.step(0.3), vec![]); // held: dedup suppresses the resample
+    assert_eq!(r.step(0.6), vec![]);
+    assert_eq!(r.step(0.999), vec![]);
+    assert_first_exact(&r.step(1.0), 0.75); // the jump lands on the knot
+    assert_eq!(r.step(1.4), vec![]); // span finished
+}
+
+#[test]
+fn test_step_value_jumps_exactly_at_the_right_knot() {
+    let s = load(&[curve_knots(
+        "/x",
+        0,
+        &[0.0],
+        json!([
+            {"t": 0.0, "v": 0.25, "s": true},
+            {"t": 1.0, "v": 0.75, "s": true},
+            {"t": 2.0, "v": 0.5},
+        ]),
+    )]);
+    for (t, want) in [
+        (0.5, 0.25),
+        (0.999_999, 0.25),
+        (1.0, 0.75),
+        (1.5, 0.75),
+        (1.999_999, 0.75),
+        (2.0, 0.5),
+    ] {
+        let mut r = resolver(&s);
+        assert_first_exact(&r.step(t), want);
+    }
+}
+
+#[test]
+fn test_seek_into_a_step_span_resolves_the_held_value() {
+    let s = load(&[curve_knots(
+        "/x",
+        0,
+        &[0.0],
+        json!([{"t": 1.0, "v": 0.25, "s": true}, {"t": 2.0, "v": 0.75}]),
+    )]);
+    let mut r = resolver(&s);
+    assert_first_exact(&r.step(1.75), 0.25); // inside the hold
+    let mut r = resolver(&s);
+    assert_first_exact(&r.step(0.2), 0.25); // before: clamps to the first knot
+    let mut r = resolver(&s);
+    assert_first_exact(&r.step(9.0), 0.75); // after: flat at the last knot
+    let mut r = resolver(&s);
+    r.step(9.0);
+    assert_first_exact(&r.step(1.25), 0.25); // scrub back into the hold
+}
+
+#[test]
+fn test_mixed_step_and_bezier_segments_in_one_curve() {
+    // [0,1) holds 0.2; [1,2) interpolates 0.4 -> 0.8; [2,3) holds 0.8.
+    let s = load(&[curve_knots(
+        "/x",
+        0,
+        &[0.0],
+        json!([
+            {"t": 0.0, "v": 0.2, "s": true},
+            {"t": 1.0, "v": 0.4},
+            {"t": 2.0, "v": 0.8, "s": true},
+            {"t": 3.0, "v": 0.1},
+        ]),
+    )]);
+    let mut r = resolver(&s);
+    assert_first_exact(&r.step(0.0), 0.2);
+    assert_eq!(r.step(0.4), vec![]); // still held
+    // Jump onto the knot; its own segment is bezier, so the bisection's
+    // ~1 ulp shows up here (same in the editor's evalCurve) — near, not exact.
+    assert_first_near(&r.step(1.0), 0.4);
+    assert_first_near(&r.step(1.4), 0.56); // bezier segment interpolates
+    assert_first_near(&r.step(1.8), 0.72);
+    assert_first_exact(&r.step(2.0), 0.8); // hold takes over at its knot
+    assert_eq!(r.step(2.4), vec![]);
+    assert_eq!(r.step(2.8), vec![]);
+    assert_first_exact(&r.step(3.0), 0.1); // last knot: the final jump
 }
 
 #[test]

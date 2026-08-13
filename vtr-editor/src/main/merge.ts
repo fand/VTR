@@ -1,11 +1,22 @@
 import { clampHandleTimes, clipCurve } from '../shared/curve'
 import { applyEdits } from '../shared/edits'
-import type { ClipCurve, CurveKnot, OscEvent, ProjectFile } from '../shared/types'
+import {
+  EPS,
+  carveKnots,
+  clipKeys,
+  dropMasked,
+  liveCurves,
+  maskedAt,
+  maskIntervals,
+  maskKey,
+  patchArgs,
+  resolveArgsAt,
+  resumeEvent,
+  round6
+} from '../shared/trackMask'
+import type { Interval, MaskClip } from '../shared/trackMask'
+import type { ClipCurve, ClipEdits, CurveKnot, OscEvent, ProjectFile } from '../shared/types'
 import { readClip } from './clips'
-
-function round6(x: number): number {
-  return Math.round(x * 1e6) / 1e6
-}
 
 /** Overlay curve → timeline space: clip to the trim window (de Casteljau at
  *  the boundaries), then shift onto the timeline. Null when trimmed away. */
@@ -37,10 +48,28 @@ function placeCurve(
   return { ...curve, knots }
 }
 
+/** A readable, unmuted clip: read once in pass 1, flattened in pass 2. */
+interface Loaded {
+  edits?: ClipEdits
+  /** Edited, clip-local: a t edit decides trim membership. */
+  events: OscEvent[]
+  offset: number
+  trimIn: number
+  trimOut: number
+  window: Interval
+  keys: Set<string>
+}
+
 /**
  * Flatten a project to a single event list (plus timeline-space curves) on
  * the editor timeline. Duplicate writes to one address are kept in time
  * order (last-wins on replay).
+ *
+ * Two passes, because the lower track wins (docs/tasks/track-priority): pass 1
+ * reads every clip and collects the (port, address) windows it carries, pass 2
+ * flattens each track with the mask its lower tracks impose — masked events
+ * drop, masked curves are carved, and the track resumes its own value after
+ * each mask.
  */
 export function mergeProject(
   resolveClip: (file: string) => string,
@@ -49,9 +78,13 @@ export function mergeProject(
   const events: OscEvent[] = []
   const curves: ClipCurve[] = []
   let duration = 0
+
+  // Pass 1: load and place. Muted and missing clips keep their timeline slot
+  // but carry no keys, so they mask nothing.
+  const loaded: Loaded[][] = []
   for (const track of project.tracks) {
+    const list: Loaded[] = []
     for (const clip of track.clips) {
-      // Muted clips still occupy the timeline, so they count into duration.
       duration = Math.max(duration, clip.offset + (clip.trimOut - clip.trimIn))
       if (clip.muted) continue
       let data
@@ -60,26 +93,102 @@ export function mergeProject(
       } catch {
         continue // missing clip: no events, but it kept its timeline slot above
       }
-      const clipEdits = project.edits?.[clip.file]
-      // Edits first: a t edit decides whether the event falls inside the trim.
-      const clipEvents = applyEdits(data.events, clipEdits)
-      for (const e of clipEvents) {
-        if (e.t < clip.trimIn || e.t > clip.trimOut) continue
-        events.push({
-          t: round6(clip.offset + (e.t - clip.trimIn)),
+      const edits = project.edits?.[clip.file]
+      const clipEvents = applyEdits(data.events, edits)
+      list.push({
+        edits,
+        events: clipEvents,
+        offset: clip.offset,
+        trimIn: clip.trimIn,
+        trimOut: clip.trimOut,
+        window: { start: clip.offset, end: clip.offset + (clip.trimOut - clip.trimIn) },
+        keys: clipKeys(clipEvents, edits, clip.trimIn, clip.trimOut)
+      })
+    }
+    loaded.push(list)
+  }
+  const masks = maskIntervals(
+    loaded.map((list) => list.map((l): MaskClip => ({ ...l.window, keys: l.keys })))
+  )
+
+  // Pass 2: flatten track by track, applying that track's mask.
+  loaded.forEach((list, i) => {
+    const placedEvents: OscEvent[] = []
+    const placedCurves: ClipCurve[] = []
+    for (const l of list) {
+      for (const e of l.events) {
+        if (e.t < l.trimIn || e.t > l.trimOut) continue
+        placedEvents.push({
+          t: round6(l.offset + (e.t - l.trimIn)),
           port: e.port,
           a: e.a,
           args: e.args,
           types: e.types
         })
       }
-      clipEdits?.curves?.forEach((c, i) => {
-        if (clipEdits.curveDel?.[i]) return
-        const placed = placeCurve(c, clip.offset, clip.trimIn, clip.trimOut)
-        if (placed) curves.push(placed)
-      })
+      for (const c of liveCurves(l.edits)) {
+        const placed = placeCurve(c, l.offset, l.trimIn, l.trimOut)
+        if (placed) placedCurves.push(placed)
+      }
     }
-  }
+
+    const intervals = masks[i]
+    for (const e of dropMasked(placedEvents, intervals)) events.push(e)
+
+    // Carved pieces per key: one covering a mask end resumes by itself — but
+    // only its own arg, hence `arg` and the slot in `curves` to patch.
+    const pieces = new Map<string, { span: Interval; arg: number; idx: number }[]>()
+    for (const c of placedCurves) {
+      const key = maskKey(c.port, c.a)
+      const ivs = intervals.get(key)
+      if (!ivs) {
+        curves.push(c)
+        continue
+      }
+      for (const knots of carveKnots(c.knots, ivs)) {
+        const span = { start: knots[0].t, end: knots[knots.length - 1].t }
+        const piece = { span, arg: c.arg, idx: curves.length }
+        curves.push({ ...c, knots })
+        const list = pieces.get(key)
+        if (list) list.push(piece)
+        else pieces.set(key, [piece])
+      }
+    }
+
+    // The track's own material per masked key, whole track (its clips never
+    // mask each other), so a resume can hold a value defined in an earlier clip.
+    const windows = list.map((l) => l.window)
+    for (const [key, ivs] of intervals) {
+      const keyPieces = pieces.get(key) ?? []
+      const material = {
+        events: placedEvents.filter((e) => maskKey(e.port, e.a) === key),
+        curves: placedCurves.filter((c) => maskKey(c.port, c.a) === key),
+        pieces: keyPieces.map((p) => p.span),
+        windows
+      }
+      if (material.events.length === 0 && material.curves.length === 0) continue
+      for (const iv of ivs) {
+        const t = round6(iv.end + EPS)
+        const covering = keyPieces.filter((p) => p.span.start <= t && t <= p.span.end)
+        if (covering.length > 0) {
+          // The pieces resume their own args; the args they don't control
+          // would emit their stale template, so splice the track's resolved
+          // value for those into every covering piece.
+          const resolved = resolveArgsAt(material, iv.end)
+          const held = new Set(covering.map((p) => p.arg))
+          if (resolved) {
+            for (const p of covering) curves[p.idx] = patchArgs(curves[p.idx], resolved, held)
+          }
+          continue // resume suppressed: a piece covers it
+        }
+        const resume = resumeEvent(material, iv.end)
+        // A sub-grid gap between two mask windows can land the resume inside
+        // the next one; it must not fire under the lower track.
+        if (resume && !maskedAt(intervals, key, resume.t)) events.push(resume)
+      }
+    }
+  })
+
   events.sort((a, b) => a.t - b.t)
   curves.sort((a, b) => a.knots[0].t - b.knots[0].t)
   return { events, curves, duration: round6(duration) }
