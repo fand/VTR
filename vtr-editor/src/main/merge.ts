@@ -1,6 +1,7 @@
 import { clampHandleTimes, clipCurve } from '../shared/curve'
 import { applyEdits } from '../shared/edits'
 import {
+  EPS,
   carveKnots,
   clipKeys,
   dropMasked,
@@ -8,6 +9,8 @@ import {
   maskedAt,
   maskIntervals,
   maskKey,
+  patchArgs,
+  resolveArgsAt,
   resumeEvent,
   round6
 } from '../shared/trackMask'
@@ -132,8 +135,9 @@ export function mergeProject(
     const intervals = masks[i]
     for (const e of dropMasked(placedEvents, intervals)) events.push(e)
 
-    // Carved pieces per key: one covering a mask end resumes by itself.
-    const pieces = new Map<string, Interval[]>()
+    // Carved pieces per key: one covering a mask end resumes by itself — but
+    // only its own arg, hence `arg` and the slot in `curves` to patch.
+    const pieces = new Map<string, { span: Interval; arg: number; idx: number }[]>()
     for (const c of placedCurves) {
       const key = maskKey(c.port, c.a)
       const ivs = intervals.get(key)
@@ -142,11 +146,12 @@ export function mergeProject(
         continue
       }
       for (const knots of carveKnots(c.knots, ivs)) {
-        curves.push({ ...c, knots })
         const span = { start: knots[0].t, end: knots[knots.length - 1].t }
+        const piece = { span, arg: c.arg, idx: curves.length }
+        curves.push({ ...c, knots })
         const list = pieces.get(key)
-        if (list) list.push(span)
-        else pieces.set(key, [span])
+        if (list) list.push(piece)
+        else pieces.set(key, [piece])
       }
     }
 
@@ -154,14 +159,28 @@ export function mergeProject(
     // mask each other), so a resume can hold a value defined in an earlier clip.
     const windows = list.map((l) => l.window)
     for (const [key, ivs] of intervals) {
+      const keyPieces = pieces.get(key) ?? []
       const material = {
         events: placedEvents.filter((e) => maskKey(e.port, e.a) === key),
         curves: placedCurves.filter((c) => maskKey(c.port, c.a) === key),
-        pieces: pieces.get(key) ?? [],
+        pieces: keyPieces.map((p) => p.span),
         windows
       }
       if (material.events.length === 0 && material.curves.length === 0) continue
       for (const iv of ivs) {
+        const t = round6(iv.end + EPS)
+        const covering = keyPieces.filter((p) => p.span.start <= t && t <= p.span.end)
+        if (covering.length > 0) {
+          // The pieces resume their own args; the args they don't control
+          // would emit their stale template, so splice the track's resolved
+          // value for those into every covering piece.
+          const resolved = resolveArgsAt(material, iv.end)
+          const held = new Set(covering.map((p) => p.arg))
+          if (resolved) {
+            for (const p of covering) curves[p.idx] = patchArgs(curves[p.idx], resolved, held)
+          }
+          continue // resume suppressed: a piece covers it
+        }
         const resume = resumeEvent(material, iv.end)
         // A sub-grid gap between two mask windows can land the resume inside
         // the next one; it must not fire under the lower track.

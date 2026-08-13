@@ -193,35 +193,35 @@ export interface TrackMaterial {
 }
 
 /**
- * The event that resumes a masked track at a mask window's end: its own
- * resolved value at `end`, emitted one grid step later so it sorts after the
- * lower track's boundary event (a tie would let the stale side win).
- *
- * Null when
- *  - a carved curve piece covers that time — the piece resumes exactly by
- *    itself, and an event inside a span never plays anyway;
- *  - no clip window of this track contains `end` — punch-out past the clip's
- *    own end resumes nothing;
- *  - the track has no definition at or before `end`.
- *
- * Value: last definition wins, over the track's own events *and* its curves,
- * with the resolver's rule that a curve's definition time is min(t, span end)
- * and ties go to the curve. A curve controls one arg while an event carries
- * the whole message, so the winning event's args are the template and every
- * curve that outranks it splices its value in at its own arg index (later
- * curves last, so the latest wins per arg). With no event at all the
- * latest curve's own args template stands in.
+ * A masked track's resolved message at a mask end: the whole args list it
+ * would emit, plus the arg indices the track actually *defines* there. The
+ * rest are template filler nobody may splice over.
  */
-export function resumeEvent(material: TrackMaterial, end: number): OscEvent | null {
-  const t = round6(end + EPS)
-  if (!material.windows.some((w) => w.start <= end && end <= w.end)) return null
-  if (material.pieces.some((p) => p.start <= t && t <= p.end)) return null
+export interface ResolvedArgs {
+  port: number
+  a: string
+  args: unknown[]
+  /** Same length as `args` when present (never sparse, never mismatched). */
+  types?: string
+  defined: ReadonlySet<number>
+}
 
+/**
+ * The masked track's own resolved value at `end`: last definition wins, over
+ * the track's own events *and* its curves, with the resolver's rule that a
+ * curve's definition time is min(t, span end) and ties go to the curve. A
+ * curve controls one arg while an event carries the whole message, so the
+ * winning event's args are the template and every curve that outranks it
+ * splices its value in at its own arg index (later curves last, so the latest
+ * wins per arg). With no event at all the latest curve's own args template
+ * stands in. Null when the track has no definition at or before `end`.
+ */
+export function resolveArgsAt(material: TrackMaterial, end: number): ResolvedArgs | null {
   const spans = material.curves.map((c) => ({
     start: c.knots[0].t,
     end: c.knots[c.knots.length - 1].t
   }))
-  // Events inside a span never play, so they can't be the resumed value.
+  // Events inside a span never play, so they can't be the resolved value.
   const live = unshadowedPoints(
     material.events.filter((e) => e.t <= end),
     spans
@@ -237,6 +237,83 @@ export function resumeEvent(material: TrackMaterial, end: number): OscEvent | nu
 
   const src = base ?? defs[defs.length - 1].c
   const args = [...src.args]
-  for (const d of defs) args[d.c.arg] = evalCurve(d.c.knots, end)
-  return { t, port: src.port, a: src.a, args, types: src.types }
+  // Type tags, index-aligned with args while it grows.
+  const tags = [...(src.types ?? '')]
+  const defined = new Set<number>(base ? args.map((_, i) => i) : [])
+  for (const d of defs) {
+    // A curve past the template's arity extends it from the curve's own args
+    // (a ClipCurve carries the whole message), so args never grows a hole and
+    // never outruns types.
+    for (let i = args.length; i <= d.c.arg; i++) {
+      args[i] = d.c.args[i] ?? 0
+      tags[i] = d.c.types?.[i] ?? 'f'
+    }
+    args[d.c.arg] = evalCurve(d.c.knots, end)
+    defined.add(d.c.arg)
+  }
+  return { port: src.port, a: src.a, args, types: joinTags(src.types, tags, args.length), defined }
+}
+
+/** Type tag string of `n` args, or undefined when the source carried none. */
+function joinTags(src: string | undefined, tags: readonly string[], n: number): string | undefined {
+  if (src === undefined) return undefined
+  let out = ''
+  for (let i = 0; i < n; i++) out += tags[i] ?? 'f'
+  return out
+}
+
+/**
+ * The event that resumes a masked track at a mask window's end: its own
+ * resolved value at `end`, emitted one grid step later so it sorts after the
+ * lower track's boundary event (a tie would let the stale side win).
+ *
+ * Null when
+ *  - a carved curve piece covers that time — the piece resumes exactly by
+ *    itself, and an event inside a span never plays anyway;
+ *  - a real event of the track already sits on that grid point — it
+ *    re-asserts the value itself, and a stale resume would override it;
+ *  - no clip window of this track contains `end` — punch-out past the clip's
+ *    own end resumes nothing;
+ *  - the track has no definition at or before `end`.
+ */
+export function resumeEvent(material: TrackMaterial, end: number): OscEvent | null {
+  const t = round6(end + EPS)
+  if (!material.windows.some((w) => w.start <= end && end <= w.end)) return null
+  if (material.pieces.some((p) => p.start <= t && t <= p.end)) return null
+  if (material.events.some((e) => e.t === t)) return null
+
+  const r = resolveArgsAt(material, end)
+  return r && { t, port: r.port, a: r.a, args: r.args, types: r.types }
+}
+
+/**
+ * Splice a masked track's resolved values into a live curve piece's emission
+ * template. Suppression of the resume is per (port, address), but a piece
+ * only re-asserts its own arg (`held` = the args live pieces cover), so every
+ * other arg the track defines would keep emitting the piece's stale template
+ * value. The player takes a curve group's template from its first member and
+ * emits template values verbatim for args with no member, so callers patch
+ * *every* covering piece — grouping order then can't matter.
+ */
+export function patchArgs(
+  curve: ClipCurve,
+  resolved: ResolvedArgs,
+  held: ReadonlySet<number>
+): ClipCurve {
+  const args = [...curve.args]
+  const tags = [...(curve.types ?? '')]
+  let changed = false
+  for (let i = 0; i < resolved.args.length; i++) {
+    if (held.has(i) || !resolved.defined.has(i)) continue
+    // Same arity rule as resolveArgsAt: fill the gap rather than leave a hole.
+    for (let j = args.length; j <= i; j++) {
+      args[j] = resolved.args[j]
+      tags[j] = resolved.types?.[j] ?? 'f'
+    }
+    args[i] = resolved.args[i]
+    changed = true
+  }
+  if (!changed) return curve
+  const types = joinTags(curve.types, tags, args.length)
+  return types === undefined ? { ...curve, args } : { ...curve, args, types }
 }

@@ -406,6 +406,236 @@ test('a curve fully inside the take is dropped and resumes with its end value', 
   ])
 })
 
+test('a swallowed curve arg patches every surviving piece template', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vtr-merge-'))
+  const project: ProjectFile = {
+    version: 1,
+    tracks: [
+      { clips: [{ file: clipOf(dir, 'up.jsonl', []), offset: 0, trimIn: 0, trimOut: 10 }] },
+      {
+        clips: [
+          {
+            file: clipOf(dir, 'take.jsonl', [{ t: 0, a: '/xy', v: 0.9 }]),
+            offset: 2,
+            trimIn: 0,
+            trimOut: 2
+          }
+        ]
+      }
+    ],
+    edits: {
+      'up.jsonl': {
+        curves: [
+          // Arg 0 survives the [2, 4] mask in two pieces; arg 1 is swallowed
+          // whole, so only the arg-0 pieces can re-assert it.
+          { port: PORT, a: '/xy', arg: 0, args: [0, 0], types: 'ff', knots: seg(0, 0, 10, 1) },
+          {
+            port: PORT,
+            a: '/xy',
+            arg: 1,
+            args: [0, 0],
+            types: 'ff',
+            knots: seg(2.5, 0.2, 3.5, 0.8)
+          }
+        ]
+      }
+    }
+  }
+  const { events, curves } = mergeProject((f) => join(dir, f), project)
+  expect(curves.map((c) => [c.knots[0].t, c.args, c.types])).toEqual([
+    [0, [0, 0], 'ff'], // pre-mask piece: untouched
+    [4.000001, [0, 0.8], 'ff'] // post-mask piece: carries the swallowed arg
+  ])
+  // The pieces resume, so no synthetic event.
+  expect(shape(events)).toEqual([['/xy', 2, 0.9]])
+})
+
+test('the template patch skips args the masked track never defines', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vtr-merge-'))
+  const project: ProjectFile = {
+    version: 1,
+    tracks: [
+      {
+        clips: [
+          {
+            file: clipOf(dir, 'up.jsonl', [{ t: 1, a: '/m', v: 0.1 }]),
+            offset: 0,
+            trimIn: 0,
+            trimOut: 10
+          }
+        ]
+      },
+      {
+        clips: [
+          {
+            file: clipOf(dir, 'take.jsonl', [{ t: 0, a: '/m', v: 0.9 }]),
+            offset: 2,
+            trimIn: 0,
+            trimOut: 2
+          }
+        ]
+      }
+    ],
+    edits: {
+      'up.jsonl': {
+        curves: [
+          // Arg 0 survives (it starts before the mask); arg 2 is swallowed.
+          // Arg 1 is defined by nobody: the 1-arg event and the swallowed
+          // curve's own template only fill it, so it must not be spliced.
+          {
+            port: PORT,
+            a: '/m',
+            arg: 0,
+            args: [0, 99, 99],
+            types: 'fff',
+            knots: seg(1.5, 0, 10, 1)
+          },
+          {
+            port: PORT,
+            a: '/m',
+            arg: 2,
+            args: [0, 55, 0.2],
+            types: 'fff',
+            knots: seg(2.5, 0.2, 3.5, 0.8)
+          }
+        ]
+      }
+    }
+  }
+  const { events, curves } = mergeProject((f) => join(dir, f), project)
+  expect(curves.map((c) => c.args)).toEqual([
+    [0, 99, 99],
+    [0, 99, 0.8] // arg 1 keeps the piece's own 99, not the resolved 55
+  ])
+  expect(shape(events)).toEqual([
+    ['/m', 1, 0.1],
+    ['/m', 2, 0.9]
+  ])
+})
+
+test('every curve arg swallowed: one resume event carries them all', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vtr-merge-'))
+  const project: ProjectFile = {
+    version: 1,
+    tracks: [
+      { clips: [{ file: clipOf(dir, 'up.jsonl', []), offset: 0, trimIn: 0, trimOut: 10 }] },
+      {
+        clips: [
+          {
+            file: clipOf(dir, 'take.jsonl', [{ t: 0, a: '/xy', v: 0.9 }]),
+            offset: 2,
+            trimIn: 0,
+            trimOut: 2
+          }
+        ]
+      }
+    ],
+    edits: {
+      'up.jsonl': {
+        curves: [
+          {
+            port: PORT,
+            a: '/xy',
+            arg: 0,
+            args: [0, 0],
+            types: 'ff',
+            knots: seg(2.5, 0.1, 3.5, 0.9)
+          },
+          {
+            port: PORT,
+            a: '/xy',
+            arg: 1,
+            args: [0, 0],
+            types: 'ff',
+            knots: seg(2.5, 0.2, 3.5, 0.8)
+          }
+        ]
+      }
+    }
+  }
+  const { events, curves } = mergeProject((f) => join(dir, f), project)
+  expect(curves).toEqual([])
+  // No piece is left to patch, so the resume still fires, with both args.
+  expect(events[1]).toEqual({ t: 4.000001, port: PORT, a: '/xy', args: [0.9, 0.8], types: 'ff' })
+})
+
+test('a real event on the resume grid point suppresses the stale resume', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vtr-merge-'))
+  const project: ProjectFile = {
+    version: 1,
+    tracks: [
+      {
+        clips: [
+          {
+            file: clipOf(dir, 'up.jsonl', [
+              { t: 3, v: 0.3 }, // masked
+              { t: 4.000001, v: 0.5 } // exactly where the resume would land
+            ]),
+            offset: 0,
+            trimIn: 0,
+            trimOut: 10
+          }
+        ]
+      },
+      {
+        clips: [
+          {
+            file: clipOf(dir, 'take.jsonl', [{ t: 0, v: 0.9 }]),
+            offset: 2,
+            trimIn: 0,
+            trimOut: 2
+          }
+        ]
+      }
+    ]
+  }
+  const { events } = mergeProject((f) => join(dir, f), project)
+  // The track re-asserts itself: a resume beside it would sort last and
+  // replay the masked 0.3.
+  expect(shape(events)).toEqual([
+    ['/a', 2, 0.9],
+    ['/a', 4.000001, 0.5]
+  ])
+})
+
+test('a real event one grid step past the resume leaves the resume alone', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vtr-merge-'))
+  const project: ProjectFile = {
+    version: 1,
+    tracks: [
+      {
+        clips: [
+          {
+            file: clipOf(dir, 'up.jsonl', [
+              { t: 3, v: 0.3 },
+              { t: 4.000002, v: 0.5 }
+            ]),
+            offset: 0,
+            trimIn: 0,
+            trimOut: 10
+          }
+        ]
+      },
+      {
+        clips: [
+          {
+            file: clipOf(dir, 'take.jsonl', [{ t: 0, v: 0.9 }]),
+            offset: 2,
+            trimIn: 0,
+            trimOut: 2
+          }
+        ]
+      }
+    ]
+  }
+  const { events } = mergeProject((f) => join(dir, f), project)
+  expect(shape(events)).toEqual([
+    ['/a', 2, 0.9],
+    ['/a', 4.000001, 0.3],
+    ['/a', 4.000002, 0.5]
+  ])
+})
+
 test('masks are per (port, address): other addresses and ports pass through', () => {
   const dir = mkdtempSync(join(tmpdir(), 'vtr-merge-'))
   const project: ProjectFile = {

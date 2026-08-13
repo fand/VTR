@@ -7,6 +7,8 @@ import {
   liveCurves,
   maskIntervals,
   maskKey,
+  patchArgs,
+  resolveArgsAt,
   resumeEvent,
   round6
 } from './trackMask'
@@ -228,6 +230,50 @@ describe('resumeEvent', () => {
     expect(out?.args).toEqual([0.8])
   })
 
+  it('is skipped when a real event of the track already sits on the resume time', () => {
+    // The real event re-asserts the track by itself; the resume would sort
+    // after it (pushed later) and replay the stale masked value.
+    const events = [ev(3, '/a', [0.3]), ev(round6(4 + 1e-6), '/a', [0.5])]
+    expect(resumeEvent({ events, curves: [], pieces: [], windows }, 4)).toBeNull()
+  })
+
+  it('still fires when the next real event is one grid step later', () => {
+    // Only an exact collision suppresses: at end + 2e-6 the track would stay
+    // silent for a step without the resume.
+    const events = [ev(3, '/a', [0.3]), ev(round6(4 + 2e-6), '/a', [0.5])]
+    const out = resumeEvent({ events, curves: [], pieces: [], windows }, 4)
+    expect(out).toEqual({ t: 4.000001, port: PORT, a: '/a', args: [0.3], types: 'f' })
+  })
+
+  it('extends a short event template from the curve, types included', () => {
+    // 1-arg event + a curve on arg 1: args must not outrun types.
+    const c = curve(
+      '/z',
+      [
+        { t: 2.5, v: 0.2 },
+        { t: 3.5, v: 0.8 }
+      ],
+      { arg: 1, args: [0, 0.5], types: 'fi' }
+    )
+    const material = { events: [ev(1, '/z', [0.1])], curves: [c], pieces: [], windows }
+    const out = resumeEvent(material, 4)
+    expect(out).toEqual({ t: 4.000001, port: PORT, a: '/z', args: [0.1, 0.8], types: 'fi' })
+    expect(out?.args.length).toBe(out?.types?.length)
+  })
+
+  it('falls back to f for extended args when the curve carries no types', () => {
+    const c = curve(
+      '/z',
+      [
+        { t: 2.5, v: 0.2 },
+        { t: 3.5, v: 0.8 }
+      ],
+      { arg: 1, args: [0, 0.5], types: undefined }
+    )
+    const material = { events: [ev(1, '/z', [0.1])], curves: [c], pieces: [], windows }
+    expect(resumeEvent(material, 4)?.types).toBe('ff')
+  })
+
   it('splices a curve value into the latest event template, per arg', () => {
     const c = curve('/xy', [
       { t: 2, v: 0 },
@@ -241,6 +287,60 @@ describe('resumeEvent', () => {
     }
     const out = resumeEvent(material, 4)
     expect(out).toEqual({ t: 4.000001, port: PORT, a: '/xy', args: [0.1, 0.9], types: 'ff' })
+  })
+})
+
+describe('resolveArgsAt', () => {
+  const windows = [{ start: 0, end: 10 }]
+
+  it('marks the winning event args and the curve args as defined', () => {
+    const c = curve(
+      '/xy',
+      [
+        { t: 2.5, v: 0.2 },
+        { t: 3.5, v: 0.8 }
+      ],
+      { arg: 2, args: [0, 55, 0.5], types: 'fff' }
+    )
+    const out = resolveArgsAt(
+      { events: [ev(1, '/xy', [0.1])], curves: [c], pieces: [], windows },
+      4
+    )
+    // Arg 1 only exists because the curve's template filled the gap: the
+    // track never defines it, so nothing may splice it anywhere.
+    expect(out?.args).toEqual([0.1, 55, 0.8])
+    expect([...(out?.defined ?? [])].sort()).toEqual([0, 2])
+  })
+
+  it('is null with no definition at or before the end', () => {
+    expect(resolveArgsAt({ events: [], curves: [], pieces: [], windows }, 4)).toBeNull()
+  })
+})
+
+describe('patchArgs', () => {
+  const resolved = {
+    port: PORT,
+    a: '/xy',
+    args: [0.4, 0.8],
+    types: 'ff',
+    defined: new Set([0, 1])
+  }
+
+  it('splices the args no live piece holds into the template', () => {
+    const piece = curve('/xy', ramp, { args: [0, 0], types: 'ff' })
+    expect(patchArgs(piece, resolved, new Set([0])).args).toEqual([0, 0.8])
+  })
+
+  it('leaves the curve alone when live pieces hold every defined arg', () => {
+    const piece = curve('/xy', ramp, { args: [0, 0], types: 'ff' })
+    expect(patchArgs(piece, resolved, new Set([0, 1]))).toBe(piece)
+  })
+
+  it('keeps args and types the same length when it extends the template', () => {
+    const piece = curve('/z', ramp, { args: [0], types: 'f' })
+    const out = patchArgs(piece, { ...resolved, types: 'fi' }, new Set([0]))
+    expect(out.args).toEqual([0, 0.8])
+    expect(out.types).toBe('fi')
   })
 })
 
