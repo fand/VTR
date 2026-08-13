@@ -73,11 +73,12 @@ test('curve header: value input and interpolation dropdown', async () => {
     // Nothing selected: no header editors.
     await expect(value).toHaveCount(0)
 
-    // A discrete point reads as const, and can't take another mode yet.
+    // A discrete point reads as const; with a neighbor to interpolate with,
+    // the other modes convert it (curve-convert.spec covers that path).
     const pt = (await curvePoints(page)).find((p) => p.label === '/other' && p.v === 0.2)!
     await page.mouse.click(pt.x, pt.y)
     await expect(interp).toHaveValue('const')
-    await expect(interp.locator('option[value="ease-in-out"]')).toHaveJSProperty('disabled', true)
+    await expect(interp.locator('option[value="ease-in-out"]')).toHaveJSProperty('disabled', false)
     await expect(value).toHaveValue('0.2')
 
     // Esc reverts the draft, Enter commits it to the point's event arg.

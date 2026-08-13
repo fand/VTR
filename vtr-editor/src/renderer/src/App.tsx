@@ -8,6 +8,7 @@ import {
   type PortConfig
 } from '../../shared/types'
 import { CurvePanel, PointAdd, PointPatch } from './components/CurvePanel'
+import { isRefusal, type ConvertResult } from './components/curveConvert'
 import { MODE_LABELS, modePatches, type InterpMode } from './components/curveMode'
 import { addPoints, applyPointPatches, deletePoints, replaceWithCurves } from '../../shared/edits'
 import {
@@ -484,15 +485,32 @@ function App(): React.JSX.Element {
   )
 
   // Interpolation of the selected points, in one undo entry: knot mode
-  // changes today, discrete-point conversion alongside them later. Picking
-  // the mode a point already has patches nothing.
+  // changes and the discrete-point conversion the panel built commit
+  // together. Picking the mode a point already has patches nothing; a
+  // conversion that would drop data refuses with its reason instead.
   const onInterpolate = useCallback(
-    (mode: InterpMode) => {
+    (mode: InterpMode, convert: ConvertResult | null) => {
+      if (isRefusal(convert)) {
+        setError(convert.refusal)
+        return
+      }
       const patches = modePatches(selectedPoints, edits, mode)
-      if (patches.length === 0) return
-      commit(`interpolation: ${MODE_LABELS[mode]}`, (d) => applyPointPatches(d.edits, patches))
+      const dels = convert?.dels ?? []
+      const adds = convert?.adds ?? []
+      if (patches.length === 0 && adds.length === 0) return
+      const label =
+        adds.length > 0
+          ? `${count(dels.length, 'point')} → curve`
+          : `interpolation: ${MODE_LABELS[mode]}`
+      commit(label, (d) => {
+        applyPointPatches(d.edits, patches)
+        if (adds.length > 0) replaceWithCurves(d.edits, dels, adds)
+      })
+      setError(null)
+      // The converted points are gone; any selected knots stay.
+      if (adds.length > 0) setSelectedPoints(selectedPoints.filter((s) => 'curveIndex' in s))
     },
-    [selectedPoints, edits, commit]
+    [selectedPoints, edits, commit, setSelectedPoints]
   )
 
   // New points append to the clips' edit overlays and become the selection.

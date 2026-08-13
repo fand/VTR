@@ -9,6 +9,9 @@ import {
   stepDecimals,
   TIME_TICK_MIN_PX
 } from '../timeline/model'
+import { applyEditsIndexed } from '../../../shared/edits'
+import type { EventPointSel } from '../../../shared/edits'
+import { buildPointConversion, type ConvertCtx, type ConvertResult } from './curveConvert'
 import { MIN_FIT_POINTS, buildCurveReplace } from './curveReplace'
 import { PAD, fitZoomX, tAt, xAt, yAt, type Scale } from './curveGeom'
 import {
@@ -187,8 +190,10 @@ export function CurvePanel({
     dels: { file: string; eventIndex: number }[],
     adds: { file: string; curve: ClipCurve }[]
   ) => void
-  /** Sets the interpolation of every selected point; one undo entry. */
-  onInterpolate: (mode: InterpMode) => void
+  /** Sets the interpolation of every selected point; one undo entry. The
+   *  conversion carries the selected event points' curves (null when none
+   *  are selected), so knot modes and conversions commit together. */
+  onInterpolate: (mode: InterpMode, convert: ConvertResult | null) => void
 }): React.JSX.Element {
   // Events per clip path; the cache never goes stale (files are immutable).
   const [loaded, setLoaded] = useState<Map<string, OscEvent[]>>(new Map())
@@ -307,8 +312,40 @@ export function CurvePanel({
   const selValue =
     selValues.length > 0 && selValues.every((v) => v === selValues[0]) ? selValues[0] : null
   const selMode = selectionMode(selectedPoints, edits)
-  // Discrete points only take const until the conversion op lands.
-  const hasPointSel = selectedPoints.some((s) => !('curveIndex' in s))
+  const pointSels = selectedPoints.filter((s): s is EventPointSel => !('curveIndex' in s))
+
+  // Conversion context: every event and live overlay curve of the shown
+  // files. Trim doesn't narrow it — the overlay is per file, so an event
+  // outside this clip's window still plays through another instance of it,
+  // and the span invariant has to hold there too.
+  const convertCtx = useMemo((): ConvertCtx => {
+    const events: ConvertCtx['events'] = []
+    const list: ConvertCtx['curves'] = []
+    const seen = new Set<string>()
+    for (const clip of clips) {
+      const evs = loaded.get(clip.path)
+      if (!evs || seen.has(clip.file)) continue
+      seen.add(clip.file)
+      const clipEdits = edits[clip.file]
+      for (const { ev, idx } of applyEditsIndexed(evs, clipEdits)) {
+        events.push({ file: clip.file, eventIndex: idx, ev })
+      }
+      clipEdits?.curves?.forEach((c, ci) => {
+        if (!clipEdits.curveDel?.[ci]) list.push({ file: clip.file, curveIndex: ci, curve: c })
+      })
+    }
+    return { events, curves: list }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- clipsKey covers clips
+  }, [clipsKey, loaded, edits])
+
+  // Whether the selected points can become knots at all is structural (a
+  // lone point with no neighbor element can't), so one mode probes for all.
+  const canConvert = useMemo(
+    () =>
+      pointSels.length > 0 && buildPointConversion(pointSels, convertCtx, 'ease-in-out') != null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- selectedPoints covers pointSels
+    [selectedPoints, convertCtx]
+  )
 
   /** Typed value → patches: event points patch their arg, knots chain into
    *  one whole-array patch per curve (per-knot patches would overwrite each
@@ -628,7 +665,13 @@ export function CurvePanel({
                 className="curve-interp"
                 aria-label="interpolation"
                 value={selMode ?? ''}
-                onChange={(e) => onInterpolate(e.target.value as InterpMode)}
+                onChange={(e) => {
+                  const m = e.target.value as InterpMode
+                  onInterpolate(
+                    m,
+                    pointSels.length > 0 ? buildPointConversion(pointSels, convertCtx, m) : null
+                  )
+                }}
               >
                 {/* Mixed selection: no mode is current until one is picked. */}
                 {selMode == null && (
@@ -636,8 +679,14 @@ export function CurvePanel({
                     -
                   </option>
                 )}
+                {/* Points convert into knots; ones with no neighbor element
+                    to interpolate with can only stay const. */}
                 {MODES.map((m) => (
-                  <option key={m} value={m} disabled={hasPointSel && m !== 'const'}>
+                  <option
+                    key={m}
+                    value={m}
+                    disabled={pointSels.length > 0 && !canConvert && m !== 'const'}
+                  >
                     {MODE_LABELS[m]}
                   </option>
                 ))}
