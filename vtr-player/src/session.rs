@@ -32,9 +32,10 @@ pub struct Curve {
     pub knots: Vec<Knot>,
 }
 
-/// All curves on one address, merged into a single message per sample.
-/// Members are arg-sorted; the first one's template supplies the untouched
-/// args. The span is the union of the members' knot spans.
+/// Curves on one address whose spans overlap or touch, merged into a single
+/// message per sample. Members are arg-sorted; the first one's template
+/// supplies the untouched args. The span is the union of the members' knot
+/// spans — contiguous by construction, so it never covers a gap.
 #[derive(Debug)]
 pub struct CurveGroup {
     pub addr_id: u32,
@@ -64,8 +65,8 @@ pub struct Session {
     // Bezier curves and their per-address groups.
     pub curves: Vec<Curve>,
     pub curve_groups: Vec<CurveGroup>,
-    /// addr id -> index into `curve_groups`, or none.
-    pub addr_group: Vec<Option<usize>>,
+    /// addr id -> its indices into `curve_groups`, start-ordered.
+    pub addr_group: Vec<Vec<usize>>,
     // Header / trailer.
     /// listen port -> forward port
     pub routes: HashMap<u16, u16>,
@@ -340,31 +341,48 @@ fn build(values: Vec<Option<Value>>) -> Session {
         addr_t[aid as usize].push(t);
     }
 
-    // Group curves per address (one merged message per sample).
-    let mut addr_group: Vec<Option<usize>> = vec![None; addrs.len()];
-    let mut curve_groups: Vec<CurveGroup> = Vec::new();
+    // Group curves per address by span connectivity: spans that overlap or
+    // touch merge (one message per sample, args merged), disjoint spans
+    // become separate groups. A group's span must stay gap-free — a hull
+    // over a gap would shadow every event in it, while the editor's model
+    // (shared/curve.ts `unshadowedPoints`) shadows per individual span.
+    let span = |ci: usize| {
+        let k = &curves[ci].knots;
+        (k[0].t, k[k.len() - 1].t)
+    };
+    let mut by_addr: Vec<Vec<usize>> = vec![Vec::new(); addrs.len()];
     for (ci, c) in curves.iter().enumerate() {
-        let slot = &mut addr_group[c.addr_id as usize];
-        let gi = match *slot {
-            Some(g) => g,
-            None => {
-                curve_groups.push(CurveGroup {
-                    addr_id: c.addr_id,
-                    members: Vec::new(),
-                    start: f64::INFINITY,
-                    end: f64::NEG_INFINITY,
-                });
-                let g = curve_groups.len() - 1;
-                *slot = Some(g);
-                g
+        by_addr[c.addr_id as usize].push(ci);
+    }
+    let mut curve_groups: Vec<CurveGroup> = Vec::new();
+    let mut addr_group: Vec<Vec<usize>> = vec![Vec::new(); addrs.len()];
+    for (aid, mut cis) in by_addr.into_iter().enumerate() {
+        cis.sort_by(|&a, &b| span(a).0.total_cmp(&span(b).0));
+        let mut cur: Option<usize> = None;
+        for ci in cis {
+            let (s, e) = span(ci);
+            match cur {
+                // Start-sorted, so only the group being built can reach.
+                Some(g) if s <= curve_groups[g].end => {
+                    curve_groups[g].members.push(ci);
+                    curve_groups[g].end = curve_groups[g].end.max(e);
+                }
+                _ => {
+                    cur = Some(curve_groups.len());
+                    addr_group[aid].push(curve_groups.len());
+                    curve_groups.push(CurveGroup {
+                        addr_id: aid as u32,
+                        members: vec![ci],
+                        start: s,
+                        end: e,
+                    });
+                }
             }
-        };
-        let g = &mut curve_groups[gi];
-        g.members.push(ci);
-        g.start = g.start.min(c.knots[0].t);
-        g.end = g.end.max(c.knots[c.knots.len() - 1].t);
+        }
     }
     for g in &mut curve_groups {
+        // (arg, line order): same-arg ties go to the newer line.
+        g.members.sort_unstable();
         g.members.sort_by_key(|&m| curves[m].arg);
     }
 
