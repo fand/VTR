@@ -52,6 +52,16 @@ interface Drag {
   moved: boolean
 }
 
+/** Track label drag: reorders the rows, which reorders playback priority. */
+interface TrackDrag {
+  trackId: number
+  /** Row index at pointerdown; the row delta is measured from it. */
+  origIdx: number
+  startY: number
+  /** Set once past the click threshold; a plain click selects instead. */
+  moved: boolean
+}
+
 interface TimelineProps {
   tracks: TrackState[]
   markers: MarkerState[]
@@ -233,6 +243,7 @@ export function Timeline({
 }: TimelineProps): React.JSX.Element {
   const zoom = zoomSlider(minPxPerSec, MAX_PX_PER_SEC)
   const drag = useRef<Drag | null>(null)
+  const trackDrag = useRef<TrackDrag | null>(null)
   // Snap on: clip move/trim locks onto other clips' edges.
   const [snap, setSnap] = useState(false)
   // Vertical move preview: the clips stay in their DOM parents during the
@@ -532,6 +543,59 @@ export function Timeline({
     if (d?.moved) onDragCancel()
   }
 
+  // Track rows: the label is a drag handle that reorders them.
+  const applyTrackDrag = (e: React.PointerEvent, commit: boolean): void => {
+    const d = trackDrag.current
+    if (!d) return
+    // The transient reorders already moved the row, so read `from` live and
+    // aim at the row the pointer is over now (origIdx + delta).
+    const from = tracks.findIndex((t) => t.id === d.trackId)
+    if (from < 0) return
+    const to = Math.min(
+      Math.max(d.origIdx + Math.round((e.clientY - d.startY) / TRACK_HEIGHT), 0),
+      tracks.length - 1
+    )
+    const next = [...tracks]
+    next.splice(to, 0, next.splice(from, 1)[0])
+    onTracksChange(next, commit)
+  }
+
+  const onTrackPointerDown = (e: React.PointerEvent<HTMLDivElement>, trackIdx: number): void => {
+    // Keep the scroll area's deselect-on-pointerdown away so an additive
+    // click doesn't clear the selection first.
+    e.stopPropagation()
+    if (e.button !== 0) return
+    trackDrag.current = {
+      trackId: tracks[trackIdx].id,
+      origIdx: trackIdx,
+      startY: e.clientY,
+      moved: false
+    }
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+
+  const onTrackPointerMove = (e: React.PointerEvent<HTMLDivElement>): void => {
+    const d = trackDrag.current
+    if (!d) return
+    if (!d.moved && Math.abs(e.clientY - d.startY) < 3) return
+    d.moved = true
+    applyTrackDrag(e, false)
+  }
+
+  const onTrackPointerUp = (e: React.PointerEvent<HTMLDivElement>): void => {
+    const d = trackDrag.current
+    if (!d) return
+    if (d.moved) applyTrackDrag(e, true)
+    else onSelectTrack(d.trackId, e.shiftKey || e.metaKey || e.ctrlKey)
+    trackDrag.current = null
+  }
+
+  const onTrackPointerCancel = (): void => {
+    const d = trackDrag.current
+    trackDrag.current = null
+    if (d?.moved) onDragCancel()
+  }
+
   const applyMarkerDrag = (e: React.PointerEvent, commit: boolean): void => {
     const d = markerDrag.current
     if (!d) return
@@ -746,10 +810,13 @@ export function Timeline({
             <div className="track" key={track.id} style={{ height: TRACK_HEIGHT }}>
               <div
                 className={'track-label' + (selectedTrackIds.includes(track.id) ? ' selected' : '')}
-                // Keep the scroll area's deselect-on-pointerdown away so an
-                // additive click doesn't clear the selection first.
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => onSelectTrack(track.id, e.shiftKey || e.metaKey || e.ctrlKey)}
+                onPointerDown={(e) => onTrackPointerDown(e, trackIdx)}
+                onPointerMove={onTrackPointerMove}
+                onPointerUp={onTrackPointerUp}
+                onPointerCancel={onTrackPointerCancel}
+                // Pointer capture (drag) retargets the dblclick from the label
+                // span to this div, so the rename trigger lives here.
+                onDoubleClick={() => setRenaming({ kind: 'track', id: track.id })}
               >
                 <EditableLabel
                   value={track.name}
