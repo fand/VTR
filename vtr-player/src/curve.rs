@@ -2,8 +2,10 @@
 //!
 //! A curve controls one numeric arg of an address over its knots' time
 //! span. Consecutive knots span one cubic segment (p1 = knot + o handle,
-//! p2 = next + i handle; missing handle = linear third). Outside the span
-//! the value extends flat, mirroring the seek rule for discrete data.
+//! p2 = next + i handle; missing handle = linear third), unless the left
+//! knot carries `s`: then the segment is a step that holds the left value.
+//! Outside the span the value extends flat, mirroring the seek rule for
+//! discrete data.
 //! Semantics are defined by `tests/conformance_resolver.rs` /
 //! `tests/conformance_session.rs`; the schema by the top-level README.
 
@@ -17,6 +19,10 @@ pub struct Knot {
     pub i: Option<[f64; 2]>,
     /// Outgoing handle offset [dt, dv], dt >= 0.
     pub o: Option<[f64; 2]>,
+    /// Step segment: the value holds at `v` until the next knot's t, then
+    /// jumps. `o` and the next knot's `i` are dead — ignored, not rejected.
+    /// Meaningless on the last knot (flat extension already holds).
+    pub s: bool,
 }
 
 /// A parsed curve line, address not yet interned.
@@ -65,6 +71,7 @@ pub fn parse(obj: &Map<String, Value>) -> Option<CurveData> {
             v: k.get("v")?.as_f64()?,
             i: parse_handle(k.get("i")),
             o: parse_handle(k.get("o")),
+            s: k.get("s").and_then(Value::as_bool).unwrap_or(false),
         });
     }
     if knots.len() < 2 || knots.windows(2).any(|w| w[1].t <= w[0].t) {
@@ -123,6 +130,10 @@ pub fn value_at(knots: &[Knot], t: f64) -> f64 {
     }
     // Rightmost knot with knot.t <= t.
     let seg = knots.partition_point(|k| k.t <= t) - 1;
+    // Step segment: hold the left value; the jump lands on the right knot.
+    if knots[seg].s {
+        return knots[seg].v;
+    }
     let p = segment_ctrl(&knots[seg], &knots[seg + 1]);
     let (mut lo, mut hi) = (0.0_f64, 1.0_f64);
     for _ in 0..48 {

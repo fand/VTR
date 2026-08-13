@@ -178,6 +178,15 @@ fn curve(a: &str, arg: usize, template: &[f64], span: [f64; 2], vals: [f64; 2]) 
     })
 }
 
+/// Curve on `a` with hand-written knots (step flags, mixed segments).
+fn curve_knots(a: &str, arg: usize, template: &[f64], knots: Value) -> Value {
+    json!({
+        "type": "curve", "port": 10010, "a": a, "arg": arg,
+        "types": "f".repeat(template.len()), "args": template,
+        "knots": knots,
+    })
+}
+
 fn assert_first_near(out: &[Emit], want: f64) {
     assert_eq!(out.len(), 1, "expected one emission, got {out:?}");
     let got = out[0].args[0].as_f64().unwrap();
@@ -359,6 +368,106 @@ fn test_same_arg_curves_with_disjoint_spans_take_turns() {
     let mut r = resolver(&s);
     r.step(1.0);
     assert_first_near(&r.step(1.25), 0.25);
+}
+
+// ---------------------------------------------------------------------------
+// Step segments (knot `s`): the value holds at the left knot's `v` until the
+// next knot's t, then jumps.
+
+/// A held value is the knot's `v` verbatim — no bezier math ran on it.
+fn assert_first_exact(out: &[Emit], want: f64) {
+    assert_eq!(out.len(), 1, "expected one emission, got {out:?}");
+    let got = out[0].args[0].as_f64().unwrap();
+    assert_eq!(got.to_bits(), want.to_bits(), "got {got}, want {want}");
+}
+
+#[test]
+fn test_pump_holds_a_step_span_without_duplicate_emissions() {
+    let s = load(&[curve_knots(
+        "/x",
+        0,
+        &[0.0],
+        json!([{"t": 0.0, "v": 0.25, "s": true}, {"t": 1.0, "v": 0.75}]),
+    )]);
+    let mut r = resolver(&s);
+    assert_first_exact(&r.step(0.0), 0.25); // first step: seek catch-up
+    assert_eq!(r.step(0.3), vec![]); // held: dedup suppresses the resample
+    assert_eq!(r.step(0.6), vec![]);
+    assert_eq!(r.step(0.999), vec![]);
+    assert_first_exact(&r.step(1.0), 0.75); // the jump lands on the knot
+    assert_eq!(r.step(1.4), vec![]); // span finished
+}
+
+#[test]
+fn test_step_value_jumps_exactly_at_the_right_knot() {
+    let s = load(&[curve_knots(
+        "/x",
+        0,
+        &[0.0],
+        json!([
+            {"t": 0.0, "v": 0.25, "s": true},
+            {"t": 1.0, "v": 0.75, "s": true},
+            {"t": 2.0, "v": 0.5},
+        ]),
+    )]);
+    for (t, want) in [
+        (0.5, 0.25),
+        (0.999_999, 0.25),
+        (1.0, 0.75),
+        (1.5, 0.75),
+        (1.999_999, 0.75),
+        (2.0, 0.5),
+    ] {
+        let mut r = resolver(&s);
+        assert_first_exact(&r.step(t), want);
+    }
+}
+
+#[test]
+fn test_seek_into_a_step_span_resolves_the_held_value() {
+    let s = load(&[curve_knots(
+        "/x",
+        0,
+        &[0.0],
+        json!([{"t": 1.0, "v": 0.25, "s": true}, {"t": 2.0, "v": 0.75}]),
+    )]);
+    let mut r = resolver(&s);
+    assert_first_exact(&r.step(1.75), 0.25); // inside the hold
+    let mut r = resolver(&s);
+    assert_first_exact(&r.step(0.2), 0.25); // before: clamps to the first knot
+    let mut r = resolver(&s);
+    assert_first_exact(&r.step(9.0), 0.75); // after: flat at the last knot
+    let mut r = resolver(&s);
+    r.step(9.0);
+    assert_first_exact(&r.step(1.25), 0.25); // scrub back into the hold
+}
+
+#[test]
+fn test_mixed_step_and_bezier_segments_in_one_curve() {
+    // [0,1) holds 0.2; [1,2) interpolates 0.4 -> 0.8; [2,3) holds 0.8.
+    let s = load(&[curve_knots(
+        "/x",
+        0,
+        &[0.0],
+        json!([
+            {"t": 0.0, "v": 0.2, "s": true},
+            {"t": 1.0, "v": 0.4},
+            {"t": 2.0, "v": 0.8, "s": true},
+            {"t": 3.0, "v": 0.1},
+        ]),
+    )]);
+    let mut r = resolver(&s);
+    assert_first_exact(&r.step(0.0), 0.2);
+    assert_eq!(r.step(0.4), vec![]); // still held
+    // Jump onto the knot; its own segment is bezier, so the bisection's
+    // ~1 ulp shows up here (same in the editor's evalCurve) — near, not exact.
+    assert_first_near(&r.step(1.0), 0.4);
+    assert_first_near(&r.step(1.4), 0.56); // bezier segment interpolates
+    assert_first_near(&r.step(1.8), 0.72);
+    assert_first_exact(&r.step(2.0), 0.8); // hold takes over at its knot
+    assert_eq!(r.step(2.4), vec![]);
+    assert_eq!(r.step(2.8), vec![]);
+    assert_first_exact(&r.step(3.0), 0.1); // last knot: the final jump
 }
 
 #[test]

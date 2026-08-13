@@ -161,6 +161,48 @@ fn test_curve_lines_parse_and_intern_addresses() {
 }
 
 #[test]
+fn test_knot_step_flag_parses() {
+    let s = load(&[curve_line(
+        "/x",
+        0,
+        json!([
+            {"t": 0.0, "v": 0.0, "s": true},
+            {"t": 1.0, "v": 1.0},
+            {"t": 2.0, "v": 2.0, "s": true},
+        ]),
+    )]);
+    let k = &s.curves[0].knots;
+    assert!(k[0].s);
+    assert!(!k[1].s, "absent s is false");
+    assert!(k[2].s, "s on the last knot parses; evaluation ignores it");
+}
+
+#[test]
+fn test_unknown_keys_and_dead_handles_do_not_reject_a_curve() {
+    // Dead handles on a step segment (the step knot's `o`, the next knot's
+    // `i`) are ignored by evaluation, not a parse error; unknown keys —
+    // anywhere — stay tolerated, same as before `s` existed.
+    let mut line = curve_line(
+        "/x",
+        0,
+        json!([
+            {"t": 0.0, "v": 0.0, "s": true, "o": [0.3, 0.2], "future": 1},
+            {"t": 1.0, "v": 1.0, "i": [-0.3, -0.2]},
+        ]),
+    );
+    line["future"] = json!("ignored");
+    let s = load(&[line]);
+    assert_eq!(s.curves.len(), 1);
+    assert_eq!(s.skipped, 0);
+    let k = &s.curves[0].knots;
+    assert_eq!(k[0].o, Some([0.3, 0.2]));
+    assert_eq!(k[1].i, Some([-0.3, -0.2]));
+    // Held anyway: the step branch returns before any handle is read.
+    let args = s.curve_group_args(0, 0.5);
+    assert_eq!(args[0], json!(0.0));
+}
+
+#[test]
 fn test_malformed_curves_are_skipped() {
     let s = load(&[
         // One knot.
