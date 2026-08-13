@@ -173,10 +173,12 @@ export function deletePoints(edits: Record<string, ClipEdits>, sels: PointSel[])
     if (keep.length < 2) {
       ;(clipEdits.curveDel ??= {})[curveIndex] = true
     } else {
-      // New boundary knots keep only their inward handles.
+      // New boundary knots keep only their inward handles, and a new last
+      // knot's step flag is moot (nothing follows it to hold against).
       const knots = keep.map((k) => ({ ...k }))
       delete knots[0].i
       delete knots[knots.length - 1].o
+      delete knots[knots.length - 1].s
       curve.knots = knots
     }
   }

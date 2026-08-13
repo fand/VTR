@@ -50,9 +50,11 @@ the value holds at `v` until the next knot's `t`, then jumps.
   - splitting *inside* a step segment inserts the boundary knot with the
     left knot's `v` and `s` — no de Casteljau;
   - splitting inside a *bezier* segment whose **right** knot carries `s`
-    must keep that `s` through the `ctrlToKnots` rebuild *and* through
-    the interior-knot adoption pass (which today copies only `o`) —
-    otherwise a trim drops the hold and exports a ramp.
+    loses the flag in the `ctrlToKnots` rebuild; the interior-knot
+    adoption pass (which today copies only `o`) restores it — otherwise a
+    trim drops the hold and exports a ramp;
+  - the final boundary cleanup strips `s` from the new last knot, where it
+    means nothing — canonical output, same rule as `deletePoints`.
   - Trim/export (`merge.ts` uses `clipCurve`) then carries steps for free.
 - **Compat:** old players ignore the unknown `s` key and play the segment
   as linear — graceful degrade, documented in the README schema section.

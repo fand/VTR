@@ -151,14 +151,19 @@ always discrete events):
 A curve controls `args[arg]` of one address over the knots' time span.
 Consecutive knots span one cubic bezier: `p1 = knot + o`, `p2 = next + i`
 (handle offsets `[dt, dv]`; missing handle = linear). Knot `t` is strictly
-increasing and handle `dt` stays within its segment (readers clamp). The
+increasing and handle `dt` stays within its segment (readers clamp). A knot
+with `"s":true` makes the segment leaving it a **step**: the value holds at
+`v` until the next knot's `t`, then jumps. Its handles are dead — `o` and the
+next knot's `i` are unused, and `s` on the last knot means nothing (the flat
+extension already holds). The
 player emits the message template `args` with `args[arg]` replaced by the
 interpolated value, one sample per resolve step; curves on the same
 `(port, a)` with different `arg` merge into one message. Outside its span a
 curve extends flat, like discrete data on seek. Several curves on one
 `(port, a, arg)` follow the event rule: the latest definition time
 (`min(pos, span end)` once `pos ≥ span start`) wins, ties go to the later
-line. Players from before this field skip curve lines (unknown `type`).
+line. Players from before this field skip curve lines (unknown `type`);
+players from before `s` ignore it and ramp through a step segment.
 
 Session files wrap events in `{"type":"session_start",...}` /
 `{"type":"session_end","t":...}` marker lines. `session_start` carries

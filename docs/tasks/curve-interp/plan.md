@@ -19,8 +19,9 @@ Track priority is implemented after this task ships.
   - `clipCurve`: splitting inside a step segment inserts the boundary
     knot `{t, v: left.v, s: true}` instead of de Casteljau; interior
     copies keep `s`; **a split inside a bezier segment whose right knot
-    has `s` keeps that `s`** — both in the `ctrlToKnots` rebuild and in
-    the interior-knot adoption pass (which today copies only `o`).
+    has `s` keeps that `s`** — the `ctrlToKnots` rebuild drops it, the
+    interior-knot adoption pass (which today copies only `o`) restores
+    it; the final cleanup strips `s` from the new last knot.
   - `clampHandleTimes`: skip handles on step segments (they're dead;
     don't resurrect or scale them).
 - `shared/edits.ts`: `deletePoints` strips `s` from the new last knot

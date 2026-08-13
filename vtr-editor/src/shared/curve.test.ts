@@ -1,7 +1,14 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { clipCurve, evalCurve, fitCurve, segmentCtrl, unshadowedPoints } from './curve'
+import {
+  clampHandleTimes,
+  clipCurve,
+  evalCurve,
+  fitCurve,
+  segmentCtrl,
+  unshadowedPoints
+} from './curve'
 import type { CurveKnot } from './types'
 
 describe('TS↔Rust parity', () => {
@@ -79,6 +86,56 @@ describe('evalCurve', () => {
     // Still evaluates monotonically to the endpoints.
     expect(evalCurve(bent, 0)).toBe(0)
     expect(evalCurve(bent, 1)).toBe(1)
+  })
+})
+
+describe('step segments', () => {
+  const step: CurveKnot[] = [
+    { t: 0, v: 0.2, s: true },
+    { t: 1, v: 0.8 }
+  ]
+
+  it('holds the left value, jumping at the right knot', () => {
+    expect(evalCurve(step, 0)).toBe(0.2)
+    expect(evalCurve(step, 0.5)).toBe(0.2)
+    expect(evalCurve(step, 0.999999)).toBe(0.2)
+    expect(evalCurve(step, 1)).toBe(0.8)
+  })
+
+  it('ignores the dead handles on the held segment', () => {
+    const dirty: CurveKnot[] = [
+      { t: 0, v: 0.2, s: true, o: [0.9, 0.6] },
+      { t: 1, v: 0.8, i: [-0.9, -0.6] }
+    ]
+    expect(evalCurve(dirty, 0.5)).toBe(0.2)
+  })
+
+  it('extends flat outside the span, s on the last knot inert', () => {
+    expect(evalCurve(step, -5)).toBe(0.2)
+    expect(evalCurve([...step.slice(0, 1), { t: 1, v: 0.8, s: true }], 5)).toBe(0.8)
+  })
+
+  it('mixes with bezier segments', () => {
+    const mixed: CurveKnot[] = [
+      { t: 0, v: 0 },
+      { t: 1, v: 1, s: true },
+      { t: 2, v: 0.5 },
+      { t: 3, v: 1 }
+    ]
+    expect(evalCurve(mixed, 0.5)).toBeCloseTo(0.5, 6)
+    expect(evalCurve(mixed, 1.5)).toBe(1)
+    expect(evalCurve(mixed, 2)).toBeCloseTo(0.5, 9)
+    expect(evalCurve(mixed, 2.5)).toBeCloseTo(0.75, 6)
+  })
+
+  it('keeps dead handles out of clampHandleTimes', () => {
+    const knots: CurveKnot[] = [
+      { t: 0, v: 0, s: true, o: [9, 9] },
+      { t: 1, v: 1, i: [9, 9] }
+    ]
+    clampHandleTimes(knots)
+    expect(knots[0].o).toEqual([9, 9])
+    expect(knots[1].i).toEqual([9, 9])
   })
 })
 
@@ -206,6 +263,44 @@ describe('clipCurve', () => {
     expect(clipCurve(src, 3, 4)).toBeNull()
     expect(clipCurve(src, -2, -1)).toBeNull()
     expect(clipCurve(src, 0.5, 0.5)).toBeNull()
+  })
+
+  it('splits inside a step segment by holding, not by de Casteljau', () => {
+    const step: CurveKnot[] = [
+      { t: 0, v: 0.2, s: true },
+      { t: 2, v: 0.8 }
+    ]
+    expect(clipCurve(step, 0.5, 1.5)).toEqual([
+      { t: 0.5, v: 0.2, s: true },
+      { t: 1.5, v: 0.2 }
+    ])
+  })
+
+  const mixed: CurveKnot[] = [
+    { t: 0, v: 0, o: [0.3, 0.2] },
+    { t: 1, v: 1, i: [-0.3, -0.2], s: true },
+    { t: 2, v: 0.25, s: true },
+    { t: 3, v: 0.75 }
+  ]
+
+  it('keeps an interior step knot when the clip splits the segment before it', () => {
+    const out = clipCurve(mixed, 0.5, 2.5)!
+    expect(out.map((k) => k.s ?? false)).toEqual([false, true, true, false])
+    expect(out[1].t).toBeCloseTo(1, 9)
+    // The incoming handle of a step knot belongs to the bezier before it.
+    expect(out[1].i).toBeDefined()
+    for (let i = 0; i <= 40; i++) {
+      const t = 0.5 + (i / 40) * 2
+      expect(evalCurve(out, t)).toBeCloseTo(evalCurve(mixed, t), 6)
+    }
+  })
+
+  it('strips s from the last knot when the window ends on a step knot', () => {
+    // `s` on a last knot means nothing (the flat extension holds anyway):
+    // clips come out canonical, same rule as deletePoints.
+    const out = clipCurve(mixed, 0.5, 2)!
+    expect(out[out.length - 1].t).toBeCloseTo(2, 9)
+    expect(out[out.length - 1].s).toBeUndefined()
   })
 })
 

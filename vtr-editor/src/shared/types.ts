@@ -157,6 +157,12 @@ export interface CurveKnot {
   i?: [number, number]
   /** Outgoing handle offset [dt, dv], dt >= 0. */
   o?: [number, number]
+  /**
+   * Step segment: the value holds at `v` until the next knot's t, then jumps.
+   * `o` and the next knot's `i` are dead (writers delete them, readers ignore
+   * them). Meaningless on the last knot — flat extension already holds.
+   */
+  s?: true
 }
 
 /**

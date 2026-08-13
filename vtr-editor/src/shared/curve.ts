@@ -67,6 +67,8 @@ export function evalCurve(knots: CurveKnot[], t: number): number {
     if (knots[mid].t <= t) lo = mid
     else hi = mid
   }
+  // Step segment: hold the left value; the jump lands on the right knot.
+  if (knots[lo].s) return knots[lo].v
   const p = segmentCtrl(knots[lo], knots[lo + 1])
   return bezXY(p, paramAt(p, t)).y
 }
@@ -128,7 +130,11 @@ export function clipCurve(knots: CurveKnot[], t0: number, t1: number): CurveKnot
     if (b.t <= lo || a.t >= hi) continue
     let head: CurveKnot
     let tail: CurveKnot
-    if (a.t < lo || b.t > hi) {
+    if (a.s) {
+      // Step segment: the boundary knots just hold a's value, no de Casteljau.
+      head = { t: Math.max(a.t, lo), v: a.v, s: true }
+      tail = b.t > hi ? { t: hi, v: a.v } : { ...b }
+    } else if (a.t < lo || b.t > hi) {
       // Boundary segment: split so the clipped piece traces the original.
       let p = segmentCtrl(a, b)
       if (a.t < lo) p = splitCtrl(p, paramAt(p, lo))[1]
@@ -142,34 +148,39 @@ export function clipCurve(knots: CurveKnot[], t0: number, t1: number): CurveKnot
       out.push(head)
     } else {
       // Interior knot was already pushed as the previous tail; adopt this
-      // segment's outgoing handle onto it.
+      // segment's outgoing handle and step flag onto it.
       const prev = out[out.length - 1]
       if (head.o) prev.o = head.o
       else delete prev.o
+      if (head.s) prev.s = true
+      else delete prev.s
     }
     out.push(tail)
   }
   if (out.length < 2) return null
-  // Boundary knots keep only their inward handles.
+  // Boundary knots keep only their inward handles, and `s` on the last knot
+  // means nothing — strip it so the clip is canonical.
   delete out[0].i
   delete out[out.length - 1].o
+  delete out[out.length - 1].s
   return out
 }
 
 /**
  * Clamp every handle's dt into its segment, scaling dv to keep the handle
  * direction: keeps x(u) monotone after knots move or fitting overshoots.
- * Mutates (handle tuples are replaced, never edited in place).
+ * Mutates (handle tuples are replaced, never edited in place). Handles on a
+ * step segment are dead: left untouched, never resurrected or scaled.
  */
 export function clampHandleTimes(knots: CurveKnot[]): void {
   for (let k = 0; k < knots.length; k++) {
     const kn = knots[k]
-    if (kn.o && k + 1 < knots.length) {
+    if (kn.o && k + 1 < knots.length && !kn.s) {
       const span = knots[k + 1].t - kn.t
       if (kn.o[0] < 0) kn.o = [0, 0]
       else if (kn.o[0] > span) kn.o = [span, (kn.o[1] * span) / kn.o[0]]
     }
-    if (kn.i && k > 0) {
+    if (kn.i && k > 0 && !knots[k - 1].s) {
       const span = kn.t - knots[k - 1].t
       if (kn.i[0] > 0) kn.i = [0, 0]
       else if (kn.i[0] < -span) kn.i = [-span, (kn.i[1] * -span) / kn.i[0]]

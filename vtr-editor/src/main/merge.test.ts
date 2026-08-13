@@ -186,6 +186,45 @@ test('a trim boundary within round6 of a knot keeps the curve valid', () => {
   }
 })
 
+test('a trimmed clip exports step segments with s intact', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vtr-merge-'))
+  writeFileSync(join(dir, 'i.jsonl'), '{"t":0.0,"port":10000,"a":"/x","args":[1]}\n')
+  const project: ProjectFile = {
+    version: 1,
+    // trimIn splits the bezier segment *before* a step knot; trimOut splits a
+    // step segment itself.
+    tracks: [{ clips: [{ file: 'i.jsonl', offset: 10, trimIn: 0.5, trimOut: 2.5 }] }],
+    edits: {
+      'i.jsonl': {
+        curves: [
+          {
+            port: 10000,
+            a: '/x',
+            arg: 0,
+            args: [0],
+            types: 'f',
+            knots: [
+              { t: 0, v: 0 },
+              { t: 1, v: 1, s: true },
+              { t: 2, v: 0.25, s: true },
+              { t: 3, v: 0.75 }
+            ]
+          }
+        ]
+      }
+    }
+  }
+  const { curves } = mergeProject((f) => join(dir, f), project)
+  const knots = curves[0].knots
+  expect(knots.map((k) => k.t)).toEqual([10, 10.5, 11.5, 12])
+  expect(knots.map((k) => k.s ?? false)).toEqual([false, true, true, false])
+  // Held values, not a ramp: the trimOut split stays on the step's left value.
+  expect(knots[0].v).toBeCloseTo(0.5, 6)
+  expect(knots[1].v).toBe(1)
+  expect(knots[2].v).toBe(0.25)
+  expect(knots[3].v).toBe(0.25)
+})
+
 test('curveDel and muted clips drop curves', () => {
   const dir = mkdtempSync(join(tmpdir(), 'vtr-merge-'))
   writeFileSync(join(dir, 'g.jsonl'), '{"t":0.0,"port":10000,"a":"/x","args":[1]}\n')
