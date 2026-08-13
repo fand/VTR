@@ -91,7 +91,7 @@ clip's own window; timeline-view mask visuals are a follow-up.
   - This also closes the standing gap: overlapping curves now show
     which one plays.
 - Synthetic resume events are merge-time only — not drawn.
-- e2e (`__curveProps`/`__curveKnots` gain a masked flag): two
+- e2e (`__curvePoints`/`__curveKnots` gain a masked flag): two
   overlapping tracks → upper's points inside the window read masked;
   move the lower clip away → they come back; mute the lower clip →
   no mask.

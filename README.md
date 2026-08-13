@@ -8,7 +8,7 @@ VJs' Timeline Recorder. Record, edit, and replay OSC for VJ performance archival
 
 - **vtr-tap** (Rust): UDP proxy that forwards OSC unchanged to TD and logs parsed copies as JSONL. Control messages arrive on the listen port under the `/vtr` prefix: `/vtr/clock` stamps TD-timeline time (`tl`), `/vtr/rec*` starts/stops clips, and every `/vtr/*` datagram is relayed to vtr-player. Default ports: listen 10010, forward 127.0.0.1:10011, relay 127.0.0.1:10013.
 - **vtr-player** (Rust, `vtr-player/`): resolver server. Replays a `session.jsonl` to the VJ app (push transport driven by relayed `/vtr/play|stop|seek`), answers per-frame sync queries over a unix socket (for TD), primes punch-in state, and feeds controllers back at `target IP : echo port` — rec state plus the playback values themselves, so faders follow the timeline. Protocol: "OSC control" below.
-- **vtr-editor** (Electron): DAW-style editor. Records clips via vtr-tap, arranges them on tracks, exports a merged `session.jsonl`. Its curve panel edits each clip's points — drag, draw, fit them to bezier curves — and the panel header sets the selected points' value and interpolation (`const / linear / ease in / ease out / ease in out`); picking an ease mode on discrete points absorbs them and their neighbors into one curve. Spawns and monitors both vtr-tap and vtr-player, and delegates preview playback to the player (inline session load with routes + transport writes) — the player's resolver emits all preview OSC, so preview and replay behave identically, and sync clients follow the same transport.
+- **vtr-editor** (Electron): DAW-style editor. Records clips via vtr-tap, arranges them on tracks (on overlap the lower track wins — "Track priority" below), exports a merged `session.jsonl`. Its curve panel edits each clip's points — drag, draw, fit them to bezier curves — and the panel header sets the selected points' value and interpolation (`const / linear / ease in / ease out / ease in out`); picking an ease mode on discrete points absorbs them and their neighbors into one curve. Spawns and monitors both vtr-tap and vtr-player, and delegates preview playback to the player (inline session load with routes + transport writes) — the player's resolver emits all preview OSC, so preview and replay behave identically, and sync clients follow the same transport.
 - **vtr.tox** (TouchDesigner, `td/`): sync client, no modes. Every frame it beacons `/vtr/clock` to the tap and blocks on one `resolve` query to vtr-player, applying the delta before the cook. The position source follows TD's realtime flag: realtime on = bidirectional sync with the player's push transport (seeking in TD or the editor propagates both ways, short timeout); realtime off = TD timeline − `Offset`, transport untouched, for deterministic offline rendering. Rec follow needs no special case — the player primes and starts its transport when a take starts, and TD follows that like any other foreign move. Build & docs: `td/README.md`.
 
 ## Quick start
@@ -45,6 +45,28 @@ Recordings go into the open project's `clips/`; untitled recordings stage in
 userData (`~/Library/Application Support/VTR/recordings/`) and move
 into the bundle on save. The control socket and undo log live in userData
 too — the editor writes nothing to its cwd.
+
+## Track priority
+
+The **lower track wins**: for one `(port, address)`, the lowest track that
+carries it owns its window and masks every track above. Track order is an
+arrangement tool — reordering tracks changes what plays — and a new take lands
+as a new bottom track, so overdub wins.
+
+- A clip masks its trimmed window, only for the addresses it actually carries;
+  other addresses pass through from above. Muted clips mask nothing.
+- Entering a mask, the upper track's last value just holds (nothing is
+  synthesized) until the lower track's first event.
+- Leaving a mask, the upper track resumes with its own current value: a carved
+  curve resumes exactly, discrete data gets one synthesized event just after
+  the mask end. Nothing resumes past the upper track's own clip windows.
+- The curve editor draws masked points and curve stretches dim and dashed —
+  they play nothing but stay selectable and editable, and move the lower clip
+  away and they come back.
+
+Priority is resolved when the project is flattened, so exports stay ordinary
+events + curves and vtr-player is unchanged. Projects with overlapping tracks
+export differently than they did before this change; there is no migration.
 
 ## OSC control (protocol v2, `/vtr` namespace)
 
