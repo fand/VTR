@@ -67,7 +67,9 @@ never mask each other (same-track behavior unchanged).
 - **UI shares the masking**: `buildProperties` (curveModel) applies the
   same module so the curve editor draws masked regions as reality —
   masked curve pieces and points dimmed/dashed, excluded from the merged
-  path like shadowed points today. This also fixes the standing gap that
+  path like shadowed points today. Masked elements stay **selectable and
+  editable** (like shadowed dots): they don't play, but edits apply and
+  moving clips brings them back. This also fixes the standing gap that
   overlapping curves give no visual hint of which one plays.
 - Tests (`merge.test.ts` + module tests): the [0,10]/[2,4] example;
   boundary hold-in and resume (curve and discrete uppers); per-address

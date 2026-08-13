@@ -105,9 +105,11 @@ value [ 1.0  ]  interpolate [ ease in ▾ ]
 
 - **non-const mode M on knot P:** clear `P.s` *and* the previous knot's
   `s` (both adjacent segments interpolate — note this changes the previous
-  knot's displayed mode from const). Set handles per M: an ease side gets
-  a flat handle `[±span/3, 0]`, linear deletes both. Sides without a
-  segment are skipped.
+  knot's displayed mode from const). Handles per side: a side M requires
+  **keeps its existing handle** if one exists, else gets the flat default
+  `[±span/3, 0]`; a side M forbids is deleted. So ease in → ease in out
+  keeps a dragged `i` and only adds the default `o`; linear deletes both.
+  Sides without a segment are skipped.
 - **const on knot P:** set `P.s`, delete `P.o` and the next knot's `i`
   (the step segment's dead handles — `P.i` belongs to the incoming
   segment and stays). The previous knot is untouched — if it

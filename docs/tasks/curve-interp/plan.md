@@ -1,8 +1,10 @@
 # Curve point interpolation — implementation plan
 
 Spec: `spec.md` (post-review revision: span-invariant + absorption).
-Five commits, in this order (1–2 land the semantics before any UI
-writes `s`).
+Five commits, **one PR**, in this order (1–2 land the semantics before
+any UI writes `s`). The task docs (`docs/tasks/curve-interp/`,
+`docs/tasks/track-priority/`) go in the same branch as a docs commit.
+Track priority is implemented after this task ships.
 
 ## 1. shared math — step segments
 
@@ -56,9 +58,10 @@ writes `s`).
   - mode application returns **one new knot array per curve** (indices
     applied together — per-knot CurvePatches would overwrite each other):
     const sets `s` + drops `o` and next's `i` (keeps own `i`); non-const
-    clears own and previous `s`, sets flat `±span/3` handles per mode;
-    **idempotent** — a knot already in the requested mode keeps its
-    dragged handles.
+    clears own and previous `s`; per side, a required handle is **kept if
+    present** else defaulted to flat `±span/3`, a forbidden one deleted
+    (idempotent by construction — dragged handles survive same-mode and
+    mode-widening changes).
 - `CurvePanel.tsx` header: value input + dropdown between the tool
   buttons and zoom controls. Common-value/mode display, `-` placeholder
   when mixed, Enter/blur commit, Esc revert. Value commits through
