@@ -95,6 +95,9 @@ export interface CurveInteractionCtx {
   innerH: number
   snapTime: (t: number) => number
   snapValue: (v: number, min: number, max: number) => number
+  /** Clamps a dragged value to 0..1 when the limit toggle is on; v0 is the
+   *  drag-start value (out-of-range points are exempt). */
+  limitValue: (v: number, v0: number) => number
   loaded: Map<string, OscEvent[]>
   pencil: boolean
   useBox: boolean
@@ -138,6 +141,7 @@ export function useCurveInteraction(ctx: CurveInteractionCtx): CurveInteraction 
     innerH,
     snapTime,
     snapValue,
+    limitValue,
     loaded,
     pencil,
     useBox,
@@ -259,7 +263,10 @@ export function useCurveInteraction(ctx: CurveInteractionCtx): CurveInteraction 
         return {
           target,
           tl: snapTime(t + dt),
-          v: snapValue(v + (-dy / Math.max(innerH - 2 * PAD, 1)) * (max - min || 1), min, max)
+          v: limitValue(
+            snapValue(v + (-dy / Math.max(innerH - 2 * PAD, 1)) * (max - min || 1), min, max),
+            v
+          )
         }
       })
     )
@@ -382,10 +389,13 @@ export function useCurveInteraction(ctx: CurveInteractionCtx): CurveInteraction 
         return {
           target,
           tl: snapTime(tAt(scale, nx)),
-          v: snapValue(
-            v + (-(ny - target.py0) / Math.max(innerH - 2 * PAD, 1)) * (max - min || 1),
-            min,
-            max
+          v: limitValue(
+            snapValue(
+              v + (-(ny - target.py0) / Math.max(innerH - 2 * PAD, 1)) * (max - min || 1),
+              min,
+              max
+            ),
+            v
           )
         }
       })

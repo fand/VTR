@@ -5,7 +5,7 @@ import { clipCurve, unshadowedPoints } from '../../../shared/curve'
 import { applyEditsIndexed } from '../../../shared/edits'
 import type { EventPointSel, KnotSel, PointSel } from '../../../shared/edits'
 import type { ClipCurve, ClipEdits, CurveKnot, OscEvent } from '../../../shared/types'
-import type { ClipInst } from '../timeline/model'
+import { MAX_PX_PER_SEC, type ClipInst } from '../timeline/model'
 import type { GeomEl } from './curveGeom'
 
 /** Distinct color per property: golden-angle hues stay spread out at any
@@ -22,6 +22,12 @@ export function fmt(n: number): string {
 }
 
 export const MAX_ZOOM = 50
+
+/** X-zoom ceiling: at least MAX_ZOOM, deeper for long time ranges so max zoom
+ *  always reaches the timeline's frame-level px/s scale. */
+export function maxZoomX(w: number, tRange: number): number {
+  return Math.max(MAX_ZOOM, (tRange * MAX_PX_PER_SEC) / Math.max(w, 1))
+}
 
 export interface CurvePoint {
   /** Timeline seconds (clip offset applied). */

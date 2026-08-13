@@ -2,6 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { AlignStartVertical, BookmarkPlus, Magnet, ZoomIn, ZoomOut } from 'lucide-react'
 import {
   ClipInst,
+  MAX_PX_PER_SEC,
   MIN_CLIP_LEN,
   MarkerState,
   TrackState,
@@ -30,8 +31,7 @@ export interface PlayingState {
 export const TRACK_HEIGHT = 64
 /** .ruler-row height in main.css; tracks stack right below it. */
 const RULER_H = 22
-export const MIN_PX_PER_SEC = 2
-export const MAX_PX_PER_SEC = 400
+export { MIN_PX_PER_SEC, MAX_PX_PER_SEC } from '../timeline/model'
 const TRIM_HANDLE_PX = 8
 
 type DragMode = 'move' | 'trim-in' | 'trim-out'
@@ -258,12 +258,14 @@ export function Timeline({
   // never turns into millions of mark divs.
   const [scrollX, setScrollX] = useState(0)
   const { w: viewW } = useElementSize(scrollRef)
-  // Cursor viewport-x at the last pinch event; the zoom commit re-anchors the
-  // scroll so the time under the cursor stays put. Expired by timestamp, not
-  // per-frame: pinch events can outrun re-renders, and dropping the anchor at
-  // the frame boundary let commits land with no scroll fix, so the zoom
-  // anchored to the view edge instead of the cursor.
-  const pinchAnchor = useRef<{ viewX: number; at: number } | null>(null)
+  // Cursor viewport-x and the time under it at the last pinch event; the zoom
+  // commit re-anchors the scroll so that time stays put. The time is captured
+  // at event time, not in the commit: a zoom-out shrinks the content width,
+  // which makes the browser clamp scrollLeft before the commit could read it.
+  // Expired by timestamp, not per-frame: pinch events can outrun re-renders,
+  // and dropping the anchor at the frame boundary let commits land with no
+  // scroll fix, so the zoom anchored to the view edge instead of the cursor.
+  const pinchAnchor = useRef<{ viewX: number; t: number; at: number } | null>(null)
   // pxPerSec the DOM currently reflects; scrollLeft is only consistent with
   // this, never with a just-scheduled zoom.
   const domPx = useRef(pxPerSec)
@@ -354,8 +356,11 @@ export function Timeline({
     const onWheel = (e: WheelEvent): void => {
       if (!e.ctrlKey) return
       e.preventDefault()
+      const viewX = e.clientX - el.getBoundingClientRect().left
       pinchAnchor.current = {
-        viewX: e.clientX - el.getBoundingClientRect().left,
+        viewX,
+        // scrollLeft is consistent with domPx here: commits fix both together.
+        t: (el.scrollLeft + viewX - LABEL_W) / domPx.current,
         at: performance.now()
       }
       onZoom(Math.exp(-e.deltaY * 0.01))
@@ -376,8 +381,7 @@ export function Timeline({
       pinchAnchor.current = null
       return
     }
-    const t = (el.scrollLeft + a.viewX - LABEL_W) / prev
-    el.scrollLeft = LABEL_W + t * pxPerSec - a.viewX
+    el.scrollLeft = LABEL_W + a.t * pxPerSec - a.viewX
   }, [pxPerSec])
 
   /** Smallest correction that lands t on another clip's edge, or 0. */

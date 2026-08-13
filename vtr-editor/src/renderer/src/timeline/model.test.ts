@@ -51,6 +51,7 @@ describe('pickStep', () => {
 
 describe('rulerStep', () => {
   it('coarsens as the timeline zooms out', () => {
+    expect(rulerStep(1440)).toBe(0.1)
     expect(rulerStep(400)).toBe(0.25)
     expect(rulerStep(100)).toBe(1)
     expect(rulerStep(2)).toBe(60)
@@ -58,7 +59,7 @@ describe('rulerStep', () => {
 
   // The whole point of the shared minimum: HH:MM:SS.mmm labels never collide.
   it('keeps ticks a label width apart across the zoom range', () => {
-    for (let pxPerSec = 2; pxPerSec <= 400; pxPerSec += 2) {
+    for (let pxPerSec = 2; pxPerSec <= 1440; pxPerSec += 2) {
       expect(rulerStep(pxPerSec) * pxPerSec).toBeGreaterThanOrEqual(TIME_TICK_MIN_PX)
     }
   })

@@ -362,3 +362,73 @@ test('min zoom fits a long timeline in the window', async () => {
     await app.close()
   }
 })
+
+test('pinch zoom-out keeps the time under the cursor when the width shrink clamps the scroll', async () => {
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
+  writeFileSync(
+    join(workdir, CLIP),
+    jsonl([
+      { type: 'session_start', t: 0, wall: '2026-07-16T00:00:00Z' },
+      { t: 0.5, port: LISTEN_PORT, a: '/a', args: [0.1] },
+      { type: 'session_end', t: 2 }
+    ])
+  )
+  writeFileSync(
+    join(workdir, 'project.json'),
+    JSON.stringify({
+      version: 1,
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT },
+      duration: 10,
+      tracks: [{ clips: [{ file: CLIP, offset: 0, trimIn: 0, trimOut: 2 }] }]
+    })
+  )
+
+  const app = await electron.launch({
+    args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
+    cwd: workdir,
+    env: {
+      ...process.env,
+      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
+      OSC_EDITOR_HIDDEN: '1',
+      OSC_EDITOR_DATA_DIR: workdir
+    }
+  })
+  try {
+    const page = await app.firstWindow()
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
+
+    const scroll = page.locator('.timeline-scroll')
+    // Max zoom → 10s at 1440px/s = 14500px wide (incl. 100px tail pad).
+    await page.getByLabel('zoom', { exact: true }).fill('100')
+    await expect.poll(() => scroll.evaluate((el) => el.scrollWidth)).toBeGreaterThan(14_000)
+    // Scroll into the middle: a zoom-out from here shrinks the content below
+    // scrollLeft + viewport, so the browser clamps scrollLeft mid-commit.
+    await scroll.evaluate((el) => (el.scrollLeft = 6000))
+
+    // Timeline seconds under viewport-x 300 (LABEL_W = 96, TAIL_PAD = 100).
+    const timeUnder = (): Promise<number> =>
+      scroll.evaluate((el) => {
+        const px = (el.scrollWidth - 100) / 10
+        return (el.scrollLeft + 300 - 96) / px
+      })
+    const before = await timeUnder()
+
+    await scroll.evaluate((el) => {
+      const rect = el.getBoundingClientRect()
+      el.dispatchEvent(
+        new WheelEvent('wheel', {
+          deltaY: 100, // pinch in: zoom out by e ≈ 2.7×
+          ctrlKey: true,
+          clientX: rect.left + 300,
+          clientY: rect.top + 50,
+          bubbles: true,
+          cancelable: true
+        })
+      )
+    })
+    await expect.poll(() => scroll.evaluate((el) => el.scrollWidth)).toBeLessThan(6000)
+    expect(await timeUnder()).toBeCloseTo(before, 1)
+  } finally {
+    await app.close()
+  }
+})

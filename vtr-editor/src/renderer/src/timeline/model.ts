@@ -179,6 +179,10 @@ export function pickStep(
 /** Min px between time ticks; fits a `formatRulerLabel` HH:MM:SS.mmm label. */
 export const TIME_TICK_MIN_PX = 90
 
+export const MIN_PX_PER_SEC = 2
+/** Zoom ceiling: one 60fps frame spans 24px, so max zoom resolves single frames. */
+export const MAX_PX_PER_SEC = 24 * 60
+
 const RULER_STEPS = [0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300]
 
 /** Timeline ruler tick interval, in seconds. */

@@ -157,13 +157,13 @@ test('timeline duration and zoom slider', async () => {
       .evaluate((el) => parseFloat((el as HTMLElement).style.width))
     expect(rulerW).toBeCloseTo(2500, 0)
 
-    // Zoom slider changes px/s: max slider → 400px/s.
+    // Zoom slider changes px/s: max slider → 1440px/s (24px per 60fps frame).
     // exact: the curve editor has its own "x zoom" / "y zoom" sliders.
     await page.getByLabel('zoom', { exact: true }).fill('100')
     const rulerW2 = await page
       .locator('.ruler')
       .evaluate((el) => parseFloat((el as HTMLElement).style.width))
-    expect(rulerW2).toBeCloseTo(120 * 400 + 100, -1)
+    expect(rulerW2).toBeCloseTo(120 * 1440 + 100, -1)
   } finally {
     await app.close()
   }
