@@ -38,7 +38,7 @@ const TRIM_HANDLE_PX = 8
 
 type DragMode = 'move' | 'trim-in' | 'trim-out'
 
-export type ClipAction = 'mute' | 'copy' | 'paste' | 'duplicate' | 'split' | 'reveal'
+export type ClipAction = 'mute' | 'copy' | 'paste' | 'duplicate' | 'split' | 'merge' | 'reveal'
 
 interface Drag {
   mode: DragMode
@@ -621,6 +621,14 @@ export function Timeline({
     setMenu(null)
   }
 
+  /** Clips the open menu acts on: the selection when the clicked clip is in
+   *  it, else the clicked clip alone (same rule as App's onClipAction). */
+  const menuTargets = ((): ClipInst[] => {
+    if (!menu) return []
+    const ids = selectedIds.includes(menu.clip.id) ? selectedIds : [menu.clip.id]
+    return tracks.flatMap((t) => t.clips.filter((c) => ids.includes(c.id)))
+  })()
+
   const widthPx = Math.max(end * pxPerSec + TAIL_PAD, 600)
   const step = rulerStep(pxPerSec)
   const marks: number[] = []
@@ -993,6 +1001,15 @@ export function Timeline({
                 onClick={() => menuAction('split')}
               >
                 Split at playhead
+              </button>
+              <button
+                role="menuitem"
+                // One clip is nothing to merge; a missing file has no events
+                // to bake.
+                disabled={menuTargets.length < 2 || menuTargets.some((c) => c.missing)}
+                onClick={() => menuAction('merge')}
+              >
+                Merge
               </button>
               <button role="menuitem" onClick={() => menuAction('reveal')}>
                 Reveal in Finder

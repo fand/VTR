@@ -62,11 +62,13 @@ test('clip context menu: mute, copy, paste, duplicate, split at playhead', async
 
     // Open and close with Escape.
     await page.locator('.clip').click({ button: 'right' })
-    await expect(page.getByRole('menuitem')).toHaveCount(6)
+    await expect(page.getByRole('menuitem')).toHaveCount(7)
     await expect(page.getByRole('menuitem', { name: 'Reveal in Finder' })).toBeEnabled()
-    // Playhead at 0 → split disabled; nothing copied yet → paste disabled.
+    // Playhead at 0 → split disabled; nothing copied yet → paste disabled;
+    // one clip → nothing to merge.
     await expect(page.getByRole('menuitem', { name: 'Split at playhead' })).toBeDisabled()
     await expect(page.getByRole('menuitem', { name: 'Paste' })).toBeDisabled()
+    await expect(page.getByRole('menuitem', { name: 'Merge' })).toBeDisabled()
     await page.keyboard.press('Escape')
     await expect(page.getByRole('menuitem')).toHaveCount(0)
 

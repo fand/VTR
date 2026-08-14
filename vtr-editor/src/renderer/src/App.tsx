@@ -387,6 +387,77 @@ function App(): React.JSX.Element {
     [commit, newId]
   )
 
+  /**
+   * Merge clips into one. Clip files are immutable and edit overlays are keyed
+   * by file name, so this bakes what playback resolves for the selection into
+   * a new clip file (main writes it), then swaps the selection for it. The
+   * merged clip lands on the bottom-most selected track — the one that already
+   * won the priority contest (docs/tasks/track-priority).
+   */
+  const mergeClips = useCallback(
+    (clipIds: number[]) => {
+      const ids = new Set(clipIds)
+      // Track order is priority order, so the sub-project keeps every track,
+      // empty ones included.
+      const picked = tracks.map((t) => t.clips.filter((c) => ids.has(c.id)))
+      const total = picked.reduce((n, list) => n + list.length, 0)
+      if (total < 2) return
+      let targetIdx = 0
+      picked.forEach((list, i) => {
+        if (list.length > 0) targetIdx = i
+      })
+      const targetTrackId = tracks[targetIdx].id
+      const sub = {
+        version: 1 as const,
+        edits,
+        tracks: picked.map((clips) => ({
+          clips: clips.map(({ file, offset, trimIn, trimOut, muted }) => ({
+            file,
+            offset,
+            trimIn,
+            trimOut,
+            muted
+          }))
+        }))
+      }
+      void (async (): Promise<void> => {
+        let res: Awaited<ReturnType<typeof window.api.clip.merge>>
+        try {
+          // Write the file first: a failure here leaves the doc untouched.
+          res = await window.api.clip.merge(sub)
+        } catch (e) {
+          setError((e as Error).message)
+          return
+        }
+        const id = newId()
+        commit(`${count(total, 'clip')} merged`, (d) => {
+          for (const t of d.tracks) t.clips = t.clips.filter((c) => !ids.has(c.id))
+          const target = d.tracks.find((t) => t.id === targetTrackId)
+          target?.clips.push({
+            id,
+            file: res.file,
+            name: 'Merged',
+            path: res.path,
+            offset: res.offset,
+            trimIn: 0,
+            trimOut: res.length,
+            summary: res.summary
+          })
+          // Curves can't live in a clip file (readClip skips curve lines), so
+          // they come back as the new clip's overlay.
+          if (res.curves.length > 0) d.edits[res.file] = { curves: res.curves }
+          // The consumed clips may have been the last users of their overlays.
+          const live = new Set(d.tracks.flatMap((t) => t.clips.map((c) => c.file)))
+          for (const file of Object.keys(d.edits)) {
+            if (!live.has(file)) delete d.edits[file]
+          }
+        })
+        setSelectedIds([id])
+      })()
+    },
+    [tracks, edits, commit, newId, setSelectedIds]
+  )
+
   const onClipAction = useCallback(
     (action: ClipAction, clipId: number) => {
       const clip = tracks.flatMap((t) => t.clips).find((c) => c.id === clipId)
@@ -432,6 +503,9 @@ function App(): React.JSX.Element {
           })
           break
         }
+        case 'merge':
+          mergeClips(targetIds)
+          break
         // Reveal only the clicked clip, even inside a multi-selection: one
         // Finder window, not one per selected clip.
         case 'reveal':
@@ -439,7 +513,17 @@ function App(): React.JSX.Element {
           break
       }
     },
-    [tracks, selectedIds, playhead, commit, newId, copyClips, pasteClips, duplicateClips]
+    [
+      tracks,
+      selectedIds,
+      playhead,
+      commit,
+      newId,
+      copyClips,
+      pasteClips,
+      duplicateClips,
+      mergeClips
+    ]
   )
 
   // Cmd+C/Cmd+V on clips. The Edit menu handles the native text-field side

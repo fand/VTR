@@ -274,6 +274,21 @@ export interface LoadedClip extends ProjectClip {
   missing?: boolean
 }
 
+/** New clip file baked from a merge, ready to place on the timeline. */
+export interface MergeClipResult {
+  /** Clip file name; the file lives in staging until the project is saved. */
+  file: string
+  path: string
+  summary: ClipSummary
+  /** Timeline seconds where the merged clip starts. */
+  offset: number
+  /** Clip length, seconds (trimOut for the placed clip). */
+  length: number
+  /** Clip-local curves for the new clip's edit overlay: curves stay curves,
+   *  and clip files never carry curve lines. */
+  curves: ClipCurve[]
+}
+
 export interface ExportResult {
   path: string
   events: number

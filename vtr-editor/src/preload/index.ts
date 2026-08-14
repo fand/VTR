@@ -3,6 +3,7 @@ import type {
   ClipSummary,
   ExportResult,
   LoadedProject,
+  MergeClipResult,
   OscEvent,
   PlayerStatus,
   PortConfig,
@@ -35,6 +36,9 @@ const api = {
   clip: {
     events: (path: string): Promise<OscEvent[]> => ipcRenderer.invoke('clip:events', path),
     summary: (path: string): Promise<ClipSummary> => ipcRenderer.invoke('clip:summary', path),
+    /** Bake the sub-project (the selected clips) into one new clip file. */
+    merge: (project: ProjectFile): Promise<MergeClipResult> =>
+      ipcRenderer.invoke('clip:merge', project),
     reveal: (file: string): Promise<void> => ipcRenderer.invoke('clip:reveal', file)
   },
   project: {
