@@ -269,11 +269,26 @@ describe('fitCurve extrema', () => {
     expect(peak.o![1]).toBeCloseTo(0, 12)
   })
 
-  it('ignores jitter under the tolerance', () => {
-    // Non-monotone, but every retreat is well under the 0.05 band.
-    const samples = sampleRamp(241, (t) => t * 0.5 + 0.01 * Math.sin(t * 100))
+  it('ignores jitter under the hysteresis band', () => {
+    // Non-monotone, but every retreat is well under the 0.03 band.
+    const samples = sampleRamp(241, (t) => t * 0.5 + 0.003 * Math.sin(t * 100))
     const knots = fitCurve(samples, 0.05)!
     expect(knots).toHaveLength(2)
+  })
+
+  it('keeps a shallow peak even when the tolerance is loose', () => {
+    // Prominence ~0.1 of range: under the 0.1 tolerance, over the 0.03 band.
+    const shallow = (t: number): number =>
+      t < 0.5 ? t : t < 0.6 ? 0.5 - (t - 0.5) * 0.8 : 0.42 + (t - 0.6)
+    const knots = fitCurve(sampleRamp(241, shallow), 0.1)!
+    expect(knots.some((k) => Math.abs(k.t - 0.5) < 1e-9 && k.v === 0.5)).toBe(true)
+  })
+
+  it('keeps a peak near the end of the data', () => {
+    // Only falls 0.05 past the peak before the data stops.
+    const late = (t: number): number => (t < 0.9 ? t / 0.9 : 1 - (t - 0.9) * 0.5)
+    const knots = fitCurve(sampleRamp(241, late), 0.1)!
+    expect(knots.some((k) => Math.abs(k.t - 0.9) < 1e-9 && k.v === 1)).toBe(true)
   })
 
   it('still splits a monotone segment when the speed profile misses tolerance', () => {

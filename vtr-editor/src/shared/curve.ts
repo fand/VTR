@@ -394,8 +394,10 @@ function appendSegs(
 /**
  * Fit a piecewise cubic bezier to time-sorted (t, v) samples. `maxError` is
  * a distance in normalized space (t scaled by the time span, v by the value
- * range), so tolerance is scale-independent; it doubles as the hysteresis
- * band for extrema. `frame` is the widest gap (raw seconds) that still counts
+ * range), so tolerance is scale-independent. The extrema hysteresis band is
+ * min(maxError, 0.03): decoupled above that, or a loose tolerance would also
+ * flatten every shallow peak. `frame` is the widest gap (raw seconds) that
+ * still counts
  * as motion: past it the value merely held, so the run ends in a step knot
  * instead of a bezier inventing motion across the silence. Peaks and valleys
  * become knots with horizontal handles, so extremes survive exactly.
@@ -443,7 +445,7 @@ export function fitCurve(
       // Isolated sample: nothing to fit, it just holds until the next run.
       knots.push({ t: dedup[first].t, v: dedup[first].v })
     } else {
-      const cuts = [first, ...extremaCuts(pts, first, last, maxError), last]
+      const cuts = [first, ...extremaCuts(pts, first, last, Math.min(maxError, 0.03)), last]
       const segs: [XY, XY, XY, XY][] = []
       for (let c = 0; c + 1 < cuts.length; c++) {
         const a = cuts[c]
