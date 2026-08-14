@@ -170,9 +170,9 @@ function installMenu(): void {
   const send = (channel: string) => (): void => {
     BrowserWindow.getAllWindows()[0]?.webContents.send(channel)
   }
-  // Copy/Paste do the native text-field action here (a no-op without an
-  // editable focus) and also notify the renderer, which handles clips.
-  const sendWithNative = (channel: string, native: 'copy' | 'paste') => (): void => {
+  // Copy/Paste/Select All do the native text-field action here (a no-op without
+  // an editable focus) and also notify the renderer, which handles clips.
+  const sendWithNative = (channel: string, native: 'copy' | 'paste' | 'selectAll') => (): void => {
     const wc = BrowserWindow.getAllWindows()[0]?.webContents
     if (!wc) return
     wc[native]()
@@ -221,7 +221,11 @@ function installMenu(): void {
             accelerator: 'CmdOrCtrl+V',
             click: sendWithNative('menu:paste', 'paste')
           },
-          { role: 'selectAll' }
+          {
+            label: 'Select All',
+            accelerator: 'CmdOrCtrl+A',
+            click: sendWithNative('menu:selectAll', 'selectAll')
+          }
         ]
       },
       { role: 'windowMenu' }
