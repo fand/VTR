@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use serde::Serialize;
@@ -17,6 +17,11 @@ use crate::config::Config;
 use super::beacon::{signed_secs_since, Beacon, BeaconState};
 use super::eventlog::{Event, EventLog};
 use super::jsonl::{round6, write_line};
+use super::MonitorLog;
+
+/// Decode for the monitor only while a consumer actually polls. Above the
+/// editor's 30s long-poll cadence, so an attached editor never flaps.
+const MONITOR_ACTIVE: Duration = Duration::from_secs(60);
 
 /// Max packets queued to the writer before we drop (and count) instead of
 /// blocking. Bounds packet COUNT, not bytes: worst case ~4 GB of heap at max
@@ -27,6 +32,8 @@ pub(super) enum Msg {
     Packet {
         buf: Vec<u8>,
         t: Instant,
+        /// Sender, for the monitor stream (recordings don't keep it).
+        origin: SocketAddr,
         beacon: Option<Beacon>,
     },
     Start {
@@ -96,6 +103,7 @@ pub(super) struct Writer {
     received: Arc<AtomicU64>,
     beacon_max_age_s: f64,
     event_log: EventLog,
+    monitor: MonitorLog,
     rec: Option<Recording>,
     last_clip: Option<PathBuf>,
     /// First write failure since the last clip start; disk-full mid-show
@@ -117,6 +125,7 @@ impl Writer {
         dropped: Arc<AtomicU64>,
         received: Arc<AtomicU64>,
         event_log: EventLog,
+        monitor: MonitorLog,
     ) -> Self {
         Self {
             outdir: config.outdir.clone(),
@@ -127,6 +136,7 @@ impl Writer {
             received,
             beacon_max_age_s: config.beacon_max_age_s,
             event_log,
+            monitor,
             rec: None,
             last_clip: None,
             write_error: None,
@@ -154,24 +164,35 @@ impl Writer {
 
     fn handle(&mut self, msg: Msg) {
         match msg {
-            Msg::Packet { buf, t, beacon } => {
-                let Some(mut rec) = self.rec.take() else { return };
-                // Arrived before the clip started.
-                let Some(dt) = t.checked_duration_since(rec.epoch) else {
-                    self.rec = Some(rec);
+            Msg::Packet {
+                buf,
+                t,
+                origin,
+                beacon,
+            } => {
+                let mut rec = self.rec.take();
+                let monitoring = self.monitor.polled_within(MONITOR_ACTIVE);
+                // Clip-relative seconds; None while idle or for a packet
+                // that arrived before the clip started.
+                let rec_ts = rec
+                    .as_ref()
+                    .and_then(|r| t.checked_duration_since(r.epoch))
+                    .map(|dt| round6(dt.as_secs_f64()));
+                // Nobody listening: skip the decode entirely.
+                if rec_ts.is_none() && !monitoring {
+                    self.rec = rec;
                     return;
-                };
+                }
                 // Rate-limited: a controller streaming malformed OSC at
                 // 120 Hz must not turn the writer thread into a stderr pump.
                 let packet = match rosc::decoder::decode_udp(&buf) {
                     Ok((_, p)) => p,
                     Err(e) => {
                         self.parse_log.log(&format!("OSC parse error: {e}"));
-                        self.rec = Some(rec);
+                        self.rec = rec;
                         return;
                     }
                 };
-                let ts = round6(dt.as_secs_f64());
                 // A beacon older than the cutoff means TD stopped talking
                 // (quit, network); its extrapolation would be plausible but
                 // wrong — omit tl per the "omit when unknown" contract. A
@@ -180,16 +201,13 @@ impl Writer {
                     .filter(|b| signed_secs_since(t, b.at) <= self.beacon_max_age_s)
                     .map(|b| round6(b.tl_at(t)))
                     .filter(|v| v.is_finite());
+                let wall = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
                 let mut msgs = Vec::new();
                 flatten(packet, &mut msgs);
                 for m in msgs {
-                    let mut line = serde_json::Map::new();
-                    line.insert("t".into(), json!(ts));
-                    if let Some(tl) = tl {
-                        line.insert("tl".into(), json!(tl));
-                    }
-                    line.insert("port".into(), json!(self.listen_port));
-                    line.insert("a".into(), json!(m.addr));
                     let mut types = String::new();
                     let mut args: Vec<Value> = Vec::with_capacity(m.args.len());
                     for (tag, v) in m
@@ -200,15 +218,37 @@ impl Writer {
                         types.push(tag);
                         args.push(v);
                     }
-                    line.insert("types".into(), json!(types));
-                    line.insert("args".into(), Value::Array(args));
-                    let before = self.write_errors;
-                    self.write(&mut rec.file, &Value::Object(line));
-                    if self.write_errors == before {
-                        rec.events += 1;
+                    if let (Some(ts), Some(rec)) = (rec_ts, rec.as_mut()) {
+                        let mut line = serde_json::Map::new();
+                        line.insert("t".into(), json!(ts));
+                        if let Some(tl) = tl {
+                            line.insert("tl".into(), json!(tl));
+                        }
+                        line.insert("port".into(), json!(self.listen_port));
+                        line.insert("a".into(), json!(m.addr.clone()));
+                        line.insert("types".into(), json!(types.clone()));
+                        line.insert("args".into(), Value::Array(args.clone()));
+                        let before = self.write_errors;
+                        self.write(&mut rec.file, &Value::Object(line));
+                        if self.write_errors == before {
+                            rec.events += 1;
+                        }
+                    }
+                    if monitoring {
+                        let mut line = serde_json::Map::new();
+                        line.insert("wall".into(), json!(wall));
+                        if let Some(tl) = tl {
+                            line.insert("tl".into(), json!(tl));
+                        }
+                        line.insert("port".into(), json!(self.listen_port));
+                        line.insert("a".into(), json!(m.addr));
+                        line.insert("types".into(), json!(types));
+                        line.insert("args".into(), Value::Array(args));
+                        line.insert("from".into(), json!(origin.to_string()));
+                        self.monitor.push(Value::Object(line));
                     }
                 }
-                self.rec = Some(rec);
+                self.rec = rec;
             }
             Msg::Start {
                 dir,
@@ -378,7 +418,8 @@ mod tests {
             Arc::new(Mutex::new(None)),
             Arc::new(AtomicU64::new(0)),
             Arc::new(AtomicU64::new(0)),
-            EventLog::new(),
+            EventLog::new(super::super::eventlog::EVENT_LOG_CAP),
+            MonitorLog::new(super::super::eventlog::MONITOR_LOG_CAP),
         )
     }
 
@@ -414,8 +455,48 @@ mod tests {
         Msg::Packet {
             buf,
             t: Instant::now(),
+            origin: "127.0.0.1:9000".parse().unwrap(),
             beacon: None,
         }
+    }
+
+    #[test]
+    fn monitor_gets_lines_only_while_polled() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut w = test_writer(tmp.path());
+
+        // Idle and never polled: the packet is not even decoded.
+        w.handle(packet_msg());
+        assert_eq!(w.monitor.newest(), 0);
+
+        // A poll arms the monitor; the next packet lands as a line.
+        w.monitor.wait_since(0, Duration::ZERO);
+        w.handle(packet_msg());
+        let r = w.monitor.wait_since(0, Duration::ZERO);
+        assert_eq!(r.events.len(), 1);
+        let line = &r.events[0];
+        assert_eq!(line["a"], serde_json::json!("/x"));
+        assert_eq!(line["types"], serde_json::json!("i"));
+        assert_eq!(line["args"], serde_json::json!([1]));
+        assert_eq!(line["from"], serde_json::json!("127.0.0.1:9000"));
+        assert!(line["wall"].as_u64().is_some_and(|v| v > 0));
+    }
+
+    #[test]
+    fn monitor_and_recording_both_see_a_packet() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut w = test_writer(tmp.path());
+        let path = start_clip(&mut w);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        w.monitor.wait_since(0, Duration::ZERO);
+
+        w.handle(packet_msg());
+        assert_eq!(status_of(&mut w).events, 1, "recording still counts");
+        assert_eq!(w.monitor.newest(), 1);
+
+        stop_clip(&mut w);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.lines().any(|l| l.contains("\"/x\"")));
     }
 
     #[test]
@@ -462,6 +543,7 @@ mod tests {
         w.handle(Msg::Packet {
             buf,
             t: Instant::now(),
+            origin: "127.0.0.1:9000".parse().unwrap(),
             beacon: None,
         });
 

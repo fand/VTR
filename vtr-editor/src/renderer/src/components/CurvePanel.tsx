@@ -17,6 +17,7 @@ import type { EventPointSel } from '../../../shared/edits'
 import { clipKeys, maskIntervals } from '../../../shared/trackMask'
 import type { MaskClip } from '../../../shared/trackMask'
 import { buildPointConversion, type ConvertCtx, type ConvertResult } from './curveConvert'
+import { OscMonitor } from './OscMonitor'
 import { MIN_FIT_POINTS, buildCurveReplace } from './curveReplace'
 import { PAD, fitZoomX, tAt, xAt, yAt, type Scale } from './curveGeom'
 import {
@@ -1113,6 +1114,7 @@ export function CurvePanel({
             />
           )}
         </div>
+        <OscMonitor />
       </div>
     </div>
   )

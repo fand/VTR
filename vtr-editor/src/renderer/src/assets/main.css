@@ -1236,3 +1236,55 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* Live OSC monitor: right column of the curve panel. */
+.osc-monitor {
+  flex: 0 0 280px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-raised);
+  border-left: 1px solid var(--border);
+}
+
+.osc-monitor-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.osc-monitor-follow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.osc-monitor-scroll {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.osc-monitor-content {
+  position: relative;
+}
+
+.osc-monitor-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 15px;
+  line-height: 15px;
+  padding: 0 8px;
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-dim);
+}

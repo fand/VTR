@@ -3,7 +3,7 @@ import net from 'net'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, expect, test, vi } from 'vitest'
-import { DEFAULT_PORTS, type TapEvent, type TapStatus } from '../shared/types'
+import { DEFAULT_PORTS, type MonitorLine, type TapEvent, type TapStatus } from '../shared/types'
 import { TapManager } from './tap'
 
 /**
@@ -136,6 +136,35 @@ test('wait loop: baseline on connect, events in order, re-baseline after reconne
   expect(waits[1]).toEqual({ conn: 1, since: 5 })
   // The new connection never reuses the dead connection's cursor.
   expect(waits.find((w) => w.conn === 2)?.since).toBeUndefined()
+})
+
+test('monitor loop forwards line batches and advances the cursor', async () => {
+  const polls: (number | undefined)[] = []
+  const batches: MonitorLine[][] = []
+  const line: MonitorLine = {
+    wall: 1,
+    port: 10010,
+    a: '/x',
+    types: 'i',
+    args: [1],
+    from: '127.0.0.1:9000'
+  }
+  const { tap } = await setup((req, reply) => {
+    if (req.cmd !== 'monitor') return
+    polls.push(req.since as number | undefined)
+    if (req.since == null) {
+      // Baseline: reset carries no snapshot; the stream just starts at seq.
+      reply({ ok: true, seq: 2, lines: [], reset: true })
+    } else if (polls.length === 2) {
+      reply({ ok: true, seq: 3, lines: [line] })
+    }
+    // Third poll stays pending, like a server-side long poll.
+  })
+
+  void tap.runMonitorLoop((lines) => batches.push(lines))
+  await vi.waitFor(() => expect(polls).toEqual([undefined, 2, 3]))
+  // Empty batches (baseline, timeouts) are not forwarded.
+  expect(batches).toEqual([[line]])
 })
 
 test('wait loop re-issues with the same cursor after an empty (timeout) reply', async () => {

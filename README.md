@@ -136,9 +136,12 @@ not its own (echo suppression), and concurrent writers are arbitrated by a
 short hold window (last-touched wins).
 
 The editor talks to vtr-tap over a unix-socket JSON Lines API:
-`start` (optional `tl`/`rate`) / `stop` / `status`, plus `wait` — a
-long-poll on the recording event log (`rec_started` / `rec_stopped`) that
-drives the editor's UI.
+`start` (optional `tl`/`rate`) / `stop` / `status`, plus two long-polls:
+`wait` on the recording event log (`rec_started` / `rec_stopped`) drives
+the editor's UI, and `monitor` streams every decoded app message (`wall`
+epoch-ms, `port`, `a`, `types`, `args`, `from`, optional `tl`) into the
+editor's OSC monitor panel. Monitor capture only runs while someone
+polls; `/vtr/*` control traffic is not included.
 
 ## JSONL schema
 

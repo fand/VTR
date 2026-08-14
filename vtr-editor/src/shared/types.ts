@@ -36,6 +36,27 @@ export interface TapWaitReply {
 /** What main forwards to the renderer on the tap:event channel. */
 export type TapPush = { type: 'event'; event: TapEvent } | { type: 'reset'; status: TapStatus }
 
+/** One live OSC message from the tap's monitor stream. */
+export interface MonitorLine {
+  /** Arrival time at the tap, epoch ms. */
+  wall: number
+  tl?: number
+  port: number
+  a: string
+  types: string
+  args: unknown[]
+  /** Sender ip:port. */
+  from: string
+}
+
+/** Reply to the control-socket monitor cmd. */
+export interface TapMonitorReply {
+  seq: number
+  lines: MonitorLine[]
+  /** Cursor unusable (overflow/tap restart); the stream just continues. */
+  reset?: boolean
+}
+
 /** One OSC event line in a clip/session JSONL file. */
 export interface OscEvent {
   t: number

@@ -15,6 +15,7 @@ const WAIT_TIMEOUT: Duration = Duration::from_secs(25);
 ///
 /// Requests:  {"cmd":"start","dir"?:"/abs/path","tl"?:T,"rate"?:R}
 ///          | {"cmd":"stop"} | {"cmd":"status"} | {"cmd":"wait","since"?:N}
+///          | {"cmd":"monitor","since"?:N}
 /// Responses: {"ok":true,...} | {"ok":false,"error":"..."}
 ///
 /// `wait` long-polls the event log: blocks until an event with seq > since
@@ -22,6 +23,11 @@ const WAIT_TIMEOUT: Duration = Duration::from_secs(25);
 /// with empty events. A `since` that predates the buffer (overflow) or comes
 /// from another process — or a missing `since` (baseline) — replies
 /// "reset":true plus a full "status" snapshot to re-baseline from.
+///
+/// `monitor` long-polls the live OSC log the same way, replying
+/// {"ok":true,"seq":M,"lines":[...]}. Resets carry no snapshot — the
+/// stream just continues from the returned seq. Polling is what turns
+/// monitor capture on; an unpolled tap skips the work.
 pub fn serve(path: &Path, handle: Handle) -> Result<()> {
     // Stateless per connection: every request is answered from the shared
     // tap handle.
@@ -30,10 +36,14 @@ pub fn serve(path: &Path, handle: Handle) -> Result<()> {
         "vtr-tap",
         || (),
         move |request, _: &mut ()| {
-            // `wait` blocks for up to WAIT_TIMEOUT, so it answers off-thread.
+            // Long-polls block for up to WAIT_TIMEOUT, so they answer off-thread.
             if request["cmd"].as_str() == Some("wait") {
                 let handle = handle.clone();
                 return Reply::defer(move |request| wait_response(request, &handle));
+            }
+            if request["cmd"].as_str() == Some("monitor") {
+                let handle = handle.clone();
+                return Reply::defer(move |request| monitor_response(request, &handle));
             }
             Reply::Now(dispatch_value(request, &handle))
         },
@@ -75,6 +85,23 @@ pub fn dispatch(line: &str, handle: &Handle) -> Value {
     }
 }
 
+fn monitor_response(request: &Value, handle: &Handle) -> ControlResult {
+    let log = handle.monitor_log();
+    let (seq, lines, reset) = match request.get("since").and_then(Value::as_u64) {
+        Some(n) => {
+            let r = log.wait_since(n, WAIT_TIMEOUT);
+            (r.seq, r.events, r.reset)
+        }
+        // No cursor = baseline request: current seq, no lines.
+        None => (log.newest(), Vec::new(), true),
+    };
+    let mut resp = json!({"seq": seq, "lines": lines});
+    if reset {
+        resp["reset"] = json!(true);
+    }
+    Ok(resp)
+}
+
 fn dispatch_value(request: &Value, handle: &Handle) -> ControlResult {
     match request["cmd"].as_str() {
         Some("start") => {
@@ -91,6 +118,7 @@ fn dispatch_value(request: &Value, handle: &Handle) -> ControlResult {
         }
         Some("status") => Ok(json!({"status": handle.status()?})),
         Some("wait") => Err("wait not supported here".into()),
+        Some("monitor") => Err("monitor not supported here".into()),
         _ => Err(ControlError::UnknownCmd),
     }
 }

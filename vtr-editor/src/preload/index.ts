@@ -4,6 +4,7 @@ import type {
   ExportResult,
   LoadedProject,
   MergeClipResult,
+  MonitorLine,
   OscEvent,
   PlayerStatus,
   PortConfig,
@@ -25,6 +26,12 @@ const api = {
       const listener = (_e: unknown, msg: TapPush): void => cb(msg)
       ipcRenderer.on('tap:event', listener)
       return () => ipcRenderer.removeListener('tap:event', listener)
+    },
+    /** Live OSC monitor lines, batched by the tap monitor loop. */
+    onMonitor: (cb: (lines: MonitorLine[]) => void): (() => void) => {
+      const listener = (_e: unknown, lines: MonitorLine[]): void => cb(lines)
+      ipcRenderer.on('tap:monitor', listener)
+      return () => ipcRenderer.removeListener('tap:monitor', listener)
     }
   },
   player: {
@@ -80,8 +87,7 @@ const api = {
     ): Promise<{ duration: number; transport: TransportState }> =>
       ipcRenderer.invoke('preview:play', project, fromSec),
     /** Seek the shared transport (the player emits the resolved frame). */
-    seek: (fromSec: number): Promise<TransportState> =>
-      ipcRenderer.invoke('preview:seek', fromSec),
+    seek: (fromSec: number): Promise<TransportState> => ipcRenderer.invoke('preview:seek', fromSec),
     stop: (): Promise<{ position: number }> => ipcRenderer.invoke('preview:stop'),
     /** Foreign transport moves (TD/controller seek or play/stop) to follow. */
     onTransport: (cb: (state: TransportState) => void): (() => void) => {

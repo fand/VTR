@@ -268,6 +268,10 @@ app.whenReady().then(() => {
       (event) => pushTap({ type: 'event', event }),
       (status) => pushTap({ type: 'reset', status })
     )
+    // Live OSC monitor stream, batched by the loop's poll cadence.
+    void tap.runMonitorLoop((lines) => {
+      BrowserWindow.getAllWindows()[0]?.webContents.send('tap:monitor', lines)
+    })
   } catch (e) {
     ctx.tapError = (e as Error).message
     console.error(ctx.tapError)

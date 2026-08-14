@@ -793,6 +793,80 @@ fn wait_long_polls_the_event_log() {
 }
 
 #[test]
+fn monitor_long_polls_live_osc() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (tap, _td, _player) = start_tap(tmp.path());
+    let sock_path = tmp.path().join("tap.sock");
+    {
+        let handle = tap.handle();
+        let sock_path = sock_path.clone();
+        thread::spawn(move || vtr_tap::control::serve(&sock_path, handle));
+    }
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let stream = loop {
+        match UnixStream::connect(&sock_path) {
+            Ok(s) => break s,
+            Err(_) => {
+                assert!(Instant::now() < deadline, "control socket not up");
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+    };
+    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    let mut writer = stream;
+    let mut read_reply = || -> Value {
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        serde_json::from_str(&line).unwrap()
+    };
+
+    // Baseline (no since): reset + current seq, no lines.
+    writeln!(writer, r#"{{"cmd":"monitor","id":1}}"#).unwrap();
+    let resp = read_reply();
+    assert_eq!(resp["reset"], true);
+    assert_eq!(resp["seq"], 0);
+    assert_eq!(resp["lines"].as_array().unwrap().len(), 0);
+
+    // A blocked monitor poll wakes on app traffic, idle (not recording).
+    writeln!(writer, r#"{{"cmd":"monitor","since":0,"id":2}}"#).unwrap();
+    thread::sleep(Duration::from_millis(50));
+    let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
+    tx.send_to(
+        &encode_msg("/fader", vec![OscType::Float(0.5)]),
+        tap.listen_addr,
+    )
+    .unwrap();
+    let resp = read_reply();
+    assert_eq!(resp["id"], 2);
+    assert_eq!(resp["seq"], 1);
+    let line = &resp["lines"][0];
+    assert_eq!(line["a"], "/fader");
+    assert_eq!(line["types"], "f");
+    assert_eq!(line["args"][0], 0.5);
+    assert_eq!(
+        line["from"].as_str().unwrap(),
+        tx.local_addr().unwrap().to_string()
+    );
+    assert!(line["wall"].as_u64().is_some());
+
+    // /vtr control traffic never shows up in the monitor.
+    writeln!(writer, r#"{{"cmd":"monitor","since":1,"id":3}}"#).unwrap();
+    thread::sleep(Duration::from_millis(50));
+    tx.send_to(
+        &encode_msg("/vtr/clock", vec![OscType::Float(1.0)]),
+        tap.listen_addr,
+    )
+    .unwrap();
+    tx.send_to(&encode_msg("/b", vec![OscType::Int(2)]), tap.listen_addr)
+        .unwrap();
+    let resp = read_reply();
+    assert_eq!(resp["id"], 3);
+    let lines = resp["lines"].as_array().unwrap();
+    assert!(lines.iter().all(|l| l["a"] != "/vtr/clock"));
+    assert_eq!(lines.last().unwrap()["a"], "/b");
+}
+
+#[test]
 fn non_finite_beacon_is_rejected() {
     let tmp = tempfile::tempdir().unwrap();
     let (tap, _td, _player) = start_tap(tmp.path());

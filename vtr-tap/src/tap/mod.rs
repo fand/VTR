@@ -22,8 +22,12 @@ pub use eventlog::{Event, EventLog, WaitResult};
 pub use writer::Status;
 
 use beacon::BeaconState;
+use eventlog::{EVENT_LOG_CAP, MONITOR_LOG_CAP};
 use origin::OriginNotifier;
 use writer::Msg;
+
+/// Live OSC monitor lines (JSON, one per decoded message).
+pub type MonitorLog = EventLog<serde_json::Value>;
 
 pub struct Tap {
     pub listen_addr: SocketAddr,
@@ -34,6 +38,7 @@ pub struct Tap {
 pub struct Handle {
     tx: SyncSender<Msg>,
     log: EventLog,
+    monitor: MonitorLog,
 }
 
 impl Handle {
@@ -63,6 +68,10 @@ impl Handle {
         &self.log
     }
 
+    pub fn monitor_log(&self) -> &MonitorLog {
+        &self.monitor
+    }
+
     /// Round trip to the writer thread: send a reply channel, block on it.
     fn ask<T>(&self, msg: impl FnOnce(Sender<T>) -> Msg) -> Result<T, String> {
         let (tx, rx) = mpsc::channel();
@@ -89,7 +98,8 @@ impl Tap {
         let beacon: BeaconState = Arc::new(Mutex::new(None));
         let dropped = Arc::new(AtomicU64::new(0));
         let received = Arc::new(AtomicU64::new(0));
-        let event_log = EventLog::new();
+        let event_log = EventLog::new(EVENT_LOG_CAP);
+        let monitor_log = MonitorLog::new(MONITOR_LOG_CAP);
         let (tx, rx) = mpsc::sync_channel::<Msg>(writer::CHANNEL_CAP);
         let (ctl_tx, ctl_rx) = mpsc::sync_channel(ctl::CTL_CHANNEL_CAP);
 
@@ -115,6 +125,7 @@ impl Tap {
             handle: Handle {
                 tx: tx.clone(),
                 log: event_log.clone(),
+                monitor: monitor_log.clone(),
             },
         };
         thread::Builder::new()
@@ -128,6 +139,7 @@ impl Tap {
             dropped,
             received,
             event_log.clone(),
+            monitor_log.clone(),
         );
         thread::Builder::new()
             .name("writer".into())
@@ -135,7 +147,11 @@ impl Tap {
 
         Ok(Tap {
             listen_addr,
-            handle: Handle { tx, log: event_log },
+            handle: Handle {
+                tx,
+                log: event_log,
+                monitor: monitor_log,
+            },
         })
     }
 

@@ -5,8 +5,10 @@ import { dirname, join } from 'path'
 import {
   DEFAULT_PORTS,
   RELAY_PORT,
+  type MonitorLine,
   type PortConfig,
   type TapEvent,
+  type TapMonitorReply,
   type TapStatus,
   type TapWaitReply
 } from '../shared/types'
@@ -18,6 +20,8 @@ const REQUEST_TIMEOUT_MS = 3000
 const WAIT_TIMEOUT_MS = 30_000
 const WAIT_RETRY_MS = 500
 const WAIT_RETRY_MAX_MS = 5000
+/** Pause between monitor polls: batches high-rate traffic into ≤20 pushes/s. */
+const MONITOR_INTERVAL_MS = 50
 
 /**
  * child: vtr-tap is our child process; we respawn it on crash.
@@ -233,6 +237,40 @@ ${programArgs}
         for (const e of r.events ?? []) onEvent(e)
         since = r.seq
         sinceGen = gen
+      } catch {
+        if (this.stopping) return
+        await new Promise((res) => setTimeout(res, backoff))
+        backoff = Math.min(backoff * 2, WAIT_RETRY_MAX_MS)
+      }
+    }
+  }
+
+  /**
+   * Long-poll loop over the tap's live OSC monitor. Same cursor rules as
+   * runEventLoop; a reset just re-baselines (missed lines are not
+   * recoverable and the log view tolerates gaps). Polling is what turns
+   * monitor capture on tap-side.
+   */
+  async runMonitorLoop(onLines: (lines: MonitorLine[]) => void): Promise<void> {
+    let since: number | null = null
+    let sinceGen = -1
+    let backoff = WAIT_RETRY_MS
+    while (!this.stopping) {
+      if (sinceGen !== this.dropGen) since = null
+      const gen = this.dropGen
+      try {
+        const r = (await this.request(
+          'monitor',
+          since == null ? undefined : { since },
+          WAIT_TIMEOUT_MS
+        )) as unknown as TapMonitorReply
+        backoff = WAIT_RETRY_MS
+        // Reply raced a disconnect: its seq may belong to a dead process.
+        if (this.dropGen !== gen) continue
+        if (r.lines && r.lines.length > 0) onLines(r.lines)
+        since = r.seq
+        sinceGen = gen
+        await new Promise((res) => setTimeout(res, MONITOR_INTERVAL_MS))
       } catch {
         if (this.stopping) return
         await new Promise((res) => setTimeout(res, backoff))
