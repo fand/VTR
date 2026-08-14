@@ -141,11 +141,12 @@ describe('step segments', () => {
 
 describe('fitCurve', () => {
   it('recovers a single cubic from clean samples', () => {
+    // Monotone source: a peak would (rightly) become an extremum knot.
     const src: CurveKnot[] = [
-      { t: 0, v: 0.1, o: [0.3, 0.5] },
-      { t: 1, v: 0.8, i: [-0.3, 0.1] }
+      { t: 0, v: 0.1, o: [0.3, 0.2] },
+      { t: 1, v: 0.8, i: [-0.3, -0.1] }
     ]
-    const samples = sampleRamp(50, (t) => evalCurve(src, t))
+    const samples = sampleRamp(121, (t) => evalCurve(src, t))
     const knots = fitCurve(samples, 0.01)!
     expect(knots).toHaveLength(2)
     expect(knots[0].t).toBeCloseTo(0, 9)
@@ -167,14 +168,14 @@ describe('fitCurve', () => {
     const samples = sampleRamp(81, (t) => Math.abs(t - 0.5))
     const knots = fitCurve(samples, 0.01)!
     expect(knots.length).toBeGreaterThanOrEqual(3)
-    // A knot lands near the corner.
+    // The corner is an extremum, so a knot lands exactly on it.
     const nearest = Math.min(...knots.map((k) => Math.abs(k.t - 0.5)))
-    expect(nearest).toBeLessThan(0.05)
+    expect(nearest).toBeLessThan(1e-9)
     expect(maxError(knots, samples)).toBeLessThan(0.02)
   })
 
   it('produces strictly increasing knot times with in-span handles', () => {
-    const samples = sampleRamp(60, (t) => Math.sin(t * 7) * 0.5 + 0.5)
+    const samples = sampleRamp(121, (t) => Math.sin(t * 7) * 0.5 + 0.5)
     const knots = fitCurve(samples, 0.005)!
     for (let i = 1; i < knots.length; i++) {
       expect(knots[i].t).toBeGreaterThan(knots[i - 1].t)
@@ -195,12 +196,14 @@ describe('fitCurve', () => {
   })
 
   it('handles two points, duplicate times, and degenerate input', () => {
+    // frame: Infinity — these are about fitting, not about step detection.
     const two = fitCurve(
       [
         { t: 0, v: 0 },
         { t: 1, v: 1 }
       ],
-      0.01
+      0.01,
+      Infinity
     )!
     expect(two).toHaveLength(2)
     expect(evalCurve(two, 0.5)).toBeCloseTo(0.5, 3)
@@ -212,7 +215,8 @@ describe('fitCurve', () => {
         { t: 0, v: 0 },
         { t: 1, v: 1 }
       ],
-      0.01
+      0.01,
+      Infinity
     )!
     expect(dup[0].v).toBe(0)
 
@@ -222,8 +226,64 @@ describe('fitCurve', () => {
 
   it('fits constant values flat', () => {
     const samples = sampleRamp(20, () => 0.5)
-    const knots = fitCurve(samples, 0.01)!
+    const knots = fitCurve(samples, 0.01, Infinity)!
     expect(maxError(knots, samples)).toBeLessThan(1e-6)
+  })
+})
+
+describe('fitCurve step detection', () => {
+  it('ends a run with a step knot when the gap exceeds a frame', () => {
+    const samples = [
+      { t: 0, v: 0.2 },
+      { t: 0.01, v: 0.2 },
+      { t: 0.5, v: 0.8 },
+      { t: 0.51, v: 0.8 }
+    ]
+    const knots = fitCurve(samples, 0.01)!
+    const steps = knots.filter((k) => k.s)
+    expect(steps).toHaveLength(1)
+    expect(steps[0].t).toBeCloseTo(0.01, 9)
+    // Hold across the gap, jump on the next run.
+    expect(evalCurve(knots, 0.4)).toBeCloseTo(0.2, 9)
+    expect(evalCurve(knots, 0.5)).toBeCloseTo(0.8, 9)
+  })
+
+  it('turns a train of isolated events into steps', () => {
+    const samples = [0, 0.5, 1, 1.5].map((t, i) => ({ t, v: i / 3 }))
+    const knots = fitCurve(samples, 0.01)!
+    expect(knots).toHaveLength(4)
+    expect(knots.map((k) => k.s ?? false)).toEqual([true, true, true, false])
+    expect(evalCurve(knots, 0.4)).toBe(0)
+    expect(evalCurve(knots, 1.4)).toBeCloseTo(2 / 3, 9)
+  })
+})
+
+describe('fitCurve extrema', () => {
+  it('keeps a peak exactly, with horizontal handles', () => {
+    const samples = sampleRamp(201, (t) => Math.sin(t * Math.PI))
+    const knots = fitCurve(samples, 0.05)!
+    const peak = knots.find((k) => Math.abs(k.t - 0.5) < 1e-9)!
+    expect(peak).toBeDefined()
+    expect(peak.v).toBe(1)
+    expect(peak.i![1]).toBeCloseTo(0, 12)
+    expect(peak.o![1]).toBeCloseTo(0, 12)
+  })
+
+  it('ignores jitter under the tolerance', () => {
+    // Non-monotone, but every retreat is well under the 0.05 band.
+    const samples = sampleRamp(241, (t) => t * 0.5 + 0.01 * Math.sin(t * 100))
+    const knots = fitCurve(samples, 0.05)!
+    expect(knots).toHaveLength(2)
+  })
+
+  it('still splits a monotone segment when the speed profile misses tolerance', () => {
+    const smooth = (u: number): number => u * u * (3 - 2 * u)
+    const ease = (t: number): number => smooth(Math.min(Math.max((t - 0.4) / 0.2, 0), 1))
+    const samples = sampleRamp(241, ease)
+    const knots = fitCurve(samples, 0.01)!
+    // No extremum here: flat → fast → flat is monotone, the error drives it.
+    expect(knots.length).toBeGreaterThan(2)
+    expect(maxError(knots, samples)).toBeLessThan(0.02)
   })
 })
 

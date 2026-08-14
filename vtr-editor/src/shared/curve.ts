@@ -335,12 +335,78 @@ function fitCubicRec(
 }
 
 /**
+ * Interior extremum indices in pts[first..last]: the running max (or min) is
+ * committed once the value retreats from it by more than `delta` (normalized
+ * v), then the search flips direction. Wiggles under the tolerance raise no
+ * knot — the fit absorbs them anyway.
+ */
+function extremaCuts(pts: XY[], first: number, last: number, delta: number): number[] {
+  const cuts: number[] = []
+  let maxIdx = first
+  let minIdx = first
+  let maxVal = pts[first].y
+  let minVal = pts[first].y
+  let dir = 0 // 0 until the first move past delta decides; +1 rising, -1 falling
+  for (let i = first + 1; i <= last; i++) {
+    const y = pts[i].y
+    if (y > maxVal) {
+      maxVal = y
+      maxIdx = i
+    }
+    if (y < minVal) {
+      minVal = y
+      minIdx = i
+    }
+    const peak = dir >= 0 && y < maxVal - delta
+    const valley = dir <= 0 && y > minVal + delta
+    if (!peak && !valley) continue
+    const idx = peak ? maxIdx : minIdx
+    dir = peak ? -1 : 1
+    // An extremum on the run's first sample is already a knot.
+    if (idx > first) cuts.push(idx)
+    // Restart tracking here: nothing since the extremum went past this value.
+    maxIdx = minIdx = i
+    maxVal = minVal = y
+  }
+  return cuts
+}
+
+/** Append fitted cubics as knots, sharing endpoints. The first cubic opens a
+ *  new knot; later ones adopt the previous tail as their head. */
+function appendSegs(
+  knots: CurveKnot[],
+  segs: [XY, XY, XY, XY][],
+  deN: (p: XY) => { t: number; v: number }
+): void {
+  for (let s = 0; s < segs.length; s++) {
+    const [p0, p1, p2, p3] = segs[s]
+    const k0 = deN(p0)
+    const k3 = deN(p3)
+    const h1 = deN(p1)
+    const h2 = deN(p2)
+    if (s === 0) knots.push({ t: k0.t, v: k0.v })
+    const left = knots[knots.length - 1]
+    left.o = [h1.t - k0.t, h1.v - k0.v]
+    knots.push({ t: k3.t, v: k3.v, i: [h2.t - k3.t, h2.v - k3.v] })
+  }
+}
+
+/**
  * Fit a piecewise cubic bezier to time-sorted (t, v) samples. `maxError` is
  * a distance in normalized space (t scaled by the time span, v by the value
- * range), so tolerance is scale-independent. Duplicate times keep the last
- * sample (OSC last-wins). Returns null for fewer than 2 distinct samples.
+ * range), so tolerance is scale-independent; it doubles as the hysteresis
+ * band for extrema. `frame` is the widest gap (raw seconds) that still counts
+ * as motion: past it the value merely held, so the run ends in a step knot
+ * instead of a bezier inventing motion across the silence. Peaks and valleys
+ * become knots with horizontal handles, so extremes survive exactly.
+ * Duplicate times keep the last sample (OSC last-wins). Returns null for
+ * fewer than 2 distinct samples.
  */
-export function fitCurve(points: { t: number; v: number }[], maxError: number): CurveKnot[] | null {
+export function fitCurve(
+  points: { t: number; v: number }[],
+  maxError: number,
+  frame = 1 / 60
+): CurveKnot[] | null {
   const dedup: { t: number; v: number }[] = []
   for (const p of points) {
     if (dedup.length > 0 && p.t === dedup[dedup.length - 1].t) dedup[dedup.length - 1] = p
@@ -358,24 +424,40 @@ export function fitCurve(points: { t: number; v: number }[], maxError: number): 
   const vSpan = vMax - vMin || 1
   const pts: XY[] = dedup.map((p) => ({ x: (p.t - t0) / tSpan, y: (p.v - vMin) / vSpan }))
 
-  const segs: [XY, XY, XY, XY][] = []
-  const tHat1 = unit(sub(pts[1], pts[0]))
-  const tHat2 = unit(sub(pts[pts.length - 2], pts[pts.length - 1]))
-  fitCubicRec(pts, 0, pts.length - 1, tHat1, tHat2, maxError * maxError, segs)
+  // Runs of continuous motion, cut at gaps wider than a frame.
+  const runs: [number, number][] = []
+  let runStart = 0
+  for (let i = 1; i < dedup.length; i++) {
+    if (dedup[i].t - dedup[i - 1].t > frame) {
+      runs.push([runStart, i - 1])
+      runStart = i
+    }
+  }
+  runs.push([runStart, dedup.length - 1])
 
-  // Cubics → knots (denormalized). Segments share endpoints by construction.
   const deN = (p: XY): { t: number; v: number } => ({ t: t0 + p.x * tSpan, v: vMin + p.y * vSpan })
   const knots: CurveKnot[] = []
-  for (let s = 0; s < segs.length; s++) {
-    const [p0, p1, p2, p3] = segs[s]
-    const k0 = deN(p0)
-    const k3 = deN(p3)
-    const h1 = deN(p1)
-    const h2 = deN(p2)
-    if (s === 0) knots.push({ t: k0.t, v: k0.v })
-    const left = knots[knots.length - 1]
-    left.o = [h1.t - k0.t, h1.v - k0.v]
-    knots.push({ t: k3.t, v: k3.v, i: [h2.t - k3.t, h2.v - k3.v] })
+  for (let r = 0; r < runs.length; r++) {
+    const [first, last] = runs[r]
+    if (first === last) {
+      // Isolated sample: nothing to fit, it just holds until the next run.
+      knots.push({ t: dedup[first].t, v: dedup[first].v })
+    } else {
+      const cuts = [first, ...extremaCuts(pts, first, last, maxError), last]
+      const segs: [XY, XY, XY, XY][] = []
+      for (let c = 0; c + 1 < cuts.length; c++) {
+        const a = cuts[c]
+        const b = cuts[c + 1]
+        // Interior extrema get horizontal tangents (dv = 0 handles); run ends
+        // keep data-derived ones.
+        const tHat1 = c === 0 ? unit(sub(pts[a + 1], pts[a])) : { x: 1, y: 0 }
+        const tHat2 = c + 2 === cuts.length ? unit(sub(pts[b - 1], pts[b])) : { x: -1, y: 0 }
+        fitCubicRec(pts, a, b, tHat1, tHat2, maxError * maxError, segs)
+      }
+      appendSegs(knots, segs, deN)
+    }
+    // Hold to the next run, then jump.
+    if (r + 1 < runs.length) knots[knots.length - 1].s = true
   }
   // Monotone time: fitted tangents can overshoot horizontally.
   clampHandleTimes(knots)
