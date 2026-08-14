@@ -42,8 +42,8 @@ export function useCurveViewport(
     zoomXMaxRef.current = zoomXMax
   }, [zoomXMax])
 
-  // Pinch (ctrl+wheel) or the X slider zooms the time axis; 1 = the time
-  // range fits the panel. The Y slider zooms the value axis; past 1 the
+  // Pinch (ctrl+wheel), cmd+wheel or the X slider zooms the time axis; 1 = the
+  // time range fits the panel. The Y slider zooms the value axis; past 1 the
   // editor scrolls vertically.
   const [zoomX, setZoomX] = useState(1)
   const [zoomY, setZoomY] = useState(1)
@@ -72,7 +72,7 @@ export function useCurveViewport(
     if (!el) return
     const onWheel = (e: WheelEvent): void => {
       const scroll = scrollRef.current
-      if (!e.ctrlKey || !scroll) return
+      if ((!e.ctrlKey && !e.metaKey) || !scroll) return
       e.preventDefault()
       const next = Math.min(
         Math.max(zoomXRef.current * Math.exp(-e.deltaY * 0.01), 1),

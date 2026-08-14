@@ -14,7 +14,7 @@ function jsonl(lines: object[]): string {
   return lines.map((l) => JSON.stringify(l)).join('\n') + '\n'
 }
 
-test('timeline pinch zoom (ctrl+wheel) scales around the cursor', async () => {
+test('timeline zoom (ctrl+wheel pinch, cmd+wheel) scales around the cursor', async () => {
   const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   writeFileSync(
     join(workdir, CLIP),
@@ -51,19 +51,23 @@ test('timeline pinch zoom (ctrl+wheel) scales around the cursor', async () => {
     const width = async (): Promise<number> => (await page.locator('.clip').boundingBox())!.width
 
     const before = await width()
-    const pinch = (deltaY: number): Promise<void> =>
-      page.locator('.timeline-scroll').evaluate((el, dy) => {
-        el.dispatchEvent(
-          new WheelEvent('wheel', {
-            deltaY: dy,
-            ctrlKey: true,
-            clientX: 300,
-            clientY: 100,
-            bubbles: true,
-            cancelable: true
-          })
-        )
-      }, deltaY)
+    const pinch = (deltaY: number, mod: 'ctrl' | 'cmd' = 'ctrl'): Promise<void> =>
+      page.locator('.timeline-scroll').evaluate(
+        (el, { dy, meta }) => {
+          el.dispatchEvent(
+            new WheelEvent('wheel', {
+              deltaY: dy,
+              ctrlKey: !meta,
+              metaKey: meta,
+              clientX: 300,
+              clientY: 100,
+              bubbles: true,
+              cancelable: true
+            })
+          )
+        },
+        { dy: deltaY, meta: mod === 'cmd' }
+      )
 
     // Pinch out (deltaY < 0) zooms in.
     await pinch(-100)
@@ -72,6 +76,14 @@ test('timeline pinch zoom (ctrl+wheel) scales around the cursor', async () => {
     // Pinch in zooms back out.
     await pinch(200)
     await expect.poll(width).toBeLessThan(before * 1.2)
+
+    // Cmd+wheel does the same, for mice with no pinch gesture. The zoom-out
+    // above bottomed out, so this measures against that width, not `before`.
+    const out = await width()
+    await pinch(-100, 'cmd')
+    await expect.poll(width).toBeGreaterThan(out * 2)
+    await pinch(200, 'cmd')
+    await expect.poll(width).toBeLessThanOrEqual(out + 1)
 
     // Curve editor zooms its time axis the same way, anchored at the pointer.
     await page.locator('.clip').click()
@@ -106,6 +118,21 @@ test('timeline pinch zoom (ctrl+wheel) scales around the cursor', async () => {
     await expect.poll(svgWidth).toBeGreaterThan(svgBefore * 6)
     // The time under the cursor stays put.
     expect(await norm()).toBeCloseTo(normBefore, 2)
+
+    // Cmd+wheel zooms the curve editor too: one event back out (÷ e ≈ 2.7).
+    await page.locator('.curve-editor').evaluate((el, x) => {
+      el.dispatchEvent(
+        new WheelEvent('wheel', {
+          deltaY: 100,
+          metaKey: true,
+          clientX: x,
+          clientY: 500,
+          bubbles: true,
+          cancelable: true
+        })
+      )
+    }, clientX)
+    await expect.poll(svgWidth).toBeLessThan(svgBefore * 4)
   } finally {
     await app.close()
   }

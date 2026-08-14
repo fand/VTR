@@ -359,13 +359,14 @@ export function Timeline({
     setMarqueeRect(null)
   }
 
-  // macOS pinch arrives as ctrl+wheel; preventDefault needs a non-passive
-  // listener, which React's onWheel doesn't provide.
+  // Zoom on ctrl+wheel (that's how macOS delivers a pinch) and on cmd+wheel,
+  // for mice. preventDefault needs a non-passive listener, which React's
+  // onWheel doesn't provide.
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
     const onWheel = (e: WheelEvent): void => {
-      if (!e.ctrlKey) return
+      if (!e.ctrlKey && !e.metaKey) return
       e.preventDefault()
       const viewX = e.clientX - el.getBoundingClientRect().left
       pinchAnchor.current = {
