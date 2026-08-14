@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Brackets, Magnet, Maximize2, Pencil, Spline, SquareDashed } from 'lucide-react'
 import type { ClipCurve, ClipEdits, OscEvent } from '../../../shared/types'
 import {
@@ -178,7 +178,8 @@ export function CurvePanel({
   onPointAdd,
   onCurveReplace,
   onInterpolate,
-  onDeleteProps
+  onDeleteProps,
+  selectAllRef
 }: {
   /** Every clip whose events are shown; empty shows the placeholder. */
   clips: ClipInst[]
@@ -211,6 +212,9 @@ export function CurvePanel({
   /** Deletes whole properties (Delete in the list): every visible point plus
    *  each overlay curve in full; one undo entry named after the count. */
   onDeleteProps: (sels: PointSel[], nProps: number) => void
+  /** App writes this pane's Cmd+A action here; it calls back when the curve
+   *  pane has focus. */
+  selectAllRef: React.MutableRefObject<() => void>
 }): React.JSX.Element {
   // Events per clip path; the cache never goes stale (files are immutable).
   const [loaded, setLoaded] = useState<Map<string, OscEvent[]>>(new Map())
@@ -605,6 +609,29 @@ export function CurvePanel({
     updateHover
   })
   const { selBox, marqueeRect } = ia
+
+  // Cmd+A in this pane, two stages: no curve selected picks every curve the
+  // filter shows, then the next press picks all of their points (whatever the
+  // marquee could reach, i.e. interactiveProps).
+  const selectAll = (): void => {
+    if (selectedProps.size === 0) {
+      setSelectedProps(new Set(shown.map((p) => p.key)))
+      return
+    }
+    const seen = new Set<string>()
+    const hits: PointSel[] = []
+    forEachEl(ia.interactiveProps(), (el) => {
+      if (!el.sel || seen.has(selKey(el.sel))) return
+      seen.add(selKey(el.sel))
+      hits.push(el.sel)
+    })
+    onSelectPoints(hits)
+  }
+  // Published through a layout effect, so the shortcut never calls a stale
+  // closure (same rule as useShortcuts' handler ref).
+  useLayoutEffect(() => {
+    selectAllRef.current = selectAll
+  })
 
   // Fit the X zoom to the selected points, else the selected curves (via
   // dimmed()), else everything shown. Vertical zoom stays put.

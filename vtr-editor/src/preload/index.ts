@@ -106,7 +106,16 @@ const api = {
   menu: {
     /** Subscribe to Edit-menu actions (menu accelerators eat their keydowns). */
     on: (
-      channel: 'undo' | 'redo' | 'copy' | 'paste' | 'open' | 'save' | 'saveAs' | 'saveAndClose',
+      channel:
+        | 'undo'
+        | 'redo'
+        | 'copy'
+        | 'paste'
+        | 'selectAll'
+        | 'open'
+        | 'save'
+        | 'saveAs'
+        | 'saveAndClose',
       cb: () => void
     ): (() => void) => {
       const listener = (): void => cb()

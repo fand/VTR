@@ -13,6 +13,8 @@ export interface ShortcutHandlers {
   saveProjectAs: () => Promise<boolean>
   copySelected: () => void
   pasteAtPlayhead: () => void
+  /** Cmd+A; works on the focused pane (clips, curves, then curve points). */
+  selectAll: () => void
   /** Cmd+D; no-op without a clip selection. */
   duplicateSelected: () => void
   togglePlay: () => void
@@ -28,9 +30,10 @@ export interface ShortcutHandlers {
 /**
  * Every window-level shortcut and its app-menu twin, one subscription.
  *
- * Open/save, copy/paste and undo/redo arrive two ways: the app menu (real
- * usage — its accelerators swallow the native keydown) and a keydown
- * fallback (synthetic input, e.g. e2e, never reaches menu accelerators).
+ * Open/save, copy/paste, select all and undo/redo arrive two ways: the app
+ * menu (real usage — its accelerators swallow the native keydown) and a
+ * keydown fallback (synthetic input, e.g. e2e, never reaches menu
+ * accelerators).
  * Exactly one path fires per press. Space/M/Delete/Cmd+D have no menu
  * items: keydown only.
  *
@@ -61,6 +64,9 @@ export function useShortcuts(handlers: ShortcutHandlers): void {
       window.api.menu.on('paste', () => {
         if (!isTextInput(document.activeElement)) ref.current.pasteAtPlayhead()
       }),
+      window.api.menu.on('selectAll', () => {
+        if (!isTextInput(document.activeElement)) ref.current.selectAll()
+      }),
       window.api.menu.on('undo', () => {
         if (isTextInput(document.activeElement)) document.execCommand('undo')
         else ref.current.undo()
@@ -90,6 +96,9 @@ export function useShortcuts(handlers: ShortcutHandlers): void {
           e.preventDefault()
           if (e.shiftKey) h.redo()
           else h.undo()
+        } else if (k === 'a') {
+          e.preventDefault()
+          h.selectAll()
         } else if (k === 'c') h.copySelected()
         else if (k === 'v') h.pasteAtPlayhead()
         else if (k === 'd') {

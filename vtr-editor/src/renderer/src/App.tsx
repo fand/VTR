@@ -672,12 +672,38 @@ function App(): React.JSX.Element {
     setSelectedIds([])
   }, [selectedIds, selectedPoints, deleteSelectedPoints, commit])
 
+  // Cmd+A works on the pane the user last clicked. A ref, not state: nothing
+  // re-renders when focus moves. Clicks outside both panes (header, status
+  // bar) keep the last pane.
+  const focusedPane = useRef<'timeline' | 'curve'>('timeline')
+  useEffect(() => {
+    const onDown = (e: PointerEvent): void => {
+      const el = e.target instanceof Element ? e.target : null
+      if (el?.closest('.curve-panel')) focusedPane.current = 'curve'
+      else if (el?.closest('.timeline-panel')) focusedPane.current = 'timeline'
+    }
+    window.addEventListener('pointerdown', onDown, true)
+    return () => window.removeEventListener('pointerdown', onDown, true)
+  }, [])
+
+  // The curve pane owns its own two-stage select all; it publishes it here.
+  const curveSelectAllRef = useRef<() => void>(() => {})
+
+  const selectAll = useCallback(() => {
+    if (focusedPane.current === 'curve') {
+      curveSelectAllRef.current()
+      return
+    }
+    selectClips(tracks.flatMap((t) => t.clips.map((c) => c.id)))
+  }, [tracks, selectClips])
+
   useShortcuts({
     openProject,
     saveProject,
     saveProjectAs,
     copySelected,
     pasteAtPlayhead,
+    selectAll,
     duplicateSelected,
     togglePlay,
     addMarker,
@@ -977,6 +1003,7 @@ function App(): React.JSX.Element {
         onCurveReplace={onCurveReplace}
         onInterpolate={onInterpolate}
         onDeleteProps={onDeleteProps}
+        selectAllRef={curveSelectAllRef}
       />
       <StatusBar hoverTime={hoverTime} selection={selection} log={log} />
       <TooltipLayer />
