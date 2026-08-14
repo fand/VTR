@@ -64,6 +64,7 @@ interface HoverInfo {
   px: number
   py: number
   anchor: 'start' | 'end'
+  below: boolean
   text: string
 }
 
@@ -78,7 +79,12 @@ const HoverTooltip = React.memo(function HoverTooltip({
   useEffect(() => subscribe(setInfo), [subscribe])
   if (!info) return null
   return (
-    <text className="curve-tooltip" x={info.px + 8} y={info.py - 8} textAnchor={info.anchor}>
+    <text
+      className="curve-tooltip"
+      x={info.px + 8}
+      y={info.below ? info.py + 16 : info.py - 8}
+      textAnchor={info.anchor}
+    >
       {info.text}
     </text>
   )
@@ -556,7 +562,10 @@ export function CurvePanel({
         best = {
           px,
           py,
+          // Flip the tooltip to the other side of the point when it would run
+          // past the edge: left near the right wall, below near the top.
           anchor: px > innerW - 120 ? 'end' : 'start',
+          below: py < 24,
           text: `${el.p.label}: ${fmt(el.v)} @ ${fmt(el.t)}s`
         }
       }
