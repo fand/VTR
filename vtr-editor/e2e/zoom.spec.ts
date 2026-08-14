@@ -250,10 +250,11 @@ test('curve editor fit zoom fits all points, then the selected point', async () 
       page.locator('.curve-scroll').evaluate((el) => el.scrollLeft)
     expect(await scrollLeft()).toBeGreaterThan(0)
 
-    // The points span the viewport width (minus PAD on each side).
+    // The points span the viewport width (minus PAD on each side and the
+    // 10px scrollbar gutter).
     const viewW = await page.locator('.curve-scroll').evaluate((el) => el.clientWidth)
     const xs = (await curvePoints(page)).map((p) => p.x)
-    expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan(viewW - 25)
+    expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan(viewW - 35)
 
     // Select one point: fit clamps to max zoom (50×) and centers on it.
     const pt = (await curvePoints(page))[0]
@@ -261,9 +262,10 @@ test('curve editor fit zoom fits all points, then the selected point', async () 
     await expect.poll(() => curvePoints(page).then((p) => p[0]?.selected)).toBe(true)
     await page.getByLabel('fit zoom').click()
     await expect.poll(svgWidth).toBeGreaterThan(w0 * 45)
+    // Center of the content area: the editor minus the scrollbar gutter.
     const editor = (await page.locator('.curve-editor').boundingBox())!
     const sel = (await curvePoints(page)).find((p) => p.selected)!
-    expect(Math.abs(sel.x - (editor.x + editor.width / 2))).toBeLessThan(5)
+    expect(Math.abs(sel.x - (editor.x + (editor.width - 10) / 2))).toBeLessThan(5)
   } finally {
     await app.close()
   }

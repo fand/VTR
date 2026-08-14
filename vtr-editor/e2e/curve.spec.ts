@@ -1118,13 +1118,15 @@ test('curve seekbar: labels, click/scrub seeks, playhead tracks the timeline', a
     await expect(page.locator('.curve-scroll svg text')).toHaveCount(0)
 
     // Timeline ruler seek to 1s: the curve playhead lands mid-span (the
-    // clip covers 0..2s, so t=1 maps to the editor's horizontal center).
+    // clip covers 0..2s, so t=1 maps to the content's horizontal center;
+    // the content is the editor minus the scrollbar gutter).
     const box = (await ruler.boundingBox())!
+    const innerW = Number(await page.locator('svg.curve-under').getAttribute('width'))
     const line = page.locator('.curve-playhead')
     await page.locator('.ruler').click({ position: { x: 20, y: 10 } })
     await expect(page.locator('.timecode')).toHaveText('00:00:01.000')
     expect(await line.evaluate((el) => parseFloat((el as HTMLElement).style.left))).toBeCloseTo(
-      box.width / 2,
+      innerW / 2,
       0
     )
 

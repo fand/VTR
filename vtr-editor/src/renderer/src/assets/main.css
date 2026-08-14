@@ -1041,6 +1041,28 @@ body {
   overflow-y: auto;
 }
 
+/* Fixed-size classic scrollbars; SCROLLBAR in useCurveViewport.ts reserves
+   this gutter so bottom points never hide under the horizontal bar. */
+.curve-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.curve-scroll::-webkit-scrollbar-track,
+.curve-scroll::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.curve-scroll::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 5px;
+  border: 2px solid var(--bg-lane);
+}
+
+.curve-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--text-dim);
+}
+
 /* Layering: grid svg < curve canvas < overlay svg. The scroll container must
    not create a stacking context, so the z-indexes interleave with the
    viewport-fixed canvas sibling. */

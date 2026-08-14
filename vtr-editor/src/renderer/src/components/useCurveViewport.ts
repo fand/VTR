@@ -28,13 +28,21 @@ export interface CurveViewport {
   applyFit: (fit: { zoomX: number; scrollLeft: number }) => void
 }
 
+/** Size of .curve-scroll's fixed custom scrollbars (main.css). */
+export const SCROLLBAR = 10
+
 export function useCurveViewport(
   editorRef: React.RefObject<HTMLDivElement | null>,
   scrollRef: React.RefObject<HTMLDivElement | null>,
   /** Shown time range in seconds; sets the X-zoom ceiling. */
   tRange: number
 ): CurveViewport {
-  const { w, h } = useElementSize(editorRef)
+  // The drawing viewport reserves the scrollbar gutters: a bar, when shown,
+  // sits beside the content, so the bottom points (innerH - PAD) never hide
+  // under the horizontal bar.
+  const { w: elW, h: elH } = useElementSize(editorRef)
+  const w = Math.max(elW - SCROLLBAR, 0)
+  const h = Math.max(elH - SCROLLBAR, 0)
   const zoomXMax = maxZoomX(w, tRange)
   // For the wheel handler, which is subscribed once.
   const zoomXMaxRef = useRef(zoomXMax)
