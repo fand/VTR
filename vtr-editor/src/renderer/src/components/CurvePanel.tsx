@@ -21,6 +21,7 @@ import {
   buildProperties,
   fmt,
   forEachEl,
+  knotSel,
   MAX_ZOOM,
   ptSel,
   selKey,
@@ -36,6 +37,7 @@ import { MODES, MODE_LABELS, selectionMode, type InterpMode } from './curveMode'
 import { paintCurves } from './curvePaint'
 import { zoomSlider } from './uiScale'
 import { useCurveInteraction } from './useCurveInteraction'
+import { isTextInput } from '../useShortcuts'
 import { useCurveViewport } from './useCurveViewport'
 import { eventsCache } from './eventsCache'
 import type { PlayingState } from './Timeline'
@@ -172,7 +174,8 @@ export function CurvePanel({
   onPointEdit,
   onPointAdd,
   onCurveReplace,
-  onInterpolate
+  onInterpolate,
+  onDeleteProps
 }: {
   /** Every clip whose events are shown; empty shows the placeholder. */
   clips: ClipInst[]
@@ -202,6 +205,9 @@ export function CurvePanel({
    *  conversion carries the selected event points' curves (null when none
    *  are selected), so knot modes and conversions commit together. */
   onInterpolate: (mode: InterpMode, convert: ConvertResult | null) => void
+  /** Deletes whole properties (Delete in the list): every visible point plus
+   *  each overlay curve in full; one undo entry named after the count. */
+  onDeleteProps: (sels: PointSel[], nProps: number) => void
 }): React.JSX.Element {
   // Events per clip path; the cache never goes stale (files are immutable).
   const [loaded, setLoaded] = useState<Map<string, OscEvent[]>>(new Map())
@@ -344,6 +350,23 @@ export function CurvePanel({
 
   // With a property selection, other curves fade out and lose their points.
   const dimmed = (key: string): boolean => selectedProps.size > 0 && !selectedProps.has(key)
+
+  // Delete in the list drops the selected properties: their visible points
+  // (point delete removes the whole event, as ever) and their overlay curves
+  // in full — every source knot goes, so trim-hidden ends can't survive.
+  const deleteSelectedProps = (): void => {
+    const targets = shown.filter((p) => selectedProps.has(p.key))
+    if (targets.length === 0) return
+    const sels: PointSel[] = []
+    for (const p of targets) {
+      for (const pt of p.points) sels.push(ptSel(pt))
+      for (const pc of p.curves) {
+        for (let i = 0; i < pc.src.knots.length; i++) sels.push(knotSel(pc, i))
+      }
+    }
+    onDeleteProps(sels, targets.length)
+    setSelectedProps(new Set())
+  }
 
   const scale: Scale = { tMin, tRange, innerW, innerH }
   const x = (t: number): number => xAt(scale, t)
@@ -781,7 +804,20 @@ export function CurvePanel({
         />
       </div>
       <div className="curve-body">
-        <div className="curve-props">
+        {/* Focusable so a row click lands keyboard focus here: Delete then
+            removes the selected properties, and stopPropagation keeps the
+            window-level shortcut from also deleting points or clips. */}
+        <div
+          className="curve-props"
+          tabIndex={-1}
+          onKeyDown={(e) => {
+            if (e.key !== 'Delete' && e.key !== 'Backspace') return
+            if (isTextInput(e.target) || selectedProps.size === 0) return
+            e.preventDefault()
+            e.stopPropagation()
+            deleteSelectedProps()
+          }}
+        >
           <input
             className="curve-filter"
             type="search"

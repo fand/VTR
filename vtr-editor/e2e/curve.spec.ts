@@ -6,6 +6,7 @@ import {
   curvePoints,
   expectCurveCount,
   expectPointCount,
+  expectPropCounts,
   expectPropDimmed,
   expectPropDrawn,
   expectPropSelected
@@ -1132,6 +1133,99 @@ test('curve seekbar: labels, click/scrub seeks, playhead tracks the timeline', a
     await page.mouse.move(box.x + 2, box.y + 10, { steps: 5 })
     await page.mouse.up()
     await expect(page.locator('.timecode')).toHaveText('00:00:00.000')
+  } finally {
+    await app.close()
+  }
+})
+
+test('curve panel: Delete in the property list removes selected properties', async () => {
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
+  // A dense /fader ramp (enough points to Replace with Curve) plus /xy events.
+  const fader = Array.from({ length: 25 }, (_, i) => ({
+    t: Number((0.1 + i * 0.1).toFixed(4)),
+    port: LISTEN_PORT,
+    a: '/fader',
+    args: [Number((i / 24).toFixed(4))]
+  }))
+  writeFileSync(
+    join(workdir, CLIP),
+    jsonl([
+      { type: 'session_start', t: 0, wall: '2026-07-16T00:00:00Z' },
+      ...fader,
+      { t: 0.5, port: LISTEN_PORT, a: '/xy', args: [0.1, 0.2] },
+      { t: 1.0, port: LISTEN_PORT, a: '/xy', args: [0.3, 0.4] },
+      { type: 'session_end', t: 3 }
+    ])
+  )
+  writeFileSync(
+    join(workdir, 'project.json'),
+    JSON.stringify({
+      version: 1,
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT },
+      duration: 10,
+      tracks: [{ clips: [{ file: CLIP, offset: 0, trimIn: 0, trimOut: 3 }] }]
+    })
+  )
+
+  const app = await electron.launch({
+    args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
+    cwd: workdir,
+    env: {
+      ...process.env,
+      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
+      OSC_EDITOR_HIDDEN: '1',
+      OSC_EDITOR_DATA_DIR: workdir
+    }
+  })
+  try {
+    const page = await app.firstWindow()
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
+    await page.locator('.clip').click()
+    await expect(page.locator('.curve-prop-name')).toHaveText(['/fader', '/xy[0]', '/xy[1]'])
+
+    // Multi-select both /xy properties and Delete: point deletes remove the
+    // whole event, so both args of each /xy event go together.
+    await page.locator('.curve-prop-name', { hasText: '/xy[0]' }).click()
+    await page.locator('.curve-prop-name', { hasText: '/xy[1]' }).click({ modifiers: ['Shift'] })
+    await page.keyboard.press('Delete')
+    await expect(page.locator('.curve-prop-name')).toHaveText(['/fader'])
+    // The clip must survive: the list owned the Delete key.
+    await expect(page.locator('.clip')).toHaveCount(1)
+
+    // One undo entry restores both properties.
+    await page.keyboard.press('ControlOrMeta+z')
+    await expect(page.locator('.curve-prop-name')).toHaveText(['/fader', '/xy[0]', '/xy[1]'])
+
+    // Turn /fader into an overlay curve; property delete must drop the whole
+    // curve record too.
+    await page.locator('.curve-prop-name', { hasText: '/fader' }).click()
+    await page.locator('button[aria-label="replace with curve"]').click()
+    await expectPropCounts(page, '/fader', 0, 1)
+    // The button took focus; re-click the row (deselect + select) to land
+    // keyboard focus back in the list with /fader selected.
+    await page.locator('.curve-prop-name', { hasText: '/fader' }).click()
+    await page.locator('.curve-prop-name', { hasText: '/fader' }).click()
+    await expect(page.locator('.curve-prop.selected')).toHaveCount(1)
+    await page.keyboard.press('Delete')
+    await expect(page.locator('.curve-prop-name')).toHaveText(['/xy[0]', '/xy[1]'])
+    await expect(page.locator('.clip')).toHaveCount(1)
+
+    // The sidecar records the curve's deletion.
+    await page.keyboard.press('ControlOrMeta+s')
+    const sidecar = join(workdir, `${CLIP}.edits.json`)
+    await expect
+      .poll(() => {
+        try {
+          return JSON.parse(readFileSync(sidecar, 'utf8')).curveDel?.['0'] ?? null
+        } catch {
+          return null
+        }
+      })
+      .toBe(true)
+
+    // Undo brings the curve property back.
+    await page.keyboard.press('ControlOrMeta+z')
+    await expectPropCounts(page, '/fader', 0, 1)
   } finally {
     await app.close()
   }

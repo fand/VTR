@@ -7,7 +7,7 @@ import {
   type ClipCurve,
   type PortConfig
 } from '../../shared/types'
-import { CurvePanel, PointAdd, PointPatch } from './components/CurvePanel'
+import { CurvePanel, PointAdd, PointPatch, PointSel } from './components/CurvePanel'
 import { isRefusal, type ConvertResult } from './components/curveConvert'
 import { MODE_LABELS, modePatches, type InterpMode } from './components/curveMode'
 import { addPoints, applyPointPatches, deletePoints, replaceWithCurves } from '../../shared/edits'
@@ -546,6 +546,19 @@ function App(): React.JSX.Element {
     [commit]
   )
 
+  // Property delete from the curve panel's list: the panel already turned
+  // the selected properties into point/knot sels; one undo entry drops them.
+  const onDeleteProps = useCallback(
+    (sels: PointSel[], nProps: number) => {
+      if (sels.length === 0) return
+      commit(`${nProps} ${nProps === 1 ? 'property' : 'properties'} deleted`, (d) =>
+        deletePoints(d.edits, sels)
+      )
+      setSelectedPoints([])
+    },
+    [commit, setSelectedPoints]
+  )
+
   const deleteSelectedPoints = useCallback(() => {
     if (selectedPoints.length === 0) return
     commit(`${count(selectedPoints.length, 'point')} deleted`, (d) =>
@@ -879,6 +892,7 @@ function App(): React.JSX.Element {
         onPointAdd={onPointAdd}
         onCurveReplace={onCurveReplace}
         onInterpolate={onInterpolate}
+        onDeleteProps={onDeleteProps}
       />
       <StatusBar hoverTime={hoverTime} selection={selection} log={log} />
       <TooltipLayer />
