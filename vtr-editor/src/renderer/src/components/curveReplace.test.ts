@@ -12,6 +12,9 @@ function input(
   return { file, eventIndex, ev: { port: 10010, a: '/x', args: [0], types: 'f', ...ev } }
 }
 
+/** n events spread over [0, 1]. Tests that fit a smooth shape need n ≥ 62, or
+ *  the samples land more than a frame apart and the fit reads them as steps.
+ *  65 keeps the spacing (1/64) exact in binary. */
 function ramp(file: string, n: number, f: (t: number) => number): ReplaceInput[] {
   return Array.from({ length: n }, (_, i) => {
     const t = i / (n - 1)
@@ -21,25 +24,25 @@ function ramp(file: string, n: number, f: (t: number) => number): ReplaceInput[]
 
 describe('buildCurveReplace', () => {
   it('fits one curve per address arg and deletes the covered events', () => {
-    const out = buildCurveReplace(ramp('a.jsonl', 20, (t) => t))!
+    const out = buildCurveReplace(ramp('a.jsonl', 65, (t) => t))!
     expect(out.adds).toHaveLength(1)
     const { curve } = out.adds[0]
     expect(curve.a).toBe('/x')
     expect(curve.arg).toBe(0)
     expect(evalCurve(curve.knots, 0.5)).toBeCloseTo(0.5, 2)
-    expect(out.dels).toHaveLength(20)
+    expect(out.dels).toHaveLength(65)
     expect(out.dels[0]).toEqual({ file: 'a.jsonl', eventIndex: 0 })
   })
 
   it('fits every numeric arg of multi-arg events (sibling data survives)', () => {
-    const inputs = Array.from({ length: 20 }, (_, i) => {
-      const t = i / 19
+    const inputs = Array.from({ length: 65 }, (_, i) => {
+      const t = i / 64
       return input('a.jsonl', i, { a: '/xy', t, args: [t, 1 - t], types: 'ff' })
     })
     const out = buildCurveReplace(inputs)!
     expect(out.adds.map((a) => a.curve.arg).sort()).toEqual([0, 1])
     expect(evalCurve(out.adds[1].curve.knots, 0.25)).toBeCloseTo(0.75, 2)
-    expect(out.dels).toHaveLength(20)
+    expect(out.dels).toHaveLength(65)
   })
 
   it('keeps events whose string args differ from the replayed template', () => {

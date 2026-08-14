@@ -5,8 +5,10 @@
 import { fitCurve } from '../../../shared/curve'
 import type { ClipCurve, OscEvent } from '../../../shared/types'
 
-/** Fit tolerance in normalized space (t by group span, v by value range). */
-export const FIT_ERROR = 0.01
+/** Fit tolerance in normalized space (t by group span, v by value range).
+ *  Loose on purpose: the fit pins peaks and valleys as knots, so the in-span
+ *  tolerance only decides how many knots a smooth stretch costs. */
+export const FIT_ERROR = 0.1
 
 /** A selected property needs this many points (per clip) to convert. */
 export const MIN_FIT_POINTS = 3
