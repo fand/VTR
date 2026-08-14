@@ -5,7 +5,9 @@ import {
   MAX_PX_PER_SEC,
   MIN_CLIP_LEN,
   MarkerState,
+  SNAP_PX,
   TrackState,
+  bestSnap,
   clipLen,
   contentEnd,
   formatRulerLabel,
@@ -113,8 +115,6 @@ interface TimelineProps {
 export const LABEL_W = 96
 /** Extra space after the last clip so the timeline's right edge stays visible. */
 export const TAIL_PAD = 100
-/** Snap radius, px: clip edges closer than this lock together. */
-const SNAP_PX = 8
 
 /**
  * Double-click to edit. Enter/blur commits, Escape cancels, empty resets.
@@ -395,24 +395,18 @@ export function Timeline({
     el.scrollLeft = LABEL_W + a.t * pxPerSec - a.viewX
   }, [pxPerSec])
 
-  /** Smallest correction that lands t on another clip's edge, or 0. */
+  /** Smallest correction that lands t on another clip's edge or a whole
+   *  second, or 0. Edges are listed after the second, so they win a tie. */
   const snapAdjust = (t: number, excludeIds: Set<number>): number => {
     if (!snap) return 0
-    let best = 0
-    let bestAbs = SNAP_PX / pxPerSec
+    const candidates = [Math.round(t)]
     for (const track of tracks) {
       for (const c of track.clips) {
         if (excludeIds.has(c.id)) continue
-        for (const edge of [c.offset, c.offset + clipLen(c)]) {
-          const diff = edge - t
-          if (Math.abs(diff) <= bestAbs) {
-            bestAbs = Math.abs(diff)
-            best = diff
-          }
-        }
+        candidates.push(c.offset, c.offset + clipLen(c))
       }
     }
-    return best
+    return bestSnap(t, SNAP_PX / pxPerSec, candidates)
   }
 
   const applyDrag = (e: React.PointerEvent, commit: boolean): void => {

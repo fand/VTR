@@ -787,7 +787,7 @@ test('curve panel: double-click / cmd+click on a curve inserts a point', async (
   }
 })
 
-test('curve header: snap locks drags to the grid, Box toggles the transform box', async () => {
+test('curve header: snap locks drags to seconds/points, Box toggles the transform box', async () => {
   const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
   writeFileSync(
     join(workdir, CLIP),
@@ -825,31 +825,40 @@ test('curve header: snap locks drags to the grid, Box toggles the transform box'
     await page.locator('.clip').click()
     await expectPointCount(page, 3)
 
-    // Snap on: a free drag of the middle point lands on the grid
-    // (0.2s time step, 0.2 value step on the 0–1 axis).
+    // Snap on: dragged times lock onto whole seconds and other datapoints;
+    // values still lock onto the drawn grid (0.2 step on the 0–1 axis).
     const snapBtn = page.locator('.curve-header').getByRole('button', { name: 'Snap' })
     await snapBtn.click()
     await expect(snapBtn).toHaveAttribute('aria-pressed', 'true')
-    const mid = (await curvePoints(page))[1]
+    const pts = await curvePoints(page)
+    const pxPerSec = (pts[2].x - pts[0].x) / (pts[2].t - pts[0].t)
+    const sidecar = join(workdir, `${CLIP}.edits.json`)
+    const saved = (): { t: number; args: Record<string, number> } | null => {
+      try {
+        return JSON.parse(readFileSync(sidecar, 'utf8')).set?.['1'] ?? null
+      } catch {
+        return null
+      }
+    }
+
+    // Dropped 5px short of 1s, the whole second catches it (8px radius).
+    const mid = pts[1]
     await page.mouse.move(mid.x, mid.y)
     await page.mouse.down()
-    await page.mouse.move(mid.x + 50, mid.y - 20, { steps: 5 })
+    await page.mouse.move(mid.x + (1 - mid.t) * pxPerSec - 5, mid.y - 20, { steps: 5 })
     await page.mouse.up()
     await page.keyboard.press('ControlOrMeta+s')
+    await expect.poll(() => saved()?.t ?? null).toBeCloseTo(1.0, 5)
+    expect(saved()!.args['0']).toBeCloseTo(0.6, 5)
 
-    const sidecar = join(workdir, `${CLIP}.edits.json`)
-    await expect
-      .poll(() => {
-        try {
-          return JSON.parse(readFileSync(sidecar, 'utf8')).set?.['1'] ?? null
-        } catch {
-          return null
-        }
-      })
-      .not.toBeNull()
-    const set1 = JSON.parse(readFileSync(sidecar, 'utf8')).set['1']
-    expect(set1.t).toBeCloseTo(1.0, 5)
-    expect(set1.args['0']).toBeCloseTo(0.6, 5)
+    // Same radius around the next datapoint (1.4s), nowhere near a whole second.
+    const moved = (await curvePoints(page))[1]
+    await page.mouse.move(moved.x, moved.y)
+    await page.mouse.down()
+    await page.mouse.move(moved.x + (1.4 - moved.t) * pxPerSec - 5, moved.y, { steps: 5 })
+    await page.mouse.up()
+    await page.keyboard.press('ControlOrMeta+s')
+    await expect.poll(() => saved()?.t ?? null).toBeCloseTo(1.4, 5)
 
     // Box off: multi-selecting no longer shows the transform box.
     const editor = (await page.locator('.curve-editor').boundingBox())!

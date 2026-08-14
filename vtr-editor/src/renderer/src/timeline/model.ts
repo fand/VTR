@@ -179,6 +179,28 @@ export function pickStep(
 /** Min px between time ticks; fits a `formatRulerLabel` HH:MM:SS.mmm label. */
 export const TIME_TICK_MIN_PX = 90
 
+/** How close a snap target has to be to catch a drag, in screen px. Shared by
+ *  the timeline and the curve editor, so both feel the same. */
+export const SNAP_PX = 8
+
+/**
+ * Smallest correction that lands t on a candidate within radius, or 0 when
+ * none is close enough. Candidates are compared in order, so a later one only
+ * wins a tie. Backs both snapping drags: clip edges, datapoints, whole seconds.
+ */
+export function bestSnap(t: number, radius: number, candidates: Iterable<number>): number {
+  let best = 0
+  let bestAbs = radius
+  for (const c of candidates) {
+    const diff = c - t
+    if (Math.abs(diff) <= bestAbs) {
+      bestAbs = Math.abs(diff)
+      best = diff
+    }
+  }
+  return best
+}
+
 export const MIN_PX_PER_SEC = 2
 /** Zoom ceiling: one 60fps frame spans 24px, so max zoom resolves single frames. */
 export const MAX_PX_PER_SEC = 24 * 60

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  bestSnap,
   formatRulerLabel,
   formatTimecode,
   gridStep,
@@ -77,6 +78,28 @@ describe('gridStep', () => {
 
   it('falls back to the coarsest step when zoomed all the way out', () => {
     expect(gridStep(1e6, 100, TIME_TICK_MIN_PX)).toBe(120)
+  })
+})
+
+describe('bestSnap', () => {
+  it('returns the correction onto the nearest candidate', () => {
+    expect(bestSnap(2.05, 0.4, [1, 2, 4])).toBeCloseTo(-0.05, 9)
+    expect(bestSnap(2.05, 0.4, [4, 2, 1])).toBeCloseTo(-0.05, 9)
+    expect(bestSnap(1.9, 0.4, [2, 1.95])).toBeCloseTo(0.05, 9)
+  })
+
+  it('ignores candidates outside the radius', () => {
+    expect(bestSnap(2.5, 0.4, [2, 3])).toBe(0)
+    expect(bestSnap(2.5, 0.5, [2, 3])).toBe(0.5)
+  })
+
+  it('is a no-op without candidates', () => {
+    expect(bestSnap(2.5, 0.4, [])).toBe(0)
+  })
+
+  it('lets a later candidate win a tie', () => {
+    expect(bestSnap(2.5, 1, [2, 3])).toBe(0.5)
+    expect(bestSnap(2.5, 1, [3, 2])).toBe(-0.5)
   })
 })
 

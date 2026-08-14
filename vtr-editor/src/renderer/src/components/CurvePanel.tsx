@@ -2,10 +2,12 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Brackets, Magnet, Maximize2, Pencil, Spline, SquareDashed } from 'lucide-react'
 import type { ClipCurve, ClipEdits, OscEvent } from '../../../shared/types'
 import {
+  bestSnap,
   ClipInst,
   clipLen,
   formatRulerLabel,
   gridStep,
+  SNAP_PX,
   stepDecimals,
   TIME_TICK_MIN_PX,
   type TrackState
@@ -489,11 +491,34 @@ export function CurvePanel({
     if (rep) onCurveReplace(rep.dels, rep.adds)
   }
 
-  // Snap on: dragged times/values lock onto the same grid the editor draws.
+  // Snap targets that don't depend on the dragged time: the shown clips' edges
+  // and every visible datapoint outside the selection — the moving points must
+  // not attract the drag, or it would just stick where it started. Time lives
+  // on the event, so a selected point drags its siblings (the other args) too.
+  const snapTargets = useMemo(() => {
+    const out: number[] = []
+    for (const c of clips) out.push(c.offset, c.offset + clipLen(c))
+    const movingEvents = new Set(
+      selectedPoints
+        .filter((s): s is EventPointSel => !('curveIndex' in s))
+        .map((s) => `${s.file}:${s.eventIndex}`)
+    )
+    forEachEl(shown, (el) => {
+      if (hidden.has(el.p.key)) return
+      if (el.pt && movingEvents.has(`${el.pt.clip.file}:${el.pt.eventIndex}`)) return
+      if (el.sel && selKeys.has(selKey(el.sel))) return
+      out.push(el.t)
+    })
+    return out
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- clipsKey covers clips
+  }, [clipsKey, shown, hidden, selKeys, selectedPoints])
+
+  // Snap on: dragged times lock onto clip edges, nearby datapoints and
+  // whole seconds; dragged values still lock onto the grid the editor draws.
   const snapTime = (t: number): number => {
     if (!snap) return t
-    const step = gridStep(tRange, innerW - 2 * PAD, TIME_TICK_MIN_PX)
-    return Math.round(t / step) * step
+    const radius = (SNAP_PX * tRange) / Math.max(innerW - 2 * PAD, 1)
+    return t + bestSnap(t, radius, [Math.round(t), ...snapTargets])
   }
   const snapValue = (v: number, min: number, max: number): number => {
     if (!snap || max <= min) return v
