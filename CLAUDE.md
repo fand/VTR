@@ -26,10 +26,15 @@ cd vtr-editor
 npm run dev                         # optionally: -- path/to/project.oscproj
 npm run lint / typecheck / test:unit
 npx vitest run src/main/merge.test.ts        # single unit test file
-npm run test:e2e                    # playwright; needs vtr-tap debug build
+npm run test:e2e                    # playwright; needs the rust debug build (cargo build)
 npx playwright test e2e/app.spec.ts          # single e2e spec
 RUN_LAUNCHD=1 npx playwright test e2e/launchd.spec.ts   # launchd agent test (opt-in)
 ```
+
+Every e2e spec launches through `e2e/env.ts`'s `e2eEnv(base, workdir)`: its own
+port block (base +0 listen, +1 forward, +2 echo, +3 relay) and its own data dir,
+so a running dev instance never collides with the run. Give a new spec a base
+no other spec uses.
 
 # Architecture
 

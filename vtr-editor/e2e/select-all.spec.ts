@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expectPointCount } from './curveHooks'
+import { e2eEnv } from './env'
 
 // Suite-specific ports so a running dev instance (default 10010-10012) never collides.
 const LISTEN_PORT = 16310
@@ -12,12 +13,6 @@ const CLIP = 'clip-a.jsonl'
 
 function jsonl(lines: object[]): string {
   return lines.map((l) => JSON.stringify(l)).join('\n') + '\n'
-}
-
-const ENV = {
-  ...process.env,
-  VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
-  OSC_EDITOR_HIDDEN: '1'
 }
 
 test('select all: Cmd+A selects every clip with the timeline focused', async () => {
@@ -48,7 +43,7 @@ test('select all: Cmd+A selects every clip with the timeline focused', async () 
   const app = await electron.launch({
     args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
     cwd: workdir,
-    env: { ...ENV, OSC_EDITOR_DATA_DIR: workdir }
+    env: e2eEnv(LISTEN_PORT, workdir)
   })
   try {
     const page = await app.firstWindow()
@@ -104,7 +99,7 @@ test('select all: Cmd+A in the curve pane takes curves, then their points', asyn
   const app = await electron.launch({
     args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
     cwd: workdir,
-    env: { ...ENV, OSC_EDITOR_DATA_DIR: workdir }
+    env: e2eEnv(LISTEN_PORT, workdir)
   })
   try {
     const page = await app.firstWindow()

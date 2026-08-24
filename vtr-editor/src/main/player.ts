@@ -1,12 +1,12 @@
 import { join } from 'path'
 import {
-  RELAY_PORT,
   type ClipCurve,
   type OscEvent,
   type PlayerStatus,
   type TransportState
 } from '../shared/types'
 import { ControlChannel } from './controlChannel'
+import { relayPort } from './ports'
 import { ChildSupervisor } from './supervisor'
 
 const REQUEST_TIMEOUT_MS = 3000
@@ -83,7 +83,7 @@ export class PlayerManager {
   private playerArgs(): string[] {
     return [
       '--relay',
-      `127.0.0.1:${RELAY_PORT}`,
+      `127.0.0.1:${relayPort()}`,
       '--control',
       this.sockPath,
       '--echo-port',

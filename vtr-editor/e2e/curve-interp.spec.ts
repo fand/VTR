@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { curveKnots, curvePoints, expectPropCounts } from './curveHooks'
+import { e2eEnv } from './env'
 
 // Suite-specific ports so a running dev instance (default 10010-10012) never collides.
 const LISTEN_PORT = 14450
@@ -54,12 +55,7 @@ test('curve header: value input and interpolation dropdown', async () => {
   const app = await electron.launch({
     args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
     cwd: workdir,
-    env: {
-      ...process.env,
-      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
-      OSC_EDITOR_HIDDEN: '1',
-      OSC_EDITOR_DATA_DIR: workdir
-    }
+    env: e2eEnv(LISTEN_PORT, workdir)
   })
   try {
     const page = await app.firstWindow()

@@ -3,6 +3,7 @@ import dgram from 'node:dgram'
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { e2eEnv } from './env'
 
 // Suite-specific ports so a running dev instance (default 10010-10012) never collides.
 const LISTEN_PORT = 14010
@@ -44,12 +45,7 @@ async function launchApp(): Promise<Launched> {
   const app = await electron.launch({
     args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
     cwd: workdir,
-    env: {
-      ...process.env,
-      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
-      OSC_EDITOR_HIDDEN: '1',
-      OSC_EDITOR_DATA_DIR: workdir
-    }
+    env: e2eEnv(LISTEN_PORT, workdir)
   })
   app.process().stdout?.on('data', (d) => console.log(`[main] ${d.toString().trimEnd()}`))
   app.process().stderr?.on('data', (d) => console.log(`[main!] ${d.toString().trimEnd()}`))
@@ -200,12 +196,7 @@ test('boot: no CLI arg → empty project; broken arg → error + empty project',
       tracks: [{ clips: [] }]
     })
   )
-  const env = {
-    ...process.env,
-    VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
-    OSC_EDITOR_HIDDEN: '1',
-    OSC_EDITOR_DATA_DIR: workdir
-  }
+  const env = e2eEnv(LISTEN_PORT, workdir)
   const app = await electron.launch({
     args: [join(__dirname, '../out/main/index.js')],
     cwd: workdir,
@@ -253,12 +244,7 @@ test('tracks can be added and deleted without clips', async () => {
     const relaunch = await electron.launch({
       args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
       cwd: workdir,
-      env: {
-        ...process.env,
-        VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
-        OSC_EDITOR_HIDDEN: '1',
-        OSC_EDITOR_DATA_DIR: workdir
-      }
+      env: e2eEnv(LISTEN_PORT, workdir)
     })
     const page2 = await relaunch.firstWindow()
     await expect(page2.locator('.track')).toHaveCount(1)

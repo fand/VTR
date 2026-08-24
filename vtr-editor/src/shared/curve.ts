@@ -191,6 +191,11 @@ export function clampHandleTimes(knots: CurveKnot[]): void {
 // ---------------------------------------------------------------------------
 // Schneider least-squares fit.
 
+/** A gap this many times the stream's median gap reads as "the value held",
+ *  not as motion. Loose enough for a jittery sender, tight enough that a
+ *  real pause still ends the run. */
+const HOLD_FACTOR = 3
+
 const sub = (a: XY, b: XY): XY => ({ x: a.x - b.x, y: a.y - b.y })
 const add = (a: XY, b: XY): XY => ({ x: a.x + b.x, y: a.y + b.y })
 const scale = (a: XY, s: number): XY => ({ x: a.x * s, y: a.y * s })
@@ -396,11 +401,13 @@ function appendSegs(
  * a distance in normalized space (t scaled by the time span, v by the value
  * range), so tolerance is scale-independent. The extrema hysteresis band is
  * min(maxError, 0.03): decoupled above that, or a loose tolerance would also
- * flatten every shallow peak. `frame` is the widest gap (raw seconds) that
- * still counts
- * as motion: past it the value merely held, so the run ends in a step knot
- * instead of a bezier inventing motion across the silence. Peaks and valleys
- * become knots with horizontal handles, so extremes survive exactly.
+ * flatten every shallow peak. A gap wider than the hold threshold ends a run
+ * in a step knot instead of a bezier inventing motion across the silence.
+ * That threshold comes from the stream's own cadence (median gap ×
+ * HOLD_FACTOR, never below `frame`): a controller sending at 10Hz draws
+ * curves like one at 60Hz, and per-sample jitter around the frame time never
+ * shreds a dense run. Peaks and valleys become knots with horizontal
+ * handles, so extremes survive exactly.
  * Duplicate times keep the last sample (OSC last-wins). Returns null for
  * fewer than 2 distinct samples.
  */
@@ -426,11 +433,14 @@ export function fitCurve(
   const vSpan = vMax - vMin || 1
   const pts: XY[] = dedup.map((p) => ({ x: (p.t - t0) / tSpan, y: (p.v - vMin) / vSpan }))
 
-  // Runs of continuous motion, cut at gaps wider than a frame.
+  // Runs of continuous motion, cut where the stream stopped sending.
+  const gaps = dedup.slice(1).map((p, i) => p.t - dedup[i].t)
+  const median = gaps.sort((a, b) => a - b)[gaps.length >> 1]
+  const hold = Math.max(frame, median * HOLD_FACTOR)
   const runs: [number, number][] = []
   let runStart = 0
   for (let i = 1; i < dedup.length; i++) {
-    if (dedup[i].t - dedup[i - 1].t > frame) {
+    if (dedup[i].t - dedup[i - 1].t > hold) {
       runs.push([runStart, i - 1])
       runStart = i
     }

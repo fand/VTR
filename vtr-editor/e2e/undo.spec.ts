@@ -2,10 +2,11 @@ import { _electron as electron, ElectronApplication, expect, test } from '@playw
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { e2eEnv } from './env'
 
 // Suite-specific ports so a running dev instance (default 10010-10012) never collides.
-const LISTEN_PORT = 14510
-const FORWARD_PORT = 14511
+const LISTEN_PORT = 16610
+const FORWARD_PORT = 16611
 
 const CLIP = 'clip-a.jsonl'
 const MOD = process.platform === 'darwin' ? 'Meta' : 'Control'
@@ -18,12 +19,7 @@ function launch(workdir: string, projectPath?: string): Promise<ElectronApplicat
   return electron.launch({
     args: [join(__dirname, '../out/main/index.js'), projectPath ?? join(workdir, 'project.json')],
     cwd: workdir,
-    env: {
-      ...process.env,
-      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
-      OSC_EDITOR_HIDDEN: '1',
-      OSC_EDITOR_DATA_DIR: workdir
-    }
+    env: e2eEnv(LISTEN_PORT, workdir)
   })
 }
 

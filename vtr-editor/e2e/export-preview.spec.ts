@@ -3,6 +3,8 @@ import dgram from 'node:dgram'
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { e2eEnv } from './env'
+import { stopTransport } from './transport'
 
 // Suite-specific ports so a running dev instance never collides.
 const LISTEN_PORT = 14110
@@ -37,18 +39,12 @@ async function launchApp(): Promise<{ app: ElectronApplication; page: Page; work
   const app = await electron.launch({
     args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
     cwd: workdir,
-    env: {
-      ...process.env,
-      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
-      // Preview is delegated to vtr-player; findBinary can't see the cargo
-      // tree from out/main, so point straight at the debug build.
-      VTR_PLAYER_BIN: join(__dirname, '../../target/debug/vtr-player'),
-      OSC_EDITOR_HIDDEN: '1',
-      OSC_EDITOR_DATA_DIR: workdir
-    }
+    env: e2eEnv(LISTEN_PORT, workdir)
   })
   const page = await app.firstWindow()
   await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
+  // Preview is the player's job: a Play click before it answers is a no-op.
+  await expect(page.locator('.stat', { hasText: 'player:' })).toHaveText(/on/, { timeout: 15_000 })
   return { app, page, workdir }
 }
 
@@ -60,6 +56,8 @@ async function recordClip(page: Page, sock: dgram.Socket, n: number): Promise<vo
   }
   await page.getByRole('button', { name: 'Stop' }).click()
   await expect(page.locator('.clip:not(.recording)')).toHaveCount(1)
+  // The take left the transport playing; these tests drive it themselves.
+  await stopTransport(page)
 }
 
 test('export writes merged session.jsonl', async () => {
@@ -139,8 +137,11 @@ test('preview replays events to TD port with original spacing', async () => {
     // Playback runs to the timeline end; keep it short so auto-stop happens fast.
     await page.getByLabel('timeline duration').fill('2')
     await page.getByLabel('timeline duration').press('Enter')
-    // Space in a focused field must not toggle playback.
+    // Space in a focused field must not toggle playback. The field focuses on
+    // pointer release (it doubles as a drag handle), so wait for that first —
+    // pressing into an unfocused field would test nothing.
     await page.getByLabel('timeline duration').click()
+    await expect(page.getByLabel('timeline duration')).toBeFocused()
     await page.keyboard.press('Space')
     await expect(page.getByRole('button', { name: 'Play' })).toBeVisible()
     await page.keyboard.press('Enter') // blur; the space-only draft reverts to 2
