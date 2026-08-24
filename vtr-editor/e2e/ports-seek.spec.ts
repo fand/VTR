@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { e2eEnv } from './env'
+import { stopTransport } from './transport'
 
 // Suite-specific ports so a running dev instance never collides.
 const LISTEN_PORT = 14210
@@ -63,10 +64,12 @@ test('seek: ruler click, lane click, scrub', async () => {
     }
     await page.getByRole('button', { name: 'Stop' }).click()
     await expect(page.locator('.clip:not(.recording)')).toHaveCount(1)
+    // The take left the transport playing: park it, or the playhead drifts
+    // out from under the seek assertions below.
+    await stopTransport(page)
 
-    // The playhead's left is the label column plus the click x. Measure that
-    // column instead of assuming 96: it lands on a fractional pixel on some
-    // displays, and a hardcoded width then misses by ~1px.
+    // The playhead's left is the label column plus the click x — measured,
+    // not assumed to be exactly 96.
     const scroll = (await page.locator('.timeline-scroll').boundingBox())!
     const labelW = (await page.locator('.ruler').boundingBox())!.x - scroll.x
 
@@ -244,6 +247,9 @@ test('ports editable in header; tap restarts on new ports', async () => {
     }
     await page.getByRole('button', { name: 'Stop' }).click()
     await expect(page.locator('.clip:not(.recording)')).toHaveCount(1)
+    // The take left the transport playing: park it, or the playhead drifts
+    // out from under the seek assertions below.
+    await stopTransport(page)
     await expect(page.locator('.clip-meta').first()).toContainText('5 ev')
     expect(forwarded.length).toBe(5)
 

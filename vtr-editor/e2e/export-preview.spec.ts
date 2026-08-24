@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { e2eEnv } from './env'
+import { stopTransport } from './transport'
 
 // Suite-specific ports so a running dev instance never collides.
 const LISTEN_PORT = 14110
@@ -55,6 +56,8 @@ async function recordClip(page: Page, sock: dgram.Socket, n: number): Promise<vo
   }
   await page.getByRole('button', { name: 'Stop' }).click()
   await expect(page.locator('.clip:not(.recording)')).toHaveCount(1)
+  // The take left the transport playing; these tests drive it themselves.
+  await stopTransport(page)
 }
 
 test('export writes merged session.jsonl', async () => {
