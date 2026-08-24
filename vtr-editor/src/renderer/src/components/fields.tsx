@@ -65,12 +65,20 @@ export function NumField({
               onCommit(d.last)
             }
           },
-          // Cancelled scrub: commit the last streamed value (like release),
-          // so no transient is left dangling. No focus on cancel.
-          onPointerCancel: () => {
+          // Cancelled gesture: commit the last streamed value (like release),
+          // so no transient is left dangling. A cancel that never moved was
+          // still a click on the field — focus it, or the press that follows
+          // goes to the window as a shortcut.
+          onPointerCancel: (e: React.PointerEvent<HTMLInputElement>) => {
             const d = drag.current
             drag.current = null
-            if (d?.moved && onInput && d.last !== d.start) onCommit(d.last)
+            if (!d) return
+            if (!d.moved) {
+              e.currentTarget.focus()
+              e.currentTarget.select()
+            } else if (onInput && d.last !== d.start) {
+              onCommit(d.last)
+            }
           }
         }
       : {}

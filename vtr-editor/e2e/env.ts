@@ -11,9 +11,11 @@ export function e2eEnv(
   base: number,
   workdir: string,
   extra: Record<string, string> = {}
-): Record<string, string | undefined> {
+): Record<string, string> {
+  const inherited: Record<string, string> = {}
+  for (const [k, v] of Object.entries(process.env)) if (v != null) inherited[k] = v
   return {
-    ...process.env,
+    ...inherited,
     VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
     // Preview is delegated to vtr-player; findBinary can't see the cargo
     // tree from out/main, so point straight at the debug build.
