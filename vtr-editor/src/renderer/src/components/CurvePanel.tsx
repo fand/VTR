@@ -241,7 +241,7 @@ export function CurvePanel({
   // 0..1; show the transform box; pencil (clicks add points to the selected
   // curve).
   const [snap, setSnap] = useState(false)
-  const [limit, setLimit] = useState(false)
+  const [limit, setLimit] = useState(true)
   const [useBox, setUseBox] = useState(true)
   const [pencil, setPencil] = useState(false)
   // Selected properties: their curves draw thicker and win the hover tooltip.
