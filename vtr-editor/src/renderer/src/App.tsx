@@ -181,6 +181,17 @@ function App(): React.JSX.Element {
   // snapshot must not re-import a clip whose track the user deleted.
   const importedClips = useRef(new Set<string>())
 
+  // Playhead the current take started from, for clips the clock never stamped.
+  const playheadRef = useRef(playhead)
+  useEffect(() => {
+    playheadRef.current = playhead
+  }, [playhead])
+  const getPlayhead = useCallback(() => playheadRef.current, [])
+  const recStart = useRef<{ clip: string; playhead: number } | null>(null)
+  const onRecStarted = useCallback((clip: string, at: number) => {
+    recStart.current = { clip, playhead: at }
+  }, [])
+
   const maybeImportClip = useCallback(
     async (clipPath: string): Promise<void> => {
       const name = clipPath.split(/[\\/]/).pop() ?? clipPath
@@ -223,7 +234,7 @@ function App(): React.JSX.Element {
 
   const importClip = useCallback((p: string) => void maybeImportClip(p), [maybeImportClip])
   const { status, statusError, playerStatus, rxRate, recording, busy, toggleRecord } = useTapStatus(
-    { bootDone, importClip, setError, setLog }
+    { bootDone, importClip, getPlayhead, onRecStarted, setError, setLog }
   )
 
   // Tracks live independently of clips: emptying one no longer removes it.
