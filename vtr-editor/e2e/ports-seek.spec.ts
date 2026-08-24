@@ -42,6 +42,8 @@ async function launchApp(): Promise<{ app: ElectronApplication; page: Page; work
   })
   const page = await app.firstWindow()
   await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
+  // Seeks and playback go through the player: wait for it before driving them.
+  await expect(page.locator('.stat', { hasText: 'player:' })).toHaveText(/on/, { timeout: 15_000 })
   return { app, page, workdir }
 }
 
@@ -62,15 +64,20 @@ test('seek: ruler click, lane click, scrub', async () => {
     await page.getByRole('button', { name: 'Stop' }).click()
     await expect(page.locator('.clip:not(.recording)')).toHaveCount(1)
 
-    // Ruler click at x=200 → playhead at 96 + 200.
+    // The playhead's left is the label column plus the click x. Measure that
+    // column instead of assuming 96: it lands on a fractional pixel on some
+    // displays, and a hardcoded width then misses by ~1px.
+    const scroll = (await page.locator('.timeline-scroll').boundingBox())!
+    const labelW = (await page.locator('.ruler').boundingBox())!.x - scroll.x
+
+    // Ruler click at x=200.
     await page.locator('.ruler').click({ position: { x: 200, y: 10 } })
-    expect(await playheadLeft(page)).toBeCloseTo(296, 0)
+    expect(await playheadLeft(page)).toBeCloseTo(labelW + 200, 0)
     await expect(page.locator('.timecode')).toHaveText('00:00:10.000')
 
     // The head triangle sits centered on the line, at the ruler's top.
     const head = (await page.locator('.playhead-head').boundingBox())!
-    const scroll = (await page.locator('.timeline-scroll').boundingBox())!
-    expect(head.x + head.width / 2 - scroll.x).toBeCloseTo(296.5, 0)
+    expect(head.x + head.width / 2 - scroll.x).toBeCloseTo(labelW + 200.5, 0)
     expect(head.y).toBeCloseTo(scroll.y, 0)
 
     // Empty lane click at x=300.
@@ -78,7 +85,7 @@ test('seek: ruler click, lane click, scrub', async () => {
       .locator('.track-lane')
       .first()
       .click({ position: { x: 300, y: 55 } })
-    expect(await playheadLeft(page)).toBeCloseTo(396, 0)
+    expect(await playheadLeft(page)).toBeCloseTo(labelW + 300, 0)
 
     // Scrub: drag along the ruler.
     const ruler = page.locator('.ruler')
@@ -87,7 +94,7 @@ test('seek: ruler click, lane click, scrub', async () => {
     await page.mouse.down()
     await page.mouse.move(box.x + 150, box.y + 10, { steps: 5 })
     await page.mouse.up()
-    expect(await playheadLeft(page)).toBeCloseTo(246, 0)
+    expect(await playheadLeft(page)).toBeCloseTo(labelW + 150, 0)
   } finally {
     sock.close()
     await app.close()

@@ -42,6 +42,8 @@ async function launchApp(): Promise<{ app: ElectronApplication; page: Page; work
   })
   const page = await app.firstWindow()
   await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
+  // Preview is the player's job: a Play click before it answers is a no-op.
+  await expect(page.locator('.stat', { hasText: 'player:' })).toHaveText(/on/, { timeout: 15_000 })
   return { app, page, workdir }
 }
 
