@@ -3,7 +3,14 @@ import { maskIntervals, maskKey } from '../../../shared/trackMask'
 import type { Interval } from '../../../shared/trackMask'
 import type { ClipCurve, ClipEdits, OscEvent } from '../../../shared/types'
 import type { ClipInst } from '../timeline/model'
-import { buildProperties, type MaskCtx } from './curveModel'
+import {
+  buildProperties,
+  hasProperty,
+  newPropertyEvent,
+  normalizePropName,
+  type MaskCtx,
+  type Property
+} from './curveModel'
 
 const PORT = 9000
 const A = '/f'
@@ -241,5 +248,50 @@ describe('buildProperties resume', () => {
       { t: 2, v: 0.7 },
       { t: 3, v: 0.8 }
     ])
+  })
+})
+
+describe('normalizePropName', () => {
+  it('trims and prepends the slash', () => {
+    expect(normalizePropName('  /a/b  ')).toBe('/a/b')
+    expect(normalizePropName('a/b')).toBe('/a/b')
+  })
+
+  it('rejects empty and whitespace-only names', () => {
+    expect(normalizePropName('')).toBeNull()
+    expect(normalizePropName('   ')).toBeNull()
+  })
+
+  it('rejects inner whitespace', () => {
+    expect(normalizePropName('/a b')).toBeNull()
+    expect(normalizePropName('/a\tb')).toBeNull()
+  })
+
+  it('rejects the /vtr control namespace', () => {
+    expect(normalizePropName('/vtr/clock')).toBeNull()
+    expect(normalizePropName('vtr/clock')).toBeNull()
+    expect(normalizePropName('/vtrx')).toBeNull()
+  })
+})
+
+describe('hasProperty', () => {
+  const props = [{ key: '/ab 0' }, { key: '/c 0' }, { key: '/c 1' }] as Property[]
+
+  it('matches the address part exactly', () => {
+    expect(hasProperty(props, '/c')).toBe(true)
+    expect(hasProperty(props, '/ab')).toBe(true)
+    expect(hasProperty(props, '/a')).toBe(false)
+    expect(hasProperty(props, '/abc')).toBe(false)
+    expect(hasProperty([], '/c')).toBe(false)
+  })
+})
+
+describe('newPropertyEvent', () => {
+  it('lands one zero-valued point at the clip head', () => {
+    const c = { ...clip(1, 5, 10), trimIn: 2 }
+    const add = newPropertyEvent(c, [ev(0, 0), ev(1, 1)], 3, '/new', 9100)
+    expect(add.ev).toEqual({ t: 2, port: 9100, a: '/new', types: 'f', args: [0] })
+    // Overlay adds sit after the file's own events, in append order.
+    expect(add.sel).toEqual({ file: 'c1.jsonl', eventIndex: 5, argIndex: 0 })
   })
 })
