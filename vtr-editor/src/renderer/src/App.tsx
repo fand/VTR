@@ -1003,6 +1003,7 @@ function App(): React.JSX.Element {
         onCurveReplace={onCurveReplace}
         onInterpolate={onInterpolate}
         onDeleteProps={onDeleteProps}
+        defaultPort={ports.listen}
         selectAllRef={curveSelectAllRef}
       />
       <StatusBar hoverTime={hoverTime} selection={selection} log={log} />

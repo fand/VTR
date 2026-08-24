@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Brackets, Magnet, Maximize2, Pencil, Spline, SquareDashed } from 'lucide-react'
+import { Brackets, Magnet, Maximize2, Pencil, Plus, Spline, SquareDashed } from 'lucide-react'
 import type { ClipCurve, ClipEdits, OscEvent } from '../../../shared/types'
 import {
   bestSnap,
@@ -24,8 +24,11 @@ import {
   buildProperties,
   fmt,
   forEachEl,
+  hasProperty,
   knotSel,
   MAX_ZOOM,
+  newPropertyEvent,
+  normalizePropName,
   ptSel,
   selKey,
   type CurvePoint,
@@ -185,6 +188,7 @@ export function CurvePanel({
   onCurveReplace,
   onInterpolate,
   onDeleteProps,
+  defaultPort,
   selectAllRef
 }: {
   /** Every clip whose events are shown; empty shows the placeholder. */
@@ -218,6 +222,9 @@ export function CurvePanel({
   /** Deletes whole properties (Delete in the list): every visible point plus
    *  each overlay curve in full; one undo entry named after the count. */
   onDeleteProps: (sels: PointSel[], nProps: number) => void
+  /** Port a hand-added property sends on when no clip event suggests one
+   *  (App passes the tap's listen port). */
+  defaultPort: number
   /** App writes this pane's Cmd+A action here; it calls back when the curve
    *  pane has focus. */
   selectAllRef: React.MutableRefObject<() => void>
@@ -228,6 +235,8 @@ export function CurvePanel({
   const [hidden, setHidden] = useState<Set<string>>(new Set())
   // Name filter: narrows the property list and the drawn curves.
   const [filter, setFilter] = useState('')
+  // Typed name of the property the pinned add row would create.
+  const [draft, setDraft] = useState('')
   // Header toggles: snap point edits to the grid; limit dragged values to
   // 0..1; show the transform box; pencil (clicks add points to the selected
   // curve).
@@ -379,6 +388,32 @@ export function CurvePanel({
     }
     onDeleteProps(sels, targets.length)
     setSelectedProps(new Set())
+  }
+
+  // A brand-new property is one point at the head of the first shown clip.
+  // Only a clip whose events arrived can take it: the append index counts
+  // from the file's own event count.
+  let addTarget: ClipInst | null = null
+  for (const c of clips) {
+    if (loaded.has(c.path) && (!addTarget || c.offset < addTarget.offset)) addTarget = c
+  }
+  const draftAddr = normalizePropName(draft)
+  // Duplicates are checked against every property, not just the filtered
+  // ones — the filter must not hide a name that already exists.
+  const canAdd = draftAddr != null && addTarget != null && !hasProperty(curves, draftAddr)
+
+  const addProperty = (): void => {
+    if (!canAdd || !draftAddr || !addTarget) return
+    const events = loaded.get(addTarget.path) ?? []
+    // Send on a port the material already uses, so the new point replays
+    // where the rest of the clip goes.
+    const port =
+      events[0]?.port ??
+      clips.map((c) => loaded.get(c.path)?.[0]?.port).find((p) => p != null) ??
+      defaultPort
+    const addCount = edits[addTarget.file]?.add?.length ?? 0
+    onPointAdd([newPropertyEvent(addTarget, events, addCount, draftAddr, port)], true)
+    setDraft('')
   }
 
   const scale: Scale = { tMin, tRange, innerW, innerH }
@@ -880,34 +915,62 @@ export function CurvePanel({
             deleteSelectedProps()
           }}
         >
-          <input
-            className="curve-filter"
-            type="search"
-            placeholder="filter"
-            aria-label="filter properties"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-          />
-          {shown.map((p) => (
-            <div
-              className={selectedProps.has(p.key) ? 'curve-prop selected' : 'curve-prop'}
-              key={p.key}
-              onClick={(e) => selectProp(p.key, e.shiftKey)}
+          <div className="curve-prop-list">
+            <input
+              className="curve-filter"
+              type="search"
+              placeholder="filter"
+              aria-label="filter properties"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+            />
+            {shown.map((p) => (
+              <div
+                className={selectedProps.has(p.key) ? 'curve-prop selected' : 'curve-prop'}
+                key={p.key}
+                onClick={(e) => selectProp(p.key, e.shiftKey)}
+              >
+                <input
+                  type="checkbox"
+                  checked={!hidden.has(p.key)}
+                  aria-label={`toggle ${p.label}`}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={() => toggle(p.key)}
+                />
+                <span className="curve-swatch" style={{ background: p.color }} />
+                <span className="curve-prop-name">{p.label}</span>
+              </div>
+            ))}
+            {clips.length > 0 && curves.length === 0 && anyLoaded && (
+              <div className="curve-note">no numeric args</div>
+            )}
+          </div>
+          {/* Pinned below the scroll area: name a property that has no events
+              yet and give it one. */}
+          <div className="curve-prop-add">
+            <input
+              className="curve-filter"
+              placeholder="/new/property"
+              aria-label="new property name"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') addProperty()
+                else if (e.key === 'Escape') {
+                  setDraft('')
+                  e.currentTarget.blur()
+                }
+              }}
+            />
+            <button
+              className="btn small"
+              aria-label="add property"
+              disabled={!canAdd}
+              onClick={addProperty}
             >
-              <input
-                type="checkbox"
-                checked={!hidden.has(p.key)}
-                aria-label={`toggle ${p.label}`}
-                onClick={(e) => e.stopPropagation()}
-                onChange={() => toggle(p.key)}
-              />
-              <span className="curve-swatch" style={{ background: p.color }} />
-              <span className="curve-prop-name">{p.label}</span>
-            </div>
-          ))}
-          {clips.length > 0 && curves.length === 0 && anyLoaded && (
-            <div className="curve-note">no numeric args</div>
-          )}
+              <Plus size={14} />
+            </button>
+          </div>
         </div>
         <div className="curve-main">
           <div
