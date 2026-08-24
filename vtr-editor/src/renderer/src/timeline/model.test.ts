@@ -1,14 +1,45 @@
 import { describe, expect, it } from 'vitest'
 import {
+  alignClip,
   bestSnap,
+  findFreeTrack,
   formatRulerLabel,
   formatTimecode,
   gridStep,
   pickStep,
   rulerStep,
   stepDecimals,
-  TIME_TICK_MIN_PX
+  TIME_TICK_MIN_PX,
+  trackIsFree,
+  type ClipInst,
+  type TrackState
 } from './model'
+
+function clip(offset: number, len: number, tlOffset: number | null = null): ClipInst {
+  return {
+    id: 1,
+    file: 'c.jsonl',
+    path: '/tmp/c.jsonl',
+    offset,
+    trimIn: 0,
+    trimOut: len,
+    summary: {
+      path: '/tmp/c.jsonl',
+      name: 'c.jsonl',
+      wall: null,
+      duration: len,
+      events: 0,
+      tlOffset,
+      dropped: 0,
+      writeErrors: 0,
+      writeError: null
+    }
+  }
+}
+
+function track(...clips: ClipInst[]): TrackState {
+  return { id: 1, clips }
+}
 
 describe('formatTimecode', () => {
   it('formats HH:MM:SS.mmm', () => {
@@ -100,6 +131,78 @@ describe('bestSnap', () => {
   it('lets a later candidate win a tie', () => {
     expect(bestSnap(2.5, 1, [2, 3])).toBe(0.5)
     expect(bestSnap(2.5, 1, [3, 2])).toBe(-0.5)
+  })
+})
+
+describe('trackIsFree', () => {
+  it('is free on an empty track', () => {
+    expect(trackIsFree(track(), 0, 5)).toBe(true)
+  })
+
+  it('is taken when a clip overlaps the span', () => {
+    expect(trackIsFree(track(clip(4, 3)), 2, 5)).toBe(false)
+    expect(trackIsFree(track(clip(0, 10)), 2, 5)).toBe(false)
+    expect(trackIsFree(track(clip(3, 1)), 2, 5)).toBe(false)
+  })
+
+  it('is free when clips only touch the edges', () => {
+    expect(trackIsFree(track(clip(0, 2), clip(5, 2)), 2, 5)).toBe(true)
+  })
+
+  it('is free when a float hair apart', () => {
+    expect(trackIsFree(track(clip(0, 2 + 1e-9), clip(5 - 1e-9, 2)), 2, 5)).toBe(true)
+  })
+
+  it('is free for clips clear of the span', () => {
+    expect(trackIsFree(track(clip(0, 1), clip(8, 1)), 2, 5)).toBe(true)
+  })
+})
+
+describe('findFreeTrack', () => {
+  it('takes the first free track at or below from', () => {
+    const tracks = [track(clip(0, 10)), track(), track()]
+    expect(findFreeTrack(tracks, 0, 2, 5)).toBe(1)
+    expect(findFreeTrack(tracks, 2, 2, 5)).toBe(2)
+  })
+
+  it('never looks above from', () => {
+    const tracks = [track(), track(clip(0, 10)), track()]
+    expect(findFreeTrack(tracks, 1, 2, 5)).toBe(2)
+  })
+
+  it('returns -1 when every candidate is taken', () => {
+    const tracks = [track(clip(0, 10)), track(clip(4, 3))]
+    expect(findFreeTrack(tracks, 0, 2, 5)).toBe(-1)
+  })
+
+  it('returns -1 when from is past the end', () => {
+    expect(findFreeTrack([track()], 1, 2, 5)).toBe(-1)
+    expect(findFreeTrack([], 0, 2, 5)).toBe(-1)
+  })
+
+  it('clamps a negative from to the top track', () => {
+    expect(findFreeTrack([track(), track()], -3, 2, 5)).toBe(0)
+  })
+})
+
+describe('alignClip', () => {
+  it('lines the clip up with the clock', () => {
+    expect(alignClip(clip(9, 2, 4)).offset).toBe(4)
+    expect(alignClip(clip(9, 2, 4), 7).offset).toBe(4)
+  })
+
+  it('clamps a negative clock offset to 0', () => {
+    expect(alignClip(clip(9, 2, -4)).offset).toBe(0)
+  })
+
+  it('falls back without a clock offset', () => {
+    expect(alignClip(clip(9, 2), 7).offset).toBe(7)
+    expect(alignClip(clip(9, 2), -1).offset).toBe(0)
+  })
+
+  it('leaves a beacon-less clip put when no fallback is given', () => {
+    const c = clip(9, 2)
+    expect(alignClip(c)).toBe(c)
   })
 })
 

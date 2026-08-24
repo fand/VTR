@@ -79,9 +79,43 @@ export function contentEnd(tracks: TrackState[]): number {
   return end
 }
 
-/** Place the clip so events land at their TD timeline time (tl). No-op without tl. */
-export function alignClip(c: ClipInst): ClipInst {
-  if (c.summary.tlOffset == null) return c
+/** Slack on overlap tests, so clips a float hair apart still count as free. */
+const OVERLAP_EPS = 1e-6
+
+/** Is [start, end) clear of every clip on the track? */
+export function trackIsFree(t: TrackState, start: number, end: number): boolean {
+  for (const c of t.clips) {
+    if (c.offset < end - OVERLAP_EPS && start < c.offset + clipLen(c) - OVERLAP_EPS) return false
+  }
+  return true
+}
+
+/**
+ * Index of the first track at or below `from` where [start, end) is free,
+ * or -1 when every candidate is taken.
+ */
+export function findFreeTrack(
+  tracks: TrackState[],
+  from: number,
+  start: number,
+  end: number
+): number {
+  for (let i = Math.max(0, from); i < tracks.length; i++) {
+    if (trackIsFree(tracks[i], start, end)) return i
+  }
+  return -1
+}
+
+/**
+ * Place the clip so events land at their TD timeline time (tl). Without tl the
+ * clip goes to `fallbackOffset` (where recording started), or stays put when
+ * no fallback is given.
+ */
+export function alignClip(c: ClipInst, fallbackOffset?: number): ClipInst {
+  if (c.summary.tlOffset == null) {
+    if (fallbackOffset == null) return c
+    return { ...c, offset: Math.max(0, fallbackOffset) }
+  }
   return { ...c, offset: Math.max(0, c.trimIn + c.summary.tlOffset) }
 }
 
