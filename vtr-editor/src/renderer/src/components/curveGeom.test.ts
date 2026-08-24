@@ -2,6 +2,7 @@ import { expect, test } from 'vitest'
 import { unshadowedPoints } from '../../../shared/curve'
 import {
   PAD,
+  extEdges,
   fitZoomX,
   hitCurve,
   hitKnot,
@@ -73,9 +74,10 @@ test('hitCurve hits horizontal and vertical step segments', () => {
   expect(hitCurve(props, s, { x: xJump + 3, y: yAt(s, props[0], 0.5) }, 5)).toBe(0)
   // Far away.
   expect(hitCurve(props, s, { x: xAt(s, 2.5), y: yAt(s, props[0], 0.9) }, 5)).toBeNull()
-  // Single point: no segments, never hits.
+  // Single point: no segments, but its flat extensions still hit at its value.
+  expect(hitCurve([p01([{ t: 5, v: 0.5 }])], s, { x: xJump, y: yAt(s, props[0], 0.5) }, 5)).toBe(0)
   expect(
-    hitCurve([p01([{ t: 5, v: 0.5 }])], s, { x: xJump, y: yAt(s, props[0], 0.5) }, 5)
+    hitCurve([p01([{ t: 5, v: 0.5 }])], s, { x: xJump, y: yAt(s, props[0], 0.9) }, 5)
   ).toBeNull()
 })
 
@@ -182,6 +184,56 @@ test('hitCurve hits the bezier span and the connecting hold line', () => {
   expect(hitCurve([p], s, { x: xAt(s, 2.5), y: yAt(s, p, 0) - 2 }, 5)).toBe(0)
   // Far off the curve.
   expect(hitCurve([p], s, { x: xAt(s, 6), y: yAt(s, p, 0.95) }, 5)).toBeNull()
+})
+
+test('extEdges holds the edge values; empty prop is null', () => {
+  expect(extEdges(p01([]))).toBeNull()
+  // Points only: first/last point values.
+  expect(
+    extEdges(
+      p01([
+        { t: 2, v: 0.25 },
+        { t: 5, v: 0.75 }
+      ])
+    )
+  ).toEqual({ left: { t: 2, v: 0.25 }, right: { t: 5, v: 0.75 } })
+  // Point + span: left holds the point, right holds the span's end value.
+  const m = extEdges(mergedProp())!
+  expect(m.left).toEqual({ t: 1, v: 0 })
+  expect(m.right.t).toBe(8)
+  expect(m.right.v).toBeCloseTo(1, 9)
+})
+
+test('extEdges right end takes the longest span, not the last element', () => {
+  // A span t=2..9 outlasting a later point (hand-edited overlap).
+  const knots = [
+    { t: 2, v: 0 },
+    { t: 9, v: 1 }
+  ]
+  const els: GeomEl[] = [
+    { t: 2, knots, curve: 0 },
+    { t: 5, v: 0.5 }
+  ]
+  const p: GeomProp = { min: 0, max: 1, points: [{ t: 5, v: 0.5 }], els }
+  // mergedValueAt(9): the last-started element (the point) wins and holds.
+  expect(extEdges(p)).toEqual({ left: { t: 2, v: 0 }, right: { t: 9, v: 0.5 } })
+})
+
+test('hitCurve hits the flat extensions outside the data', () => {
+  const p = p01([
+    { t: 2, v: 0.5 },
+    { t: 5, v: 0.8 }
+  ])
+  // Left of the first point, at its value.
+  expect(hitCurve([p], s, { x: xAt(s, 1), y: yAt(s, p, 0.5) + 2 }, 5)).toBe(0)
+  // Right of the last point, at its value.
+  expect(hitCurve([p], s, { x: xAt(s, 8), y: yAt(s, p, 0.8) - 2 }, 5)).toBe(0)
+  // Off the extensions' values.
+  expect(hitCurve([p], s, { x: xAt(s, 8), y: yAt(s, p, 0.5) }, 5)).toBeNull()
+  expect(hitCurve([p], s, { x: xAt(s, 1), y: yAt(s, p, 0.8) }, 5)).toBeNull()
+  // A single point extends both ways — hittable even with no segment drawn.
+  const one = p01([{ t: 5, v: 0.5 }])
+  expect(hitCurve([one], s, { x: xAt(s, 1), y: yAt(s, one, 0.5) }, 5)).toBe(0)
 })
 
 test('hitKnot finds the nearest knot within radius', () => {

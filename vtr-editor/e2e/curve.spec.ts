@@ -1325,3 +1325,75 @@ test('curve panel: the add row creates a property with one point at the clip hea
     await app.close()
   }
 })
+
+test('curve panel: the dimmed edge extensions take double-click inserts', async () => {
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
+  writeFileSync(
+    join(workdir, CLIP),
+    jsonl([
+      { type: 'session_start', t: 0, wall: '2026-07-16T00:00:00Z' },
+      { t: 0.2, port: LISTEN_PORT, a: '/fader', args: [0.1] },
+      { t: 0.8, port: LISTEN_PORT, a: '/fader', args: [0.5] },
+      { t: 1.4, port: LISTEN_PORT, a: '/fader', args: [0.9] },
+      { type: 'session_end', t: 2 }
+    ])
+  )
+  writeFileSync(
+    join(workdir, 'project.json'),
+    JSON.stringify({
+      version: 1,
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT },
+      duration: 10,
+      tracks: [{ clips: [{ file: CLIP, offset: 0, trimIn: 0, trimOut: 2 }] }]
+    })
+  )
+
+  const app = await electron.launch({
+    args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
+    cwd: workdir,
+    env: {
+      ...process.env,
+      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
+      OSC_EDITOR_HIDDEN: '1',
+      OSC_EDITOR_DATA_DIR: workdir
+    }
+  })
+  try {
+    const page = await app.firstWindow()
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
+    await page.locator('.clip').click()
+    await expectPointCount(page, 3)
+
+    // Pixel scale from the first two points (t=0.2 → 0.8), so the clicks
+    // land at known times regardless of the panel size.
+    const pts = await curvePoints(page)
+    const [p0, , p2] = pts
+    const pxPerSec = (pts[1].x - p0.x) / 0.6
+
+    // Double-click right of the last point, on its dimmed hold line: a point
+    // appears ON the extension — the held value 0.9, the clicked time.
+    await page.mouse.dblclick(p2.x + 0.3 * pxPerSec, p2.y)
+    await expectPointCount(page, 4)
+    let added = (await curvePoints(page)).find((p) => p.t > 1.5)
+    expect(added).toBeTruthy()
+    expect(added!.t).toBeGreaterThan(1.6)
+    expect(added!.t).toBeLessThan(1.8)
+    expect(added!.v).toBeCloseTo(0.9, 5)
+
+    // Same left of the first point: the first value holds there.
+    await page.mouse.dblclick(p0.x - 0.1 * pxPerSec, p0.y)
+    await expectPointCount(page, 5)
+    added = (await curvePoints(page)).find((p) => p.t < 0.2)
+    expect(added).toBeTruthy()
+    expect(added!.t).toBeGreaterThan(0.05)
+    expect(added!.t).toBeLessThan(0.15)
+    expect(added!.v).toBeCloseTo(0.1, 5)
+
+    // Far off the extension lines nothing inserts.
+    await page.mouse.dblclick(p2.x + 0.3 * pxPerSec, (p0.y + pts[1].y) / 2)
+    await page.waitForTimeout(200)
+    await expectPointCount(page, 5)
+  } finally {
+    await app.close()
+  }
+})

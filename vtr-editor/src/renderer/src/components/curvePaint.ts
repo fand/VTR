@@ -2,12 +2,14 @@
  *  sized, devicePixelRatio-aware: draws the step-after lines and ALL points,
  *  translated by the scroll offsets and culled to the visible time span. */
 import { clipCurve } from '../../../shared/curve'
-import { tAt, visibleRange, walkMerged, xAt, yAt, PAD, type Scale } from './curveGeom'
+import { extEdges, tAt, visibleRange, walkMerged, xAt, yAt, PAD, type Scale } from './curveGeom'
 import { knotSel, ptSel, selKey, type Property, type PropCurve } from './curveModel'
 
 /** Masked material (a lower track owns the window) draws faint and dashed. */
 const MASK_ALPHA = 0.3
 const MASK_DASH = [4, 3]
+/** The flat edge extensions (no data, the edge value holds) draw dimmed. */
+const EXT_ALPHA = 0.25
 
 /** Whether a knot sits in one of its curve's masked stretches. */
 const knotMasked = (pc: PropCurve, t: number): boolean =>
@@ -165,6 +167,24 @@ export function paintCurves({
     }
     ctx.stroke()
     ctx.setLineDash([])
+    // Outside the data the edge values hold: dimmed flat lines across the
+    // rest of the panel, still interactive (hitCurve tests the same rays).
+    const ext = extEdges(p)
+    if (ext) {
+      ctx.globalAlpha = dim ? 0.1 : EXT_ALPHA
+      ctx.beginPath()
+      if (ext.left.t > t0) {
+        const py = y(p, ext.left.v)
+        ctx.moveTo(x(t0), py)
+        ctx.lineTo(x(ext.left.t), py)
+      }
+      if (ext.right.t < t1) {
+        const py = y(p, ext.right.v)
+        ctx.moveTo(x(ext.right.t), py)
+        ctx.lineTo(x(t1), py)
+      }
+      ctx.stroke()
+    }
     ctx.globalAlpha = dim ? 0.1 : 1
     // One path per property: step-after lines and bezier spans merged.
     // The y map is affine, so mapping the control points maps the curve.

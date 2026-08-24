@@ -63,6 +63,31 @@ export function mergedValueAt(p: GeomProp, t: number): number | null {
   return v
 }
 
+/** Edge holds of the merged path: left of the first element the first
+ *  value holds flat, right of the last end (max across spans — walkMerged's
+ *  rule) the merged end value holds. The editor draws these stretches as
+ *  dimmed lines and lets them take pointer hits, so mergedValueAt, the
+ *  drawing and the hit test all agree. Null when the property is empty. */
+export function extEdges(
+  p: GeomProp
+): { left: { t: number; v: number }; right: { t: number; v: number } } | null {
+  const els: readonly GeomEl[] = p.els ?? p.points
+  const n = els.length
+  if (n === 0) return null
+  const first = els[0]
+  const lastEl = els[n - 1]
+  let end = 'knots' in lastEl ? lastEl.knots[lastEl.knots.length - 1].t : lastEl.t
+  if (p.els) {
+    for (const el of els) {
+      if ('knots' in el) end = Math.max(end, el.knots[el.knots.length - 1].t)
+    }
+  }
+  return {
+    left: { t: first.t, v: 'knots' in first ? first.knots[0].v : first.v },
+    right: { t: end, v: mergedValueAt(p, end)! }
+  }
+}
+
 /** X zoom + scrollLeft that make [selT0, selT1] span the viewport width.
  *  Zoom clamps to [1, maxZoom]; a zero-width target zooms to maxZoom and
  *  centers on it. Returns null when the panel is unmeasured or the target
@@ -225,9 +250,9 @@ export function walkMerged(p: GeomProp, s: Scale, t0: number, t1: number, sink: 
 /** Samples per bezier segment when flattening for hit-testing. */
 const HIT_SAMPLES = 12
 
-/** Nearest merged curve line (step lines + flattened beziers) within
- *  `radius` px; returns the prop index. Ties go to the later
- *  (topmost-drawn) property. */
+/** Nearest merged curve line (step lines + flattened beziers, plus the flat
+ *  edge extensions outside the data) within `radius` px; returns the prop
+ *  index. Ties go to the later (topmost-drawn) property. */
 export function hitCurve(
   props: GeomProp[],
   s: Scale,
@@ -270,6 +295,21 @@ export function hitCurve(
         }
       }
     })
+    // The flat edge extensions: horizontal rays leaving the first element to
+    // the left and the last end to the right.
+    const ext = extEdges(p)
+    if (ext) {
+      const ray = (dx: number, py: number): void => {
+        const dy = pos.y - py
+        const d = dx * dx + dy * dy
+        if (d <= bestD) {
+          bestD = d
+          best = pi
+        }
+      }
+      ray(Math.max(pos.x - xAt(s, ext.left.t), 0), yAt(s, p, ext.left.v))
+      ray(Math.max(xAt(s, ext.right.t) - pos.x, 0), yAt(s, p, ext.right.v))
+    }
   })
   return best
 }
