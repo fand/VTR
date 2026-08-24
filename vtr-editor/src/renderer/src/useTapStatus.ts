@@ -13,6 +13,10 @@ export function useTapStatus(opts: {
   bootDone: boolean
   /** A finished clip appeared (record stop / reset snapshot). */
   importClip: (clipPath: string) => void
+  /** Where the playhead sits right now; read when a take starts. */
+  getPlayhead: () => number
+  /** A new take started, with the playhead it started from. */
+  onRecStarted?: (clip: string, playhead: number) => void
   setError: (msg: string | null) => void
   setLog: (msg: string) => void
 }): {
@@ -24,7 +28,7 @@ export function useTapStatus(opts: {
   busy: boolean
   toggleRecord: () => Promise<void>
 } {
-  const { bootDone, importClip, setError, setLog } = opts
+  const { bootDone, importClip, getPlayhead, onRecStarted, setError, setLog } = opts
   const [recording, setRecording] = useState<{ path: string; startedAt: number } | null>(null)
   const [status, setStatus] = useState<TapStatus | null>(null)
   const [statusError, setStatusError] = useState<string | null>(null)
@@ -33,6 +37,8 @@ export function useTapStatus(opts: {
   const [rxRate, setRxRate] = useState<number | null>(null)
   const lastRx = useRef<{ received: number; at: number } | null>(null)
   const [busy, setBusy] = useState(false)
+  /** Clip being recorded, mirrored so the take guard reads it synchronously. */
+  const recClip = useRef<string | null>(null)
 
   useEffect(() => {
     const poll = (): void => {
@@ -74,6 +80,9 @@ export function useTapStatus(opts: {
       if (s.recording && s.clip) {
         const clip = s.clip
         const recT = s.rec_t ?? 0
+        // No onRecStarted here: rec_t only back-dates startedAt, so the
+        // playhead the take began from is gone.
+        recClip.current = clip
         setRecording((prev) =>
           prev && prev.path === clip
             ? prev
@@ -81,6 +90,7 @@ export function useTapStatus(opts: {
         )
       } else {
         // Tap crashed or stopped while we weren't looking: clear stale REC.
+        recClip.current = null
         setRecording(null)
       }
       if (s.last_clip) importClip(s.last_clip)
@@ -97,17 +107,21 @@ export function useTapStatus(opts: {
       const e = msg.event
       if (e.ev === 'rec_started') {
         // A snapshot may already have applied this; keep startedAt then.
+        const fresh = recClip.current !== e.clip
+        recClip.current = e.clip
         setRecording((prev) =>
           prev && prev.path === e.clip ? prev : { path: e.clip, startedAt: performance.now() }
         )
+        if (fresh) onRecStarted?.(e.clip, getPlayhead())
         setLog('Record started')
       } else {
+        recClip.current = null
         setRecording(null)
         setLog('Record stopped')
         importClip(e.clip)
       }
     })
-  }, [applySnapshot, importClip, setLog])
+  }, [applySnapshot, importClip, getPlayhead, onRecStarted, setLog])
 
   // Startup baseline: events forwarded before this window existed are gone; a
   // status snapshot recovers the state.

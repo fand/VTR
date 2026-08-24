@@ -40,6 +40,7 @@ import {
   recordingWarning,
   clipLen,
   contentEnd,
+  findFreeTrack,
   serializeProject
 } from './timeline/model'
 
@@ -177,9 +178,25 @@ function App(): React.JSX.Element {
   useEffect(() => {
     tracksRef.current = tracks
   }, [tracks])
+  // Same for the selection, which picks where a recording lands.
+  const selectedTrackIdsRef = useRef(selectedTrackIds)
+  useEffect(() => {
+    selectedTrackIdsRef.current = selectedTrackIds
+  }, [selectedTrackIds])
   // Clips imported (or found referenced) this session, by file name: a reset
   // snapshot must not re-import a clip whose track the user deleted.
   const importedClips = useRef(new Set<string>())
+
+  // Playhead the current take started from, for clips the clock never stamped.
+  const playheadRef = useRef(playhead)
+  useEffect(() => {
+    playheadRef.current = playhead
+  }, [playhead])
+  const getPlayhead = useCallback(() => playheadRef.current, [])
+  const recStart = useRef<{ clip: string; playhead: number } | null>(null)
+  const onRecStarted = useCallback((clip: string, at: number) => {
+    recStart.current = { clip, playhead: at }
+  }, [])
 
   const maybeImportClip = useCallback(
     async (clipPath: string): Promise<void> => {
@@ -195,23 +212,40 @@ function App(): React.JSX.Element {
       importedClips.current.add(name)
       try {
         const summary = await window.api.clip.summary(clipPath)
-        const track: TrackState = {
-          id: newId(),
-          clips: [
-            alignClip({
-              id: newId(),
-              file: summary.name,
-              path: summary.path,
-              offset: 0,
-              trimIn: 0,
-              trimOut: Math.max(summary.duration, 0.1),
-              summary
-            })
-          ]
-        }
-        commit(`Recorded ${summary.name} (${summary.duration.toFixed(1)}s)`, (d) => {
-          d.tracks.push(track)
+        // Without a clock stamp the clip lands where recording started.
+        const fallback = recStart.current?.clip === clipPath ? recStart.current.playhead : undefined
+        const clip = alignClip(
+          {
+            id: newId(),
+            file: summary.name,
+            path: summary.path,
+            offset: 0,
+            trimIn: 0,
+            trimOut: Math.max(summary.duration, 0.1),
+            summary
+          },
+          fallback
+        )
+        const start = clip.offset
+        const end = start + clipLen(clip)
+        const label = `Recorded ${summary.name} (${summary.duration.toFixed(1)}s)`
+        let where = ''
+        commit(label, (d) => {
+          // Look from the topmost selected track down; a fresh track at the
+          // bottom when the span is taken the whole way.
+          const sel = selectedTrackIdsRef.current
+          const top = d.tracks.findIndex((t) => sel.includes(t.id))
+          const i = findFreeTrack(d.tracks, Math.max(0, top), start, end)
+          if (i >= 0) {
+            d.tracks[i].clips.push(clip)
+            where = ` → track ${i + 1}`
+          } else {
+            d.tracks.push({ id: newId(), clips: [clip] })
+            where = ' → new track'
+          }
         })
+        // The recipe knows where it landed; commit already logged the label.
+        setLog(label + where)
       } catch (e) {
         // Collected into a bundle (staged source deleted) or otherwise gone:
         // nothing to import, not an error.
@@ -223,7 +257,7 @@ function App(): React.JSX.Element {
 
   const importClip = useCallback((p: string) => void maybeImportClip(p), [maybeImportClip])
   const { status, statusError, playerStatus, rxRate, recording, busy, toggleRecord } = useTapStatus(
-    { bootDone, importClip, setError, setLog }
+    { bootDone, importClip, getPlayhead, onRecStarted, setError, setLog }
   )
 
   // Tracks live independently of clips: emptying one no longer removes it.
