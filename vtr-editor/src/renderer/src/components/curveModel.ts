@@ -327,6 +327,39 @@ export interface PointAdd {
   ev: OscEvent
 }
 
+/** Clean up a typed property name: trim, prepend the leading `/`. Null when
+ *  the name can't be an OSC address here — empty, inner whitespace, or the
+ *  `/vtr` control namespace (the tap never forwards or records those). */
+export function normalizePropName(raw: string): string | null {
+  const s = raw.trim()
+  if (!s || /\s/.test(s)) return null
+  const addr = s.startsWith('/') ? s : `/${s}`
+  if (addr.startsWith('/vtr')) return null
+  return addr
+}
+
+/** Does any property already cover this address? Compares the address part of
+ *  `key` (`${addr} ${argIndex}`), so `/a` doesn't match `/ab`. */
+export function hasProperty(curves: readonly Property[], addr: string): boolean {
+  return curves.some((p) => p.key.slice(0, p.key.lastIndexOf(' ')) === addr)
+}
+
+/** One point at the clip head that brings a brand-new property into being.
+ *  `addCount` is how many events the clip's overlay already appends — same
+ *  index rule as makeAdd in useCurveInteraction. */
+export function newPropertyEvent(
+  clip: ClipInst,
+  events: readonly OscEvent[],
+  addCount: number,
+  addr: string,
+  port: number
+): PointAdd {
+  return {
+    sel: { file: clip.file, eventIndex: events.length + addCount, argIndex: 0 },
+    ev: { t: clip.trimIn, port, a: addr, types: 'f', args: [0] }
+  }
+}
+
 /** One visited drawn element: a discrete point or a curve knot. */
 export interface ElVisit {
   p: Property

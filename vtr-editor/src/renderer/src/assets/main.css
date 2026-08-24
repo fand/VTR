@@ -914,13 +914,36 @@ body {
   min-height: 0;
 }
 
+/* Scrolling property list with the add row pinned under it. */
 .curve-props {
   flex: 0 0 180px;
-  overflow-y: auto;
-  padding: 4px 0;
+  display: flex;
+  flex-direction: column;
   background: var(--bg-raised);
   border-right: 1px solid var(--border);
   user-select: none;
+}
+
+.curve-prop-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.curve-prop-add {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-top: 1px solid var(--border);
+}
+
+.curve-prop-add .curve-filter {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  margin: 0;
 }
 
 .curve-filter {
