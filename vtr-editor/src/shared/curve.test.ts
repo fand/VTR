@@ -248,13 +248,23 @@ describe('fitCurve step detection', () => {
     expect(evalCurve(knots, 0.5)).toBeCloseTo(0.8, 9)
   })
 
-  it('turns a train of isolated events into steps', () => {
-    const samples = [0, 0.5, 1, 1.5].map((t, i) => ({ t, v: i / 3 }))
+  it('turns events isolated against the stream cadence into steps', () => {
+    // A dense burst sets the cadence; the three stragglers after it each
+    // hold until the next one arrives.
+    const burst = Array.from({ length: 6 }, (_, i) => ({ t: i * 0.01, v: 0 }))
+    const samples = [...burst, ...[0.5, 1, 1.5].map((t, i) => ({ t, v: (i + 1) / 3 }))]
     const knots = fitCurve(samples, 0.01)!
-    expect(knots).toHaveLength(4)
-    expect(knots.map((k) => k.s ?? false)).toEqual([true, true, true, false])
+    expect(knots.filter((k) => k.s)).toHaveLength(3)
     expect(evalCurve(knots, 0.4)).toBe(0)
     expect(evalCurve(knots, 1.4)).toBeCloseTo(2 / 3, 9)
+  })
+
+  it('fits a uniformly slow stream as motion, not as a staircase', () => {
+    // 10Hz: the sender is slower than a frame, but nothing ever held.
+    const samples = Array.from({ length: 12 }, (_, i) => ({ t: i * 0.1, v: i / 11 }))
+    const knots = fitCurve(samples, 0.01)!
+    expect(knots.some((k) => k.s)).toBe(false)
+    expect(evalCurve(knots, 0.55)).toBeCloseTo(0.5, 2)
   })
 })
 
