@@ -1241,3 +1241,87 @@ test('curve panel: Delete in the property list removes selected properties', asy
     await app.close()
   }
 })
+
+test('curve panel: the add row creates a property with one point at the clip head', async () => {
+  const workdir = mkdtempSync(join(tmpdir(), 'vtr-e2e-'))
+  // Trimmed clip: a hand-added property lands on trimIn, not on 0.
+  writeFileSync(
+    join(workdir, CLIP),
+    jsonl([
+      { type: 'session_start', t: 0, wall: '2026-07-16T00:00:00Z' },
+      { t: 0.5, port: LISTEN_PORT, a: '/fader', args: [0.1] },
+      { t: 1.0, port: LISTEN_PORT, a: '/fader', args: [0.9] },
+      { type: 'session_end', t: 2 }
+    ])
+  )
+  writeFileSync(
+    join(workdir, 'project.json'),
+    JSON.stringify({
+      version: 1,
+      ports: { listen: LISTEN_PORT, forward: FORWARD_PORT },
+      duration: 10,
+      tracks: [{ clips: [{ file: CLIP, offset: 0, trimIn: 0.3, trimOut: 2 }] }]
+    })
+  )
+
+  const app = await electron.launch({
+    args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
+    cwd: workdir,
+    env: {
+      ...process.env,
+      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
+      OSC_EDITOR_HIDDEN: '1',
+      OSC_EDITOR_DATA_DIR: workdir
+    }
+  })
+  try {
+    const page = await app.firstWindow()
+    await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })
+    const name = page.locator('input[aria-label="new property name"]')
+    const add = page.locator('button[aria-label="add property"]')
+
+    // No clip selected and no name: nothing to add to.
+    await expect(add).toBeDisabled()
+    await page.locator('.clip').click()
+    await expect(page.locator('.curve-prop-name')).toHaveText(['/fader'])
+    await expect(add).toBeDisabled()
+
+    // A name without the leading slash gets one.
+    await name.fill('newthing')
+    await add.click()
+    await expect(page.locator('.curve-prop-name')).toHaveText(['/fader', '/newthing'])
+    await expectPropCounts(page, '/newthing', 1, 0)
+    await expect(name).toHaveValue('')
+
+    // Existing names can't be added again, normalized ones included.
+    await name.fill('/fader')
+    await expect(add).toBeDisabled()
+    await name.fill('newthing')
+    await expect(add).toBeDisabled()
+    // The /vtr control namespace is off limits.
+    await name.fill('/vtr/clock')
+    await expect(add).toBeDisabled()
+    await name.fill('')
+
+    // The sidecar carries one appended event at the clip's trimIn.
+    await page.keyboard.press('ControlOrMeta+s')
+    const sidecar = join(workdir, `${CLIP}.edits.json`)
+    await expect
+      .poll(() => {
+        try {
+          return JSON.parse(readFileSync(sidecar, 'utf8')).add ?? []
+        } catch {
+          return []
+        }
+      })
+      .toEqual([{ t: 0.3, port: LISTEN_PORT, a: '/newthing', types: 'f', args: [0] }])
+
+    // One undo entry drops the whole property again (out of the input first:
+    // shortcuts skip text fields).
+    await name.blur()
+    await page.keyboard.press('ControlOrMeta+z')
+    await expect(page.locator('.curve-prop-name')).toHaveText(['/fader'])
+  } finally {
+    await app.close()
+  }
+})
