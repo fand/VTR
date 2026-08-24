@@ -3,6 +3,10 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdtempSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { e2eEnv } from './env'
+
+// Suite-specific ports so a running dev instance never collides.
+const LISTEN_PORT = 16410
 
 // Touches the user's launchd domain — run explicitly:
 //   RUN_LAUNCHD=1 npx playwright test e2e/launchd.spec.ts
@@ -43,13 +47,9 @@ test('launchd agent: crash restart + bootout on quit', async () => {
   const app = await electron.launch({
     args: [join(__dirname, '../out/main/index.js')],
     cwd: workdir,
-    env: {
-      ...process.env,
-      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
-      OSC_EDITOR_HIDDEN: '1',
-      OSC_EDITOR_DATA_DIR: workdir,
+    env: e2eEnv(LISTEN_PORT, workdir, {
       VTR_TAP_SPAWN: 'launchd'
-    }
+    })
   })
   try {
     const page = await app.firstWindow()

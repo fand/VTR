@@ -2,10 +2,11 @@ import { _electron as electron, expect, test, type ElectronApplication } from '@
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { e2eEnv } from './env'
 
 // Suite-specific ports so a running dev instance (default 10010-10012) never collides.
-const LISTEN_PORT = 15510
-const FORWARD_PORT = 15511
+const LISTEN_PORT = 16510
+const FORWARD_PORT = 16511
 
 // Closing a dirty window prompts save/discard/cancel. Hidden (e2e) mode
 // takes the choice from OSC_EDITOR_QUIT_CHOICE (default: discard).
@@ -26,13 +27,9 @@ async function launchDirty(
   const app = await electron.launch({
     args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
     cwd: workdir,
-    env: {
-      ...process.env,
-      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
-      OSC_EDITOR_HIDDEN: '1',
-      OSC_EDITOR_DATA_DIR: workdir,
+    env: e2eEnv(LISTEN_PORT, workdir, {
       ...(quitChoice ? { OSC_EDITOR_QUIT_CHOICE: quitChoice } : {})
-    }
+    })
   })
   const page = await app.firstWindow()
   await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })

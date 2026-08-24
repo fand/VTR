@@ -2,6 +2,7 @@ import { _electron as electron, ElectronApplication, Page, expect, test } from '
 import { mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { e2eEnv } from './env'
 
 // Suite-specific ports so a running dev instance never collides.
 const LISTEN_PORT = 15510
@@ -21,12 +22,7 @@ async function launch(
   const app = await electron.launch({
     args: [join(__dirname, '../out/main/index.js'), bundle],
     cwd: workdir,
-    env: {
-      ...process.env,
-      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
-      OSC_EDITOR_HIDDEN: '1',
-      OSC_EDITOR_DATA_DIR: workdir
-    }
+    env: e2eEnv(LISTEN_PORT, workdir)
   })
   const page = await app.firstWindow()
   await expect(page.locator('.stat', { hasText: 'tap:' })).toHaveText(/on/, { timeout: 15_000 })

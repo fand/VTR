@@ -6,6 +6,7 @@ import { basename, dirname, join, resolve } from 'path'
 import { AppContext } from './appContext'
 import { envDialogs } from './dialogs'
 import { nativeDialogs } from './nativeDialogs'
+import { defaultPorts } from './ports'
 import { normalizeProjectPath, readProjectPorts } from './project'
 import { SpawnMode, TapManager } from './tap'
 import { PlayerManager } from './player'
@@ -248,7 +249,7 @@ app.whenReady().then(() => {
 
   // Start on the project's ports right away — no restart dance at boot.
   const ports = normalizePorts(
-    bootProjectPath ? readProjectPorts(normalizeProjectPath(bootProjectPath)) : undefined
+    bootProjectPath ? readProjectPorts(normalizeProjectPath(bootProjectPath)) : defaultPorts()
   )
   const binEnv = {
     isPackaged: app.isPackaged,

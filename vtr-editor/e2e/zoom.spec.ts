@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { curvePoints } from './curveHooks'
+import { e2eEnv } from './env'
 
 // Suite-specific ports so a running dev instance (default 10010-10012) never collides.
 const LISTEN_PORT = 14710
@@ -37,12 +38,7 @@ test('timeline zoom (ctrl+wheel pinch, cmd+wheel) scales around the cursor', asy
   const app = await electron.launch({
     args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
     cwd: workdir,
-    env: {
-      ...process.env,
-      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
-      OSC_EDITOR_HIDDEN: '1',
-      OSC_EDITOR_DATA_DIR: workdir
-    }
+    env: e2eEnv(LISTEN_PORT, workdir)
   })
   try {
     const page = await app.firstWindow()
@@ -162,12 +158,7 @@ test('curve editor x/y zoom sliders scale the axes; y zoom scrolls vertically', 
   const app = await electron.launch({
     args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
     cwd: workdir,
-    env: {
-      ...process.env,
-      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
-      OSC_EDITOR_HIDDEN: '1',
-      OSC_EDITOR_DATA_DIR: workdir
-    }
+    env: e2eEnv(LISTEN_PORT, workdir)
   })
   try {
     const page = await app.firstWindow()
@@ -226,12 +217,7 @@ test('curve editor fit zoom fits all points, then the selected point', async () 
   const app = await electron.launch({
     args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
     cwd: workdir,
-    env: {
-      ...process.env,
-      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
-      OSC_EDITOR_HIDDEN: '1',
-      OSC_EDITOR_DATA_DIR: workdir
-    }
+    env: e2eEnv(LISTEN_PORT, workdir)
   })
   try {
     const page = await app.firstWindow()
@@ -299,12 +285,7 @@ test('dragging the last clip left keeps the view range, drag distance, and undo'
   const app = await electron.launch({
     args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
     cwd: workdir,
-    env: {
-      ...process.env,
-      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
-      OSC_EDITOR_HIDDEN: '1',
-      OSC_EDITOR_DATA_DIR: workdir
-    }
+    env: e2eEnv(LISTEN_PORT, workdir)
   })
   try {
     const page = await app.firstWindow()
@@ -316,7 +297,9 @@ test('dragging the last clip left keeps the view range, drag distance, and undo'
       page.locator('.timeline-scroll').evaluate((el) => el.scrollWidth)
     const clipX = async (): Promise<number> => (await page.locator('.clip').boundingBox())!.x
     await expect
-      .poll(() => page.locator('.timeline-scroll').evaluate((el) => el.scrollWidth - el.clientWidth))
+      .poll(() =>
+        page.locator('.timeline-scroll').evaluate((el) => el.scrollWidth - el.clientWidth)
+      )
       .toBeLessThanOrEqual(1)
     const width0 = await scrollWidth()
     const x0 = await clipX()
@@ -368,12 +351,7 @@ test('min zoom fits a long timeline in the window', async () => {
   const app = await electron.launch({
     args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
     cwd: workdir,
-    env: {
-      ...process.env,
-      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
-      OSC_EDITOR_HIDDEN: '1',
-      OSC_EDITOR_DATA_DIR: workdir
-    }
+    env: e2eEnv(LISTEN_PORT, workdir)
   })
   try {
     const page = await app.firstWindow()
@@ -415,12 +393,7 @@ test('pinch zoom-out keeps the time under the cursor when the width shrink clamp
   const app = await electron.launch({
     args: [join(__dirname, '../out/main/index.js'), join(workdir, 'project.json')],
     cwd: workdir,
-    env: {
-      ...process.env,
-      VTR_TAP_BIN: join(__dirname, '../../target/debug/vtr-tap'),
-      OSC_EDITOR_HIDDEN: '1',
-      OSC_EDITOR_DATA_DIR: workdir
-    }
+    env: e2eEnv(LISTEN_PORT, workdir)
   })
   try {
     const page = await app.firstWindow()

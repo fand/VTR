@@ -4,7 +4,6 @@ import { homedir } from 'os'
 import { dirname, join } from 'path'
 import {
   DEFAULT_PORTS,
-  RELAY_PORT,
   type MonitorLine,
   type PortConfig,
   type TapEvent,
@@ -13,6 +12,7 @@ import {
   type TapWaitReply
 } from '../shared/types'
 import { ControlChannel } from './controlChannel'
+import { relayPort } from './ports'
 import { ChildSupervisor } from './supervisor'
 
 const REQUEST_TIMEOUT_MS = 3000
@@ -104,7 +104,7 @@ export class TapManager {
       '--forward',
       `127.0.0.1:${this._ports.forward}`,
       '--relay',
-      `127.0.0.1:${RELAY_PORT}`,
+      `127.0.0.1:${relayPort()}`,
       '--outdir',
       this.outdir,
       '--control',
