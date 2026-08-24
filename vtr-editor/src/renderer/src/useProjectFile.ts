@@ -108,6 +108,16 @@ export function useProjectFile(opts: {
       }
       const log = loaded ? await window.api.undo.load() : []
       applyLoaded(loaded?.path ?? null, loaded?.project ?? null, log)
+      // No project ports to load: take the ones the tap actually runs on,
+      // as the saved state too — the header would otherwise show the plain
+      // defaults and push them back at a tap started on other ports.
+      if (!loaded?.project?.ports) {
+        const p = await window.api.tap.ports().catch(() => null)
+        if (p) {
+          setPorts(p)
+          setSavedState((s) => ({ ...s, ports: p }))
+        }
+      }
     }
     boot()
       .catch((e: Error) => setError(e.message))

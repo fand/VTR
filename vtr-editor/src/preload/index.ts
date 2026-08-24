@@ -21,6 +21,8 @@ const api = {
     stop: (): Promise<void> => ipcRenderer.invoke('tap:stop'),
     status: (): Promise<TapStatus> => ipcRenderer.invoke('tap:status'),
     setPorts: (ports: PortConfig): Promise<void> => ipcRenderer.invoke('tap:setPorts', ports),
+    /** The ports the tap actually runs on (what an untitled session starts with). */
+    ports: (): Promise<PortConfig> => ipcRenderer.invoke('tap:ports'),
     /** Recording events and baseline/reset snapshots from the tap wait loop. */
     onEvent: (cb: (msg: TapPush) => void): (() => void) => {
       const listener = (_e: unknown, msg: TapPush): void => cb(msg)

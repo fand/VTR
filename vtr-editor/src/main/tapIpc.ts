@@ -4,6 +4,7 @@ import { basename, join } from 'path'
 import { clipSummary, readClip } from './clips'
 import { mergeClipsToFile } from './mergeClip'
 import { ensureWithin } from './paths'
+import { defaultPorts } from './ports'
 import type { AppContext } from './appContext'
 import type { MergeClipResult, PortConfig, ProjectFile } from '../shared/types'
 
@@ -26,6 +27,9 @@ export function registerTapIpc(ctx: AppContext): void {
   )
   ipcMain.handle('tap:stop', () => ctx.requireTap().stop())
   ipcMain.handle('tap:status', () => ctx.requireTap().status())
+  // The ports the tap actually runs on: an untitled session takes them from
+  // main (env overrides included), instead of assuming the defaults.
+  ipcMain.handle('tap:ports', () => ctx.tap?.ports ?? defaultPorts())
   ipcMain.handle('tap:setPorts', (_e, ports: PortConfig) => {
     ctx.requireTap().setPorts(ports)
     ctx.player?.setEcho(ports.echo, ports.echoHost)
